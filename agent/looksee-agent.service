@@ -1,0 +1,18 @@
+[Unit]
+Description=Looksee monitoring agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=looksee-agent
+Group=looksee-agent
+ExecStart=/usr/local/bin/looksee-agent -config /etc/looksee-agent/looksee-agent.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

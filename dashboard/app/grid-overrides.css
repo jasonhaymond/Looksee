@@ -1,0 +1,17 @@
+/* react-grid-layout ships light-theme defaults (a light-gray drag
+   placeholder, a light resize-handle image) that don't read against this
+   app's dark surface — restyled here rather than fighting them with
+   utility classes on every grid item. */
+
+.react-grid-item.react-grid-placeholder {
+  background: var(--up) !important;
+  opacity: 0.15 !important;
+  border-radius: 0.5rem;
+}
+
+.react-resizable-handle {
+  opacity: 0.4;
+}
+.react-resizable-handle:hover {
+  opacity: 1;
+}

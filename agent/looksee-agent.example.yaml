@@ -1,0 +1,6 @@
+# Copy to looksee-agent.yaml (gitignored, holds a real credential) and fill
+# in the values from the engine's Hosts page (create the host, then click
+# "Generate agent key" — it's shown once and can't be retrieved again).
+engine_url: "https://looksee.example.com"
+agent_key: "REPLACE_WITH_HOST_AGENT_KEY"
+interval_seconds: 30

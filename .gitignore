@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+npm-debug.log*
+
+# engine
+engine/dist/
+engine/drizzle/*.sql
+!engine/drizzle/meta
+engine/.backup-ssh/
+
+# agent build output + local config (holds a real agent key)
+agent/bin/
+agent/looksee-agent
+agent/looksee-agent.exe
+agent/looksee-agent.yaml
+
+# dashboard (Next.js)
+dashboard/.next/
+dashboard/out/
+dashboard/*.tsbuildinfo
+
+.DS_Store
+Thumbs.db

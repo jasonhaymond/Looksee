@@ -1,0 +1,22 @@
+# Local/production Postgres for Looksee. Pins the Compose project name so the
+# named volume below doesn't drift if this folder is ever renamed again.
+name: looksee
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: looksee
+      POSTGRES_PASSWORD: looksee
+      POSTGRES_DB: looksee
+    # Overridable via a root .env (gitignored, alongside this file) for a
+    # server-specific port/bind-address collision — never hand-edit the
+    # defaults below, see .env.example.
+    ports:
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-data:
