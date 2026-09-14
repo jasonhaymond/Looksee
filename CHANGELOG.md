@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-14
+
+### Fixed
+
+- **Fresh deploys couldn't run migrations**: `.gitignore` excluded
+  `engine/drizzle/*.sql` (treated like generated build output) while keeping the
+  `meta/` snapshots, so the actual migration files were never pushed to the repo —
+  `npm run db:migrate` failed on any clone but this dev machine's own with "No file
+  ./drizzle/0000_eminent_mathemanic.sql found." Found via a real first deployment
+  attempt, not caught locally, since this machine's `drizzle/` directory still had the
+  files on disk regardless of what git tracked. Fixed by un-ignoring them and
+  committing all three existing migration files.
+
+### Notes
+
+- This is exactly the kind of gap `npm test`/`npm run build` on the dev machine can't
+  catch — both only ever ran against a working tree that already had the files
+  on disk. A true "fresh clone + fresh install" smoke test would have caught it
+  sooner; worth doing before the next deploy-affecting change to this repo's tracked
+  files.
+
 ## [0.1.0] - 2026-09-13
 
 Initial build: a working v1 skeleton (engine + Go agent + dashboard), verified

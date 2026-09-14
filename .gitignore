@@ -7,8 +7,6 @@ npm-debug.log*
 
 # engine
 engine/dist/
-engine/drizzle/*.sql
-!engine/drizzle/meta
 engine/.backup-ssh/
 
 # agent build output + local config (holds a real agent key)
