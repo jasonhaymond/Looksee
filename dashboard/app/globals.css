@@ -15,3 +15,13 @@ body {
   background: var(--bg);
   color: var(--text);
 }
+
+/* Every <select> in this app uses Tailwind's bg-transparent, which only
+   affects the closed box — the browser renders the expanded options list
+   with its own default colors (usually black-on-white) unless the element
+   itself has an explicit, non-transparent background. */
+select,
+select option {
+  background-color: var(--panel);
+  color: var(--text);
+}

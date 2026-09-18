@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-18
+
+### Fixed
+
+- **Illegible `<select>` dropdown text**: the closed box inherited the dark theme fine,
+  but browsers render the *expanded* options list with their own default colors
+  (usually black-on-white) unless the element has an explicit, non-transparent
+  background — `bg-transparent` alone doesn't reach the native popup. Fixed with one
+  global rule (`select, select option` in `globals.css`) rather than patching each of
+  the five forms individually. Verified by actually opening a dropdown in a real
+  browser and screenshotting it, not just reasoning about CSS cascade layers.
+
 ## [0.2.0] - 2026-09-18
 
 ### Added
