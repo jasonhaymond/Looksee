@@ -1,5 +1,6 @@
 import "dotenv/config";
 import readline from "node:readline/promises";
+import { Writable } from "node:stream";
 import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { db, pool } from "./index.js";
@@ -8,10 +9,31 @@ import { users } from "./schema.js";
 // One-time/occasional bootstrap for Looksee's single admin account. Safe to
 // re-run: prompts before overwriting an existing user's password rather than
 // silently resetting it, per the global setup-script standard.
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+// Node's readline echoes every keystroke to `output` by default, with no
+// built-in way to mask it — this wraps stdout so echo can be suppressed
+// just for the password prompt, per Node's own documented pattern for
+// masked terminal input. `terminal: true` below is required specifically
+// because this custom stream can't report itself as a TTY the way
+// process.stdout does — without it, readline would skip echoing entirely,
+// including for the (intentionally visible) email prompt.
+let muted = false;
+const maskedOutput = new Writable({
+  write(chunk, encoding, callback) {
+    if (!muted) process.stdout.write(chunk, encoding);
+    callback();
+  },
+});
+
+const rl = readline.createInterface({ input: process.stdin, output: maskedOutput, terminal: true });
 
 const email = (await rl.question("Admin email: ")).trim().toLowerCase();
+
+muted = true;
 const password = await rl.question("Admin password (min 8 chars): ");
+muted = false;
+process.stdout.write("\n");
+
 if (password.length < 8) {
   console.error("Password must be at least 8 characters.");
   await rl.close();

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-18
+
+### Fixed
+
+- **`npm run db:create-admin` echoed the password in plaintext** as you typed it — Node's
+  `readline` has no built-in masking. Found by the user during the actual first-deployment
+  admin bootstrap on `nextcloud`. Fixed using Node's own documented pattern for masked
+  terminal input (a muted custom output stream toggled around just the password prompt) —
+  no new dependency. A first attempt used the third-party `read` package instead; dropped
+  after it hung on the second sequential prompt (reproducible even over piped input, before
+  any real terminal was involved) — the Node-native approach doesn't have that failure mode
+  and keeps the script's original single-readline-interface structure intact.
+
+### Notes
+
+- Verification gap, stated plainly: this sandboxed dev environment has no way to allocate
+  a real PTY, so the actual on-screen masking couldn't be visually confirmed here — only
+  that the script still reaches the same execution points as before (typecheck clean,
+  same pre-existing piped-input behavior at the multi-question boundary, unchanged from
+  before this fix). Worth an actual look the next time this runs in a real terminal.
+
 ## [0.1.1] - 2026-09-14
 
 ### Fixed
