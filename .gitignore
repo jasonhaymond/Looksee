@@ -19,6 +19,9 @@ agent/looksee-agent.yaml
 dashboard/.next/
 dashboard/out/
 dashboard/*.tsbuildinfo
+# regenerated on every `next dev`/`next build`, and differs between the two —
+# tracking it just causes spurious merge conflicts across machines/servers
+dashboard/next-env.d.ts
 
 .DS_Store
 Thumbs.db
