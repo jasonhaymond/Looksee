@@ -52,9 +52,10 @@ cd engine
 cp .env.example .env
 # Edit .env: DATABASE_URL (match the port above), a real SESSION_SECRET
 # (node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"),
-# CORS_ALLOWED_ORIGINS, SMTP_* if you want email alerts, and VAPID_* for Web
-# Push (see .env.example for the generate command — never regenerate once
-# real subscriptions exist).
+# CORS_ALLOWED_ORIGINS, PUBLIC_URL (same value as NEXT_PUBLIC_API_URL below —
+# used to build the agent install command shown on the Hosts page), SMTP_*
+# if you want email alerts, and VAPID_* for Web Push (see .env.example for
+# the generate command — never regenerate once real subscriptions exist).
 npm install
 npm run db:migrate
 npm run db:create-admin   # interactive — run in a real terminal, not piped
@@ -197,16 +198,36 @@ declaring success. Refuses to run if there are uncommitted changes in the checko
 
 ## 9. Distributing and installing agent binaries
 
-Build once per platform you need (see [`agent/README.md`](../agent/README.md) for the
-exact commands, including the Docker-based build if this server doesn't have Go
-installed), then `scp` the binary to each host you're monitoring. There's no in-app
-"download the agent" page yet; that's a reasonable follow-up once you're actually
-installing this on more than one or two hosts.
+**Build once, on this server**, for every supported platform:
 
-On a Linux target, `agent/install.sh` registers it as a real systemd service (dedicated
-unprivileged user, `Restart=on-failure`, config file locked to mode 600) —
-see `agent/README.md` for the exact command and what's been verified about it. Windows
-(NSSM/Task Scheduler) and macOS (launchd) are documented there too, but not yet scripted.
+```sh
+cd ~/Looksee/agent
+./build-all.sh
+```
+
+Falls back to a Docker-based build automatically if this server has no Go toolchain.
+Outputs to `agent/bin/` — the engine serves these directly from there, so this only needs
+re-running after pulling agent code changes, not on every host you add.
+
+**Then, on each host you want to monitor**, generate that host's agent key in the
+dashboard (Hosts page) and run the one-line command it shows:
+
+```sh
+curl -fsSL https://looksee.yourdomain.com/install/agent.sh | sudo bash -s -- <key>
+```
+
+This detects the host's OS/arch, downloads the matching binary from this engine
+(`/install/agent/:platform`, unauthenticated by design — the key is the only real
+credential involved, and it's baked into the command itself), writes its config, and — on
+Linux — installs and starts it as a systemd service (dedicated unprivileged user,
+`Restart=on-failure`, config locked to mode 600) in one shot, using the exact same
+`agent/install.sh` this server already has. Windows and macOS download the binary +
+config but don't auto-install as a service yet — see `agent/README.md` for the manual
+NSSM/Task Scheduler/launchd steps.
+
+Verified for real, not just written: a live agent key generated via the dashboard's own
+API, the exact one-line command run verbatim in a fresh container, and the resulting
+host's "last report" time confirmed updating on the engine afterward.
 
 ## 10. Troubleshooting
 

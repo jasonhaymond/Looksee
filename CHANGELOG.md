@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-18
+
+### Added
+
+- **`agent/build-all.sh`**: cross-compiles the agent for every supported platform
+  (linux/amd64, linux/arm64, windows/amd64, darwin/amd64, darwin/arm64) in one command,
+  falling back to the `golang` Docker image automatically when there's no local Go
+  toolchain — no flag needed, same detection this project has used manually all along.
+- **One-command agent install**: generating a host's agent key now also returns a
+  ready-to-run command (`curl -fsSL <engine>/install/agent.sh | sudo bash -s -- <key>`),
+  shown prominently in the Hosts page with a copy button. It detects the target host's
+  OS/arch, downloads the matching binary the engine serves from `agent/bin/`, writes the
+  config with the key already filled in, and — on Linux — installs and starts it as a
+  systemd service using the engine's own `agent/install.sh` (fetched and run, not
+  reimplemented, so there's one authored copy of the install logic). Windows/macOS
+  download the binary + config but don't auto-install as a service yet.
+- New unauthenticated `/install/*` route group on the engine (`agent.sh`, `install.sh`,
+  `looksee-agent.service`, `agent/:platform`) — deliberately outside `/api` and outside
+  auth, since a host bootstrapping the agent for the first time has no session yet and
+  none of this is sensitive on its own (the real credential is the per-host key, baked
+  into the command by routes/hosts.ts, which stays behind the existing session auth).
+- New `PUBLIC_URL` engine env var — this engine's own reachable URL, used to build the
+  install command and bake into the bootstrap script it serves.
+
+### Verification
+
+- Ran the actual generated one-liner, verbatim, in a fresh systemd container: a real
+  agent key from the dashboard's own API, `curl | sudo bash -s -- <key>` exactly as
+  shown in the UI, confirmed the systemd service came up `active`+`enabled`, and
+  confirmed the resulting host's `lastSeenAt` updated on the engine afterward — proving
+  the whole chain (build → serve → download → configure → install → report) works
+  together, not just each piece in isolation.
+- `agent/build-all.sh` actually run end-to-end (via the Docker fallback, since this dev
+  machine has no Go), producing all 5 real binaries.
+- New `engine/test/install.test.ts` covers the route group; full suite (13 tests) passes.
+
 ## [0.2.1] - 2026-09-18
 
 ### Fixed

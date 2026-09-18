@@ -14,6 +14,7 @@ import { agentRouter } from "./routes/agent.js";
 import { pushRouter } from "./routes/push.js";
 import { backupsRouter } from "./routes/backups.js";
 import { dashboardsRouter } from "./routes/dashboards.js";
+import { installRouter } from "./routes/install.js";
 
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
   .split(",")
@@ -39,6 +40,9 @@ app.use("/api/agent", agentRouter);
 app.use("/api/push", pushRouter);
 app.use("/api/backups", backupsRouter);
 app.use("/api/dashboards", dashboardsRouter);
+// Outside /api on purpose — meant for plain curl, not the JSON API, and
+// deliberately unauthenticated (see routes/install.ts for why).
+app.use("/install", installRouter);
 
 // Verifies the process can actually reach Postgres, not just that it's up —
 // the more useful signal for deploy/update scripts and any future uptime

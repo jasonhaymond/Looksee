@@ -14,17 +14,34 @@ function relativeTime(iso: string | null) {
   return `${Math.round(seconds / 3600)}h ago`;
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
+      className="rounded border border-[var(--border)] px-2 py-0.5 text-[10px] text-[var(--muted)] hover:text-[var(--text)]"
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
 function HostRow({
   host,
   siteName,
   onChanged,
-  revealedKey,
+  revealed,
   onIssueKey,
 }: {
   host: Host;
   siteName: string;
   onChanged: () => void;
-  revealedKey: string | undefined;
+  revealed: { agentApiKey: string; installCommand: string } | undefined;
   onIssueKey: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -83,20 +100,30 @@ function HostRow({
             <button onClick={onIssueKey} className="hover:underline">
               Generate agent key
             </button>
-            <Tooltip text="Creates a fresh credential for the Looksee agent running on this host. The old key stops working immediately — only paste this into one place, the host's own looksee-agent.yaml." />
+            <Tooltip text="Creates a fresh credential for this host and a ready-to-run install command. The old key stops working immediately if one already existed." />
           </span>
           <button onClick={handleDelete} className="text-xs text-[var(--down)] hover:underline">
             Delete
           </button>
         </div>
       </div>
-      {revealedKey && (
-        <div className="mt-2 rounded-md border border-[var(--warn)]/40 bg-[var(--warn)]/10 p-2 text-xs">
-          <p className="mb-1 text-[var(--warn)]">
-            Copy this now — it won&apos;t be shown again. Paste it as <code>agent_key</code> in this host&apos;s
-            <code> looksee-agent.yaml</code>.
+      {revealed && (
+        <div className="mt-2 space-y-2 rounded-md border border-[var(--warn)]/40 bg-[var(--warn)]/10 p-2 text-xs">
+          <p className="text-[var(--warn)]">
+            Copy this now — it won&apos;t be shown again. Run it on <strong>{host.name}</strong> itself (as a user who
+            can <code>sudo</code>, for the automatic Linux service install):
           </p>
-          <code className="break-all">{revealedKey}</code>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 break-all rounded bg-black/30 p-1.5">{revealed.installCommand}</code>
+            <CopyButton text={revealed.installCommand} />
+          </div>
+          <details>
+            <summary className="cursor-pointer text-[var(--muted)]">Just the raw key (manual setup)</summary>
+            <div className="mt-1 flex items-center gap-2">
+              <code className="flex-1 break-all rounded bg-black/30 p-1.5">{revealed.agentApiKey}</code>
+              <CopyButton text={revealed.agentApiKey} />
+            </div>
+          </details>
         </div>
       )}
     </li>
@@ -113,7 +140,7 @@ export default function HostsPage() {
   const [hostname, setHostname] = useState("");
   const [os, setOs] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [revealedKeys, setRevealedKeys] = useState<Record<string, string>>({});
+  const [revealedKeys, setRevealedKeys] = useState<Record<string, { agentApiKey: string; installCommand: string }>>({});
 
   const load = useCallback(async () => {
     const siteList = await api.sites();
@@ -154,8 +181,8 @@ export default function HostsPage() {
   }
 
   async function handleIssueKey(hostId: string) {
-    const { agentApiKey } = await api.issueAgentKey(hostId);
-    setRevealedKeys((prev) => ({ ...prev, [hostId]: agentApiKey }));
+    const { agentApiKey, installCommand } = await api.issueAgentKey(hostId);
+    setRevealedKeys((prev) => ({ ...prev, [hostId]: { agentApiKey, installCommand } }));
   }
 
   if (!authChecked) return null;
@@ -172,7 +199,7 @@ export default function HostsPage() {
         ) : (
           <ul className="space-y-3">
             {hosts.map((h) => (
-              <HostRow key={h.id} host={h} siteName={siteName(h.siteId)} onChanged={load} revealedKey={revealedKeys[h.id]} onIssueKey={() => handleIssueKey(h.id)} />
+              <HostRow key={h.id} host={h} siteName={siteName(h.siteId)} onChanged={load} revealed={revealedKeys[h.id]} onIssueKey={() => handleIssueKey(h.id)} />
             ))}
           </ul>
         )}

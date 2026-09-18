@@ -94,7 +94,7 @@ export const api = {
   updateHost: (id: string, input: { name?: string; hostname?: string | null; os?: string | null }) =>
     request<Host>(`/api/hosts/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteHost: (hostId: string) => request<void>(`/api/hosts/${hostId}`, { method: "DELETE" }),
-  issueAgentKey: (hostId: string) => request<{ agentApiKey: string }>(`/api/hosts/${hostId}/agent-key`, { method: "POST" }),
+  issueAgentKey: (hostId: string) => request<{ agentApiKey: string; installCommand: string }>(`/api/hosts/${hostId}/agent-key`, { method: "POST" }),
 
   checks: (siteId?: string) => request<Check[]>(`/api/checks${siteId ? `?siteId=${siteId}` : ""}`),
   createCheck: (input: { siteId: string; hostId?: string | null; name: string; type: string; config: Record<string, unknown>; intervalSeconds?: number }) =>

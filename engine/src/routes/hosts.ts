@@ -61,7 +61,13 @@ hostsRouter.post("/:id/agent-key", async (req, res) => {
     res.status(404).json({ error: "Host not found" });
     return;
   }
-  res.json({ agentApiKey });
+  // One copy-pasteable command: downloads the right binary for the target
+  // host's OS/arch, writes its config with this key baked in, and (on
+  // Linux, with sudo) installs it as a systemd service — see
+  // engine/src/routes/install.ts for what it actually runs.
+  const publicUrl = process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 4100}`;
+  const installCommand = `curl -fsSL ${publicUrl}/install/agent.sh | sudo bash -s -- ${agentApiKey}`;
+  res.json({ agentApiKey, installCommand });
 });
 
 hostsRouter.delete("/:id", async (req, res) => {
