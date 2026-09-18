@@ -23,7 +23,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export type Site = { id: string; name: string; description: string | null };
-export type Host = { id: string; siteId: string; name: string; hostname: string | null; lastSeenAt: string | null };
+export type Host = { id: string; siteId: string; name: string; hostname: string | null; os: string | null; lastSeenAt: string | null };
 export type Check = {
   id: string;
   siteId: string;
@@ -84,20 +84,31 @@ export const api = {
 
   sites: () => request<Site[]>("/api/sites"),
   createSite: (name: string) => request<Site>("/api/sites", { method: "POST", body: JSON.stringify({ name }) }),
+  updateSite: (id: string, input: { name?: string; description?: string | null }) =>
+    request<Site>(`/api/sites/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+  deleteSite: (id: string) => request<void>(`/api/sites/${id}`, { method: "DELETE" }),
 
   hosts: (siteId?: string) => request<Host[]>(`/api/hosts${siteId ? `?siteId=${siteId}` : ""}`),
-  createHost: (siteId: string, name: string) => request<Host>("/api/hosts", { method: "POST", body: JSON.stringify({ siteId, name }) }),
+  createHost: (input: { siteId: string; name: string; hostname?: string; os?: string }) =>
+    request<Host>("/api/hosts", { method: "POST", body: JSON.stringify(input) }),
+  updateHost: (id: string, input: { name?: string; hostname?: string | null; os?: string | null }) =>
+    request<Host>(`/api/hosts/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteHost: (hostId: string) => request<void>(`/api/hosts/${hostId}`, { method: "DELETE" }),
   issueAgentKey: (hostId: string) => request<{ agentApiKey: string }>(`/api/hosts/${hostId}/agent-key`, { method: "POST" }),
 
   checks: (siteId?: string) => request<Check[]>(`/api/checks${siteId ? `?siteId=${siteId}` : ""}`),
   createCheck: (input: { siteId: string; hostId?: string | null; name: string; type: string; config: Record<string, unknown>; intervalSeconds?: number }) =>
     request<Check>("/api/checks", { method: "POST", body: JSON.stringify(input) }),
+  updateCheck: (id: string, input: { name?: string; config?: Record<string, unknown>; intervalSeconds?: number; enabled?: boolean }) =>
+    request<Check>(`/api/checks/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+  deleteCheck: (id: string) => request<void>(`/api/checks/${id}`, { method: "DELETE" }),
   checkResults: (checkId: string, limit = 50) => request<CheckResult[]>(`/api/checks/${checkId}/results?limit=${limit}`),
 
   channels: () => request<Channel[]>("/api/channels"),
   createChannel: (input: { name: string; type: string; config: Record<string, unknown> }) =>
     request<Channel>("/api/channels", { method: "POST", body: JSON.stringify(input) }),
+  updateChannel: (id: string, input: { name?: string; config?: Record<string, unknown>; enabled?: boolean }) =>
+    request<Channel>(`/api/channels/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteChannel: (id: string) => request<void>(`/api/channels/${id}`, { method: "DELETE" }),
 
   alertRules: (checkId: string) => request<AlertRule[]>(`/api/alert-rules?checkId=${checkId}`),

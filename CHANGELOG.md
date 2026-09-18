@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-18
+
+### Added
+
+- **Edit and delete everywhere**: sites (rename/delete), checks (edit/delete, previously
+  only creatable), hosts (edit name/hostname/OS, delete already existed), and channels
+  (rename, and a separate "update config" flow for the write-only parts) — all backed by
+  engine PATCH/DELETE routes that already existed but had no dashboard UI. Checks
+  previously had no delete at all.
+- **Structured check config fields**, replacing the raw-JSON textarea: a real form per
+  check type (URL + expected status for HTTP(S), host + port for TCP, etc.) shared
+  between the add and edit forms (`CheckConfigFields`), with client-side validation
+  before submit. Directly serves the "HTTP(S) check" ask — it was already a supported
+  check type, but adding one meant hand-writing a JSON blob; now it's just two fields.
+  The same treatment was applied to notification channels (`ChannelConfigFields`).
+- **Tooltips** throughout — a small reusable `Tooltip` component (CSS-only hover/focus
+  reveal, no library) explaining what each check type does, what config fields mean,
+  and how backup settings (repository, passphrase, cron schedule, retention, SSH key)
+  and alert thresholds work, right where you'd need to know it instead of only in
+  docs.
+
+### Verification
+
+- Full live click-through in a real browser, not just typechecked: added an HTTP(S)
+  check via the new structured fields, hovered a tooltip and confirmed it renders,
+  edited and deleted a check, renamed a site, edited a host's hostname/OS, and
+  updated a channel's config — zero console errors across all of it. Engine test
+  suite (10 tests) still passes; no backend changes were needed since every
+  PATCH/DELETE route this relies on already existed.
+
 ## [0.1.2] - 2026-09-18
 
 ### Fixed

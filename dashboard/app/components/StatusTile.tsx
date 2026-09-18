@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import type { Check, CheckResult } from "../lib/api";
+import { api, type Check, type CheckResult } from "../lib/api";
 import { AlertRuleManager } from "./AlertRuleManager";
 import { CheckHistory } from "./CheckHistory";
+import { EditCheckForm } from "./EditCheckForm";
 
 const STATUS_COLOR: Record<string, string> = {
   up: "var(--up)",
@@ -31,16 +32,23 @@ function relativeTime(iso: string) {
   return `${Math.round(seconds / 3600)}h ago`;
 }
 
-export function StatusTile({ check, latest }: { check: Check; latest: CheckResult | undefined }) {
+export function StatusTile({ check, latest, onChanged }: { check: Check; latest: CheckResult | undefined; onChanged?: () => void }) {
   const status = latest?.status ?? "unknown";
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState<"alerts" | "edit" | null>(null);
+
+  async function handleDelete() {
+    if (!confirm(`Delete check "${check.name}"? This also deletes its history and any alert rules on it.`)) return;
+    await api.deleteCheck(check.id);
+    onChanged?.();
+  }
 
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
-      <button onClick={() => setExpanded((v) => !v)} className="flex w-full items-center gap-2 text-left">
+      <button onClick={() => setExpanded((v) => (v === "alerts" ? null : "alerts"))} className="flex w-full items-center gap-2 text-left">
         <span className="h-2.5 w-2.5 rounded-full" style={{ background: STATUS_COLOR[status] }} />
         <span className="font-medium">{check.name}</span>
         <span className="text-[10px] tracking-wide text-[var(--muted)]">{STATUS_LABEL[status]}</span>
+        {!check.enabled && <span className="text-[10px] text-[var(--warn)]">DISABLED</span>}
       </button>
       <div className="mt-1 text-xs text-[var(--muted)]">
         {check.type}
@@ -54,12 +62,30 @@ export function StatusTile({ check, latest }: { check: Check; latest: CheckResul
           " · no results yet"
         )}
         {" · "}
-        <button onClick={() => setExpanded((v) => !v)} className="underline">
-          {expanded ? "hide alerts" : "alerts"}
+        <button onClick={() => setExpanded((v) => (v === "alerts" ? null : "alerts"))} className="underline">
+          {expanded === "alerts" ? "hide alerts" : "alerts"}
+        </button>
+        {" · "}
+        <button onClick={() => setExpanded((v) => (v === "edit" ? null : "edit"))} className="underline">
+          {expanded === "edit" ? "cancel edit" : "edit"}
+        </button>
+        {" · "}
+        <button onClick={handleDelete} className="text-[var(--down)] underline">
+          delete
         </button>
       </div>
       <CheckHistory checkId={check.id} currentStatus={status} />
-      {expanded && <AlertRuleManager checkId={check.id} />}
+      {expanded === "alerts" && <AlertRuleManager checkId={check.id} />}
+      {expanded === "edit" && (
+        <EditCheckForm
+          check={check}
+          onSaved={() => {
+            setExpanded(null);
+            onChanged?.();
+          }}
+          onCancel={() => setExpanded(null)}
+        />
+      )}
     </div>
   );
 }

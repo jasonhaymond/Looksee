@@ -13,6 +13,56 @@ import { TopNav } from "../components/TopNav";
 // control how often the engine itself re-probes each check.
 const REFRESH_MS = 15_000;
 
+function SiteHeader({ site, onChanged }: { site: Site; onChanged: () => void }) {
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState(site.name);
+
+  async function handleRename(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    await api.updateSite(site.id, { name: name.trim() });
+    setRenaming(false);
+    onChanged();
+  }
+
+  async function handleDelete() {
+    if (!confirm(`Delete site "${site.name}"? This also deletes its hosts and checks.`)) return;
+    await api.deleteSite(site.id);
+    onChanged();
+  }
+
+  if (renaming) {
+    return (
+      <form onSubmit={handleRename} className="flex items-center gap-2">
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="rounded-md border border-[var(--border)] bg-transparent px-2 py-1 text-sm outline-none"
+        />
+        <button type="submit" className="text-sm text-[var(--up)]">
+          Save
+        </button>
+        <button type="button" onClick={() => setRenaming(false)} className="text-sm text-[var(--muted)]">
+          Cancel
+        </button>
+      </form>
+    );
+  }
+
+  return (
+    <>
+      <h2 className="font-medium">{site.name}</h2>
+      <button onClick={() => setRenaming(true)} className="text-xs text-[var(--muted)] underline hover:text-[var(--text)]">
+        rename
+      </button>
+      <button onClick={handleDelete} className="text-xs text-[var(--down)] underline">
+        delete
+      </button>
+    </>
+  );
+}
+
 export default function ManagePage() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
@@ -75,12 +125,12 @@ export default function ManagePage() {
           return (
             <section key={site.id} className="rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
               <div className="mb-3 flex items-center gap-2">
-                <h2 className="font-medium">{site.name}</h2>
+                <SiteHeader site={site} onChanged={loadAll} />
                 <GroupSummary checks={checks} latestByCheck={latestByCheck} />
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {checks.map((check) => (
-                  <StatusTile key={check.id} check={check} latest={latestByCheck.get(check.id)} />
+                  <StatusTile key={check.id} check={check} latest={latestByCheck.get(check.id)} onChanged={loadAll} />
                 ))}
               </div>
               <div className="mt-3">

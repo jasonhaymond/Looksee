@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, type AlertRule, type Channel } from "../lib/api";
+import { Tooltip } from "./Tooltip";
 
 export function AlertRuleManager({ checkId }: { checkId: string }) {
   const [rules, setRules] = useState<AlertRule[]>([]);
@@ -79,7 +80,10 @@ export function AlertRuleManager({ checkId }: { checkId: string }) {
         </p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <span>Alert after</span>
+          <span className="inline-flex items-center">
+            Alert after
+            <Tooltip text="How many checks in a row must fail before this triggers a notification. Higher = fewer false alarms from a single blip, but slower to notice a real outage." />
+          </span>
           <input
             type="number"
             min={1}

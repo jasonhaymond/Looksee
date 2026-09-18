@@ -173,7 +173,7 @@ export default function DashboardsPage() {
           </p>
         );
       }
-      return <StatusTile check={check} latest={latestByCheck.get(check.id)} />;
+      return <StatusTile check={check} latest={latestByCheck.get(check.id)} onChanged={loadStatusData} />;
     }
     const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
     return (

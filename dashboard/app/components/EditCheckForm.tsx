@@ -1,0 +1,72 @@
+"use client";
+
+import { useState } from "react";
+import { api, type Check } from "../lib/api";
+import { CheckConfigFields, CHECK_TYPE_HELP, normalizeConfig, validateConfig } from "./CheckConfigFields";
+import { Tooltip } from "./Tooltip";
+
+export function EditCheckForm({ check, onSaved, onCancel }: { check: Check; onSaved: () => void; onCancel: () => void }) {
+  const [name, setName] = useState(check.name);
+  const [config, setConfig] = useState<Record<string, unknown>>(check.config);
+  const [interval, setIntervalSeconds] = useState(check.intervalSeconds);
+  const [enabled, setEnabled] = useState(check.enabled);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const normalized = normalizeConfig(check.type, config);
+    const validationError = validateConfig(check.type, normalized);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    try {
+      await api.updateCheck(check.id, { name, config: normalized, intervalSeconds: interval, enabled });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save check");
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-2 space-y-2 rounded-lg border border-[var(--border)] p-3 text-sm">
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        required
+        className="w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1 outline-none"
+      />
+      <p className="inline-flex items-center text-xs text-[var(--muted)]">
+        Type: {check.type} <Tooltip text={CHECK_TYPE_HELP[check.type] ?? ""} /> (can't be changed — delete and recreate to switch types)
+      </p>
+      <CheckConfigFields type={check.type} config={config} onChange={setConfig} />
+      <div className="flex items-center gap-4">
+        <label className="flex items-center gap-1">
+          <span className="text-[var(--muted)]">Interval</span>
+          <input
+            type="number"
+            min={5}
+            value={interval}
+            onChange={(e) => setIntervalSeconds(Number(e.target.value))}
+            className="w-20 rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
+          />
+          <span className="text-xs text-[var(--muted)]">sec</span>
+        </label>
+        <label className="flex items-center gap-1">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          Enabled
+        </label>
+      </div>
+      {error && <p className="text-xs text-[var(--down)]">{error}</p>}
+      <div className="flex gap-2">
+        <button type="submit" className="rounded-md bg-[var(--up)] px-3 py-1 font-medium text-black">
+          Save
+        </button>
+        <button type="button" onClick={onCancel} className="text-[var(--muted)]">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}

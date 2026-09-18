@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api, ApiError, type BackupSettings, type BackupRun, type Archive, type CurrentOperation } from "../lib/api";
 import { RestoreForm } from "./RestoreForm";
 import { TopNav } from "../components/TopNav";
+import { Tooltip } from "../components/Tooltip";
 
 const POLL_MS = 5_000;
 
@@ -115,7 +116,11 @@ export default function BackupsPage() {
         <h2 className="mb-3 font-medium">Repository settings</h2>
         <form onSubmit={handleSave} className="space-y-3 text-sm">
           <label className="block">
-            Repository (local path or <code>user@host:path</code> for SSH)
+            <span className="inline-flex items-center">
+              Repository
+              <Tooltip text={'Where Borg stores encrypted backup archives. A local path (e.g. /var/backups/looksee) is simplest; user@host:path uses SSH to back up to a different machine — click "Show SSH public key" below to authorize this engine on that machine.'} />
+            </span>{" "}
+            (local path or <code>user@host:path</code> for SSH)
             <input
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
@@ -124,7 +129,11 @@ export default function BackupsPage() {
             />
           </label>
           <label className="block">
-            Passphrase {settings.passphraseSet && <span className="text-[var(--muted)]">(already set — leave blank to keep it)</span>}
+            <span className="inline-flex items-center">
+              Passphrase
+              <Tooltip text="Encrypts the backup repository. Store this somewhere safe outside Looksee (a password manager) — it's write-only here and can never be shown again once saved, and losing it means losing access to every archive with no recovery." />
+            </span>{" "}
+            {settings.passphraseSet && <span className="text-[var(--muted)]">(already set — leave blank to keep it)</span>}
             <input
               type="password"
               value={passphrase}
@@ -134,7 +143,11 @@ export default function BackupsPage() {
           </label>
           <div className="flex gap-3">
             <label className="flex-1">
-              Schedule (cron, blank = manual only)
+              <span className="inline-flex items-center">
+                Schedule
+                <Tooltip text={'Standard 5-field cron syntax: minute hour day-of-month month day-of-week. "0 3 * * *" means every day at 3am. Leave blank to only back up when you click "Back up now."'} />
+              </span>{" "}
+              (cron, blank = manual only)
               <input
                 value={schedule}
                 onChange={(e) => setSchedule(e.target.value)}
@@ -143,7 +156,10 @@ export default function BackupsPage() {
               />
             </label>
             <label className="w-32">
-              Keep last N
+              <span className="inline-flex items-center">
+                Keep last N
+                <Tooltip text="After each scheduled or manual backup, older archives beyond this count are pruned automatically. Leave blank for no automatic pruning — archives accumulate forever." />
+              </span>
               <input
                 type="number"
                 min={1}
@@ -159,9 +175,12 @@ export default function BackupsPage() {
             <button type="submit" className="rounded-md bg-[var(--up)] px-3 py-1.5 font-medium text-black">
               Save settings
             </button>
-            <button type="button" onClick={handleShowSshKey} className="text-[var(--muted)] hover:text-[var(--text)]">
-              Show SSH public key (for a remote repo)
-            </button>
+            <span className="inline-flex items-center text-[var(--muted)]">
+              <button type="button" onClick={handleShowSshKey} className="hover:text-[var(--text)]">
+                Show SSH public key (for a remote repo)
+              </button>
+              <Tooltip text="A dedicated key generated just for backups. Copy it into the remote host's ~/.ssh/authorized_keys to authorize this engine to write backups there over SSH." />
+            </span>
           </div>
           {sshKey && <pre className="overflow-x-auto rounded-md border border-[var(--border)] p-2 text-xs">{sshKey}</pre>}
         </form>
@@ -170,13 +189,18 @@ export default function BackupsPage() {
       <section className="mb-6 rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="font-medium">Archives</h2>
-          <button
-            onClick={handleBackupNow}
-            disabled={Boolean(currentOp) || !settings.repoUrl || !settings.passphraseSet}
-            className="rounded-md border border-[var(--border)] px-3 py-1 text-sm disabled:opacity-40"
-          >
-            Back up now
-          </button>
+          <span className="inline-flex items-center">
+            <button
+              onClick={handleBackupNow}
+              disabled={Boolean(currentOp) || !settings.repoUrl || !settings.passphraseSet}
+              className="rounded-md border border-[var(--border)] px-3 py-1 text-sm disabled:opacity-40"
+            >
+              Back up now
+            </button>
+            {(!settings.repoUrl || !settings.passphraseSet) && (
+              <Tooltip text="Set a repository and passphrase above first, then save settings — this button enables once both are configured." />
+            )}
+          </span>
         </div>
         {archives.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">No archives yet.</p>
