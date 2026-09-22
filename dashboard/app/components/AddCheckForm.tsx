@@ -5,6 +5,8 @@ import { api, type Host } from "../lib/api";
 import { CheckConfigFields, CHECK_TYPE_LABELS, CHECK_TYPE_HELP, defaultConfigFor, normalizeConfig, validateConfig } from "./CheckConfigFields";
 import { Tooltip } from "./Tooltip";
 
+const AGENT_TYPES = new Set(["agent_service", "agent_process"]);
+
 export function AddCheckForm({
   siteId,
   hosts,
@@ -23,6 +25,7 @@ export function AddCheckForm({
   const [interval, setIntervalSeconds] = useState(60);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const selectedHost = hosts.find((h) => h.id === hostId);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -33,8 +36,8 @@ export function AddCheckForm({
       setError(validationError);
       return;
     }
-    if (type === "agent_service" && !hostId) {
-      setError("Service checks need a host to run the agent on.");
+    if (AGENT_TYPES.has(type) && !hostId) {
+      setError("This check type needs a host to run the agent on.");
       return;
     }
     try {
@@ -87,19 +90,19 @@ export function AddCheckForm({
           ))}
         </select>
       </label>
-      {(type === "agent_service" || hosts.length > 0) && (
+      {(AGENT_TYPES.has(type) || hosts.length > 0) && (
         <label className="block">
           <span className="inline-flex items-center text-[var(--muted)]">
-            Host{type === "agent_service" ? "" : " (optional)"}
-            <Tooltip text="Which host this check belongs to. Service checks require the Looksee agent installed on that host — see the Hosts page to generate an install command." />
+            Host{AGENT_TYPES.has(type) ? "" : " (optional)"}
+            <Tooltip text="Which host this check belongs to. Service/process checks require the Looksee agent installed on that host — see the Hosts page to generate an install command." />
           </span>
           <select
             value={hostId}
             onChange={(e) => setHostId(e.target.value)}
-            required={type === "agent_service"}
+            required={AGENT_TYPES.has(type)}
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
           >
-            <option value="">{type === "agent_service" ? "Select a host…" : "None"}</option>
+            <option value="">{AGENT_TYPES.has(type) ? "Select a host…" : "None"}</option>
             {hosts.map((h) => (
               <option key={h.id} value={h.id}>
                 {h.name}
@@ -109,7 +112,12 @@ export function AddCheckForm({
           </select>
         </label>
       )}
-      <CheckConfigFields type={type} config={config} onChange={setConfig} />
+      <CheckConfigFields
+        type={type}
+        config={config}
+        onChange={setConfig}
+        suggestions={type === "agent_process" ? selectedHost?.availableProcesses ?? undefined : type === "agent_service" ? selectedHost?.availableServices ?? undefined : undefined}
+      />
       <label className="block w-32">
         <span className="inline-flex items-center text-[var(--muted)]">
           Interval

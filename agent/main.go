@@ -5,6 +5,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"runtime"
 	"time"
@@ -49,15 +50,36 @@ func runOnce(client *report.Client, diskPath string) {
 	results := make([]report.ServiceResult, 0, len(serviceChecks))
 	for _, sc := range serviceChecks {
 		name, _ := sc.Config["serviceName"].(string)
-		running, err := metrics.IsProcessRunning(name)
+		var running bool
+		var checkErr error
+		switch sc.Type {
+		case "agent_process":
+			running, checkErr = metrics.IsProcessRunning(name)
+		case "agent_service":
+			running, checkErr = metrics.IsServiceActive(name)
+		default:
+			checkErr = fmt.Errorf("unknown check type %q", sc.Type)
+		}
 		result := report.ServiceResult{CheckID: sc.ID, Running: running}
-		if err != nil {
-			result.Message = err.Error()
+		if checkErr != nil {
+			result.Message = checkErr.Error()
 		}
 		results = append(results, result)
 	}
 
-	if err := client.SendReport(snap, results); err != nil {
+	discovery := report.Discovery{}
+	if names, err := metrics.ListProcessNames(); err != nil {
+		log.Printf("listing processes: %v", err)
+	} else {
+		discovery.Processes = names
+	}
+	if names, err := metrics.ListServiceNames(); err != nil {
+		log.Printf("listing services: %v", err)
+	} else {
+		discovery.Services = names
+	}
+
+	if err := client.SendReport(snap, results, discovery); err != nil {
 		log.Printf("sending report: %v", err)
 	}
 }

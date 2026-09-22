@@ -5,6 +5,8 @@ import { api, type Check, type Host } from "../lib/api";
 import { CheckConfigFields, CHECK_TYPE_HELP, normalizeConfig, validateConfig } from "./CheckConfigFields";
 import { Tooltip } from "./Tooltip";
 
+const AGENT_TYPES = new Set(["agent_service", "agent_process"]);
+
 export function EditCheckForm({
   check,
   hosts,
@@ -24,6 +26,7 @@ export function EditCheckForm({
   const [interval, setIntervalSeconds] = useState(check.intervalSeconds);
   const [enabled, setEnabled] = useState(check.enabled);
   const [error, setError] = useState<string | null>(null);
+  const selectedHost = hosts.find((h) => h.id === hostId);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,8 +37,8 @@ export function EditCheckForm({
       setError(validationError);
       return;
     }
-    if (check.type === "agent_service" && !hostId) {
-      setError("Service checks need a host to run the agent on.");
+    if (AGENT_TYPES.has(check.type) && !hostId) {
+      setError("This check type needs a host to run the agent on.");
       return;
     }
     try {
@@ -57,19 +60,19 @@ export function EditCheckForm({
       <p className="inline-flex items-center text-xs text-[var(--muted)]">
         Type: {check.type} <Tooltip text={CHECK_TYPE_HELP[check.type] ?? ""} /> (can't be changed — delete and recreate to switch types)
       </p>
-      {(check.type === "agent_service" || hosts.length > 0) && (
+      {(AGENT_TYPES.has(check.type) || hosts.length > 0) && (
         <label className="block">
           <span className="inline-flex items-center text-[var(--muted)]">
-            Host{check.type === "agent_service" ? "" : " (optional)"}
-            <Tooltip text="Which host this check belongs to. Service checks require the Looksee agent installed on that host." />
+            Host{AGENT_TYPES.has(check.type) ? "" : " (optional)"}
+            <Tooltip text="Which host this check belongs to. Service/process checks require the Looksee agent installed on that host." />
           </span>
           <select
             value={hostId}
             onChange={(e) => setHostId(e.target.value)}
-            required={check.type === "agent_service"}
+            required={AGENT_TYPES.has(check.type)}
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
           >
-            <option value="">{check.type === "agent_service" ? "Select a host…" : "None"}</option>
+            <option value="">{AGENT_TYPES.has(check.type) ? "Select a host…" : "None"}</option>
             {hosts.map((h) => (
               <option key={h.id} value={h.id}>
                 {h.name}
@@ -79,7 +82,12 @@ export function EditCheckForm({
           </select>
         </label>
       )}
-      <CheckConfigFields type={check.type} config={config} onChange={setConfig} />
+      <CheckConfigFields
+        type={check.type}
+        config={config}
+        onChange={setConfig}
+        suggestions={check.type === "agent_process" ? selectedHost?.availableProcesses ?? undefined : check.type === "agent_service" ? selectedHost?.availableServices ?? undefined : undefined}
+      />
       <div className="flex items-center gap-4">
         <label className="flex items-center gap-1">
           <span className="text-[var(--muted)]">Interval</span>

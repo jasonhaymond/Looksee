@@ -1,13 +1,13 @@
 import { Router } from "express";
 import { desc, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { checks, checkResults } from "../db/schema.js";
+import { checks, checkResults, AGENT_CHECK_TYPES } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const checksRouter = Router();
 checksRouter.use(requireAuth);
 
-const VALID_TYPES = ["ping", "tcp", "http", "dns", "ssl_cert", "agent_service"] as const;
+const VALID_TYPES = ["ping", "tcp", "http", "dns", "ssl_cert", "agent_service", "agent_process"] as const;
 
 checksRouter.get("/", async (req, res) => {
   const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
@@ -31,8 +31,8 @@ checksRouter.post("/", async (req, res) => {
   // hostId matching a real host (see routes/agent.ts's /config filter) — a
   // null hostId here means the check silently never gets polled by any
   // agent, with no error anywhere. Reject it up front instead.
-  if (type === "agent_service" && !hostId) {
-    res.status(400).json({ error: "agent_service checks require a hostId" });
+  if ((AGENT_CHECK_TYPES as readonly string[]).includes(type) && !hostId) {
+    res.status(400).json({ error: `${type} checks require a hostId` });
     return;
   }
   const config = req.body?.config && typeof req.body.config === "object" ? req.body.config : {};
@@ -58,8 +58,8 @@ checksRouter.patch("/:id", async (req, res) => {
   if (req.body?.intervalSeconds !== undefined) updates.intervalSeconds = Number(req.body.intervalSeconds);
   if (req.body?.enabled !== undefined) updates.enabled = Boolean(req.body.enabled);
   const nextHostId = "hostId" in updates ? updates.hostId : existing.hostId;
-  if (existing.type === "agent_service" && !nextHostId) {
-    res.status(400).json({ error: "agent_service checks require a hostId" });
+  if ((AGENT_CHECK_TYPES as readonly string[]).includes(existing.type) && !nextHostId) {
+    res.status(400).json({ error: `${existing.type} checks require a hostId` });
     return;
   }
   const [check] = await db.update(checks).set(updates).where(eq(checks.id, req.params.id)).returning();

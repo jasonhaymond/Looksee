@@ -29,6 +29,7 @@ func NewClient(baseURL, agentKey string) *Client {
 
 type ServiceCheck struct {
 	ID     string         `json:"id"`
+	Type   string         `json:"type"`
 	Config map[string]any `json:"config"`
 }
 
@@ -66,12 +67,29 @@ type ServiceResult struct {
 }
 
 type reportBody struct {
-	Metrics  metrics.Snapshot `json:"metrics"`
-	Services []ServiceResult  `json:"services,omitempty"`
+	Metrics            metrics.Snapshot `json:"metrics"`
+	Services           []ServiceResult  `json:"services,omitempty"`
+	AvailableProcesses []string         `json:"availableProcesses,omitempty"`
+	AvailableServices  []string         `json:"availableServices,omitempty"`
 }
 
-func (c *Client) SendReport(snap metrics.Snapshot, services []ServiceResult) error {
-	body, err := json.Marshal(reportBody{Metrics: snap, Services: services})
+// Discovery is a snapshot of what's actually on this host (every running
+// process name, every registered OS service name) — feeds the dashboard's
+// check-form suggestions. Optional/best-effort: nil/empty slices just
+// aren't sent (omitempty), so an agent build or OS that can't gather one
+// doesn't block the rest of the report.
+type Discovery struct {
+	Processes []string
+	Services  []string
+}
+
+func (c *Client) SendReport(snap metrics.Snapshot, services []ServiceResult, discovery Discovery) error {
+	body, err := json.Marshal(reportBody{
+		Metrics:            snap,
+		Services:           services,
+		AvailableProcesses: discovery.Processes,
+		AvailableServices:  discovery.Services,
+	})
 	if err != nil {
 		return err
 	}

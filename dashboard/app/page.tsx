@@ -190,13 +190,23 @@ export default function DashboardsPage() {
           </p>
         );
       }
+      // Disabled checks are only shown on /manage (where you'd go to
+      // re-enable one) — everywhere else, including here, they're hidden
+      // rather than shown as a dead/unchanging tile.
+      if (!check.enabled) {
+        return (
+          <p className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3 text-xs text-[var(--muted)]">
+            "{check.name}" is disabled — see Manage to re-enable it.
+          </p>
+        );
+      }
       return <StatusTile check={check} latest={latestByCheck.get(check.id)} hosts={hosts} siteNameById={siteNameById} onChanged={loadStatusData} />;
     }
     const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
     return (
       <GroupSummaryCard
         site={site}
-        checks={checks.filter((c) => c.siteId === widget.config.siteId)}
+        checks={checks.filter((c) => c.siteId === widget.config.siteId && c.enabled)}
         latestByCheck={latestByCheck}
       />
     );
@@ -261,7 +271,7 @@ export default function DashboardsPage() {
         )}
       </div>
 
-      {showAddWidget && <div className="mb-4"><AddWidgetForm sites={sites} checks={checks} onAdd={handleAddWidget} onCancel={() => setShowAddWidget(false)} /></div>}
+      {showAddWidget && <div className="mb-4"><AddWidgetForm sites={sites} checks={checks} hosts={hosts} onAdd={handleAddWidget} onCancel={() => setShowAddWidget(false)} /></div>}
 
       {widgets.length === 0 && !showAddWidget && (
         <p className="mb-4 text-sm text-[var(--muted)]">

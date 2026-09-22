@@ -29,10 +29,20 @@ first: it's the exact content served at `/install/agent.sh`, `/install/install.s
 1. Generate a host's agent key in the dashboard as above.
 2. Copy `looksee-agent.example.yaml` to `looksee-agent.yaml` next to the binary and fill
    in `engine_url` and `agent_key`.
-3. To monitor a named process/service, add an "agent_service" check on that host in the
-   dashboard with `config: { "serviceName": "nginx" }` (matched by substring, so
-   `nginx` matches both `nginx` on Linux and `nginx.exe` on Windows) — the agent picks
-   it up automatically on its next `/api/agent/config` poll, no agent restart needed.
+3. To monitor a service or process, add a check on that host in the dashboard — the
+   agent picks it up automatically on its next `/api/agent/config` poll, no agent
+   restart needed. Two types, both taking `config: { "serviceName": "nginx" }`:
+   - **"Service (via agent)"** (`agent_service`) queries the real OS service manager —
+     `systemctl is-active` on Linux, the Windows service manager via PowerShell on
+     Windows. Not yet implemented on macOS (returns a clear error, not a silent no-op).
+   - **"Process (via agent)"** (`agent_process`) matches by substring against the
+     running process list instead — `nginx` matches both `nginx` on Linux and
+     `nginx.exe` on Windows — for anything that isn't a registered OS service.
+
+   Either type's config field also accepts real names the agent has actually
+   discovered on that host — every report cycle includes every running process name
+   and every registered service name, which the check form offers as suggestions once
+   a host is selected (`hosts.availableProcesses`/`availableServices`).
 
 ## Build
 

@@ -12,6 +12,11 @@ import {
   timestamp,
 } from "drizzle-orm/pg-core";
 
+// "agent_service" queries the real OS service manager (systemctl/Windows
+// service manager) via the agent; "agent_process" is a raw process-list
+// name match. They used to be one type ("agent_service" doing what
+// "agent_process" does now) — see the 0004 migration pair for the backfill
+// that moved existing rows onto the name that actually describes them.
 export const checkType = pgEnum("check_type", [
   "ping",
   "tcp",
@@ -19,7 +24,14 @@ export const checkType = pgEnum("check_type", [
   "dns",
   "ssl_cert",
   "agent_service",
+  "agent_process",
 ]);
+
+// The two types the Go agent reports results for (as opposed to the
+// agentless prober) — both require a hostId, and both are what
+// GET /api/agent/config filters on. Shared between routes/checks.ts and
+// routes/agent.ts so the two stay in sync.
+export const AGENT_CHECK_TYPES = ["agent_service", "agent_process"] as const;
 
 export const checkStatus = pgEnum("check_status", ["up", "down", "warn", "unknown"]);
 
@@ -74,6 +86,13 @@ export const hosts = pgTable("hosts", {
   // get one).
   agentApiKey: text("agent_api_key").unique(),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  // Snapshot of what the agent actually found on its last report cycle —
+  // string arrays, refreshed every report, null until the agent has
+  // reported at least once. Feeds the check form's name suggestions
+  // (dashboard/app/components/CheckConfigFields.tsx) rather than making
+  // someone type an exact service/process name blind.
+  availableProcesses: jsonb("available_processes"),
+  availableServices: jsonb("available_services"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

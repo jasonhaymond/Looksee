@@ -1,23 +1,38 @@
 "use client";
 
 import { useState } from "react";
-import type { Check, Site, WidgetType } from "../lib/api";
+import type { Check, Host, Site, WidgetType } from "../lib/api";
 
 export function AddWidgetForm({
   sites,
   checks,
+  hosts,
   onAdd,
   onCancel,
 }: {
   sites: Site[];
   checks: Check[];
+  hosts: Host[];
   onAdd: (type: WidgetType, targetId: string) => void;
   onCancel: () => void;
 }) {
   const [type, setType] = useState<WidgetType>("status_tile");
   const [targetId, setTargetId] = useState("");
 
-  const options = type === "status_tile" ? checks.map((c) => ({ id: c.id, label: c.name })) : sites.map((s) => ({ id: s.id, label: s.name }));
+  const siteNameById = new Map(sites.map((s) => [s.id, s.name]));
+  const hostNameById = new Map(hosts.map((h) => [h.id, h.name]));
+
+  // Which site/host a check belongs to isn't obvious from its name alone
+  // once there's more than a couple — label each option with its source so
+  // picking the right one doesn't require guessing.
+  const options =
+    type === "status_tile"
+      ? checks.map((c) => {
+          const site = siteNameById.get(c.siteId) ?? "unknown site";
+          const host = c.hostId ? hostNameById.get(c.hostId) : undefined;
+          return { id: c.id, label: host ? `${c.name} — ${site} / ${host}` : `${c.name} — ${site}` };
+        })
+      : sites.map((s) => ({ id: s.id, label: s.name }));
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3 text-sm">

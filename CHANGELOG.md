@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-22
+
+### Added
+
+- **Real OS-service checks, split from process checks.** `agent_service` used to just
+  substring-match a name against the running process list — that's genuinely useful, but
+  it isn't the same thing as "is this service actually registered and active." It's now
+  a real query against the OS service manager (`systemctl` on Linux, the Windows service
+  manager via PowerShell), and the old behavior lives on as a new `agent_process` type.
+  Existing checks migrated automatically (a `RENAME VALUE` on the Postgres enum moves
+  every existing row in one atomic step — no data loss, no manual fixup) onto
+  `agent_process`, the name that actually describes what they've always done.
+  Both platforms verified for real: Linux against a real systemd container (a known-
+  active unit, a nonexistent one, and a live service list), Windows natively against a
+  real Windows service on this dev machine — the first attempt at the Windows path used
+  a `$args[0]`-binding pattern that turned out not to work at all through PowerShell's
+  `-Command` (only `-File` binds trailing args that way); caught by actually running it,
+  not by assuming, and fixed with an environment-variable handoff instead.
+- **Service/process name suggestions.** The agent now reports every process name and
+  every registered service name it finds on each report cycle; the check form offers
+  them as a native suggestion list once a host is selected, instead of requiring an
+  exact name typed blind. Verified end-to-end with a real agent running in a real
+  container reporting real discovered names into a real check form.
+- **HTTP check extras**: custom headers, an HTTP method override, and a "skip TLS
+  verification" option for self-signed/internal HTTPS endpoints (the fetch-based
+  prober has no per-request way to do that, so this one case switches to Node's
+  `https` module directly). Verified against real local HTTP/HTTPS test servers — a
+  custom header actually arriving, the method actually changing, and the self-signed
+  endpoint failing by default but succeeding once skip-verification is on.
+- Disabled checks are now hidden everywhere except `/manage` (where you'd go to
+  re-enable one) — dashboard widgets show a small "disabled" note instead of a dead,
+  unchanging tile, and drop out of group-summary counts.
+- The dashboard's "add widget" check picker now shows each check's site (and host, for
+  agent-driven checks) alongside its name, so picking the right one doesn't require
+  guessing once there's more than a couple.
+
 ## [1.0.1] - 2026-09-22
 
 ### Fixed

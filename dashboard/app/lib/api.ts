@@ -23,7 +23,18 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export type Site = { id: string; name: string; description: string | null };
-export type Host = { id: string; siteId: string; name: string; hostname: string | null; os: string | null; lastSeenAt: string | null };
+export type Host = {
+  id: string;
+  siteId: string;
+  name: string;
+  hostname: string | null;
+  os: string | null;
+  lastSeenAt: string | null;
+  // Snapshot from the agent's last report cycle, null until it's reported
+  // at least once — feeds the check form's name suggestions.
+  availableProcesses: string[] | null;
+  availableServices: string[] | null;
+};
 export type Check = {
   id: string;
   siteId: string;
