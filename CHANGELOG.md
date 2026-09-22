@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-22
+
+### Fixed
+
+- **Deployment guide's Caddy example never routed `/install/*` to the engine** — only
+  `/api/*` was matched, so on a single-domain path-routed deployment the one-line agent
+  install command (added in 0.3.0) 404'd against the dashboard instead of reaching the
+  engine. Found on the first real deployment of that feature, not caught during
+  development since the local dev setup talks to the engine and dashboard on separate
+  ports directly, with no reverse proxy in between to have this gap. Fixed the example
+  Caddyfile in `docs/deployment-guide.md`, with a callout for anyone updating an
+  existing Caddyfile from before agent install automation existed.
+- Also found and fixed on the same real deployment, unrelated to the routing gap: the
+  engine process had been restarted after every previous update *except* this one — a
+  reminder that `scripts/update.sh` handles this correctly (it restarts both processes
+  together) but a manual `pm2 restart looksee-dashboard` alone does not. No code change
+  for this one; noted here since it's what made the missing `installCommand` field hard
+  to diagnose at first (looked like a rendering bug, was actually a stale process).
+
 ## [0.3.0] - 2026-09-18
 
 ### Added

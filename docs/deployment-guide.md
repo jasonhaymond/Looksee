@@ -117,7 +117,7 @@ same-origin (no CORS, simpler cookies):
 
 ```caddy
 looksee.haymondtechnologies.com {
-  @api path /api/*
+  @api path /api/* /install/*
   handle @api {
     reverse_proxy localhost:4100
   }
@@ -126,6 +126,13 @@ looksee.haymondtechnologies.com {
   }
 }
 ```
+
+**`/install/*` must be routed to the engine too**, not just `/api/*` — it's where the
+one-line agent install command (section 9) and the binaries it downloads are served from.
+It's deliberately outside `/api` since it's plain curl-consumed scripts, not the JSON API,
+but that means a Caddyfile matching only `/api/*` sends it to the dashboard instead, which
+404s. If you're updating an existing single-API-path Caddyfile from before agent install
+automation existed, add `/install/*` to the `@api` matcher and reload.
 
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile
