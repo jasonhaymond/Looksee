@@ -51,6 +51,15 @@ export type Check = {
 export type CheckResult = { id: string; status: "up" | "down" | "warn" | "unknown"; latencyMs: number | null; checkedAt: string };
 export type Channel = { id: string; name: string; type: string; enabled: boolean };
 
+export type SmtpSettings = {
+  id: number;
+  host: string | null;
+  port: number | null;
+  user: string | null;
+  from: string | null;
+  passwordSet: boolean;
+  updatedAt: string;
+};
 export type BackupSettings = {
   id: number;
   repoUrl: string | null;
@@ -137,6 +146,11 @@ export const api = {
   updateChannel: (id: string, input: { name?: string; config?: Record<string, unknown>; enabled?: boolean }) =>
     request<Channel>(`/api/channels/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteChannel: (id: string) => request<void>(`/api/channels/${id}`, { method: "DELETE" }),
+
+  smtpSettings: () => request<{ settings: SmtpSettings }>("/api/smtp/settings"),
+  updateSmtpSettings: (input: { host?: string | null; port?: number | null; user?: string | null; password?: string; from?: string | null }) =>
+    request<{ settings: SmtpSettings }>("/api/smtp/settings", { method: "PATCH", body: JSON.stringify(input) }),
+  sendTestEmail: (to: string) => request<{ sent: boolean }>("/api/smtp/test", { method: "POST", body: JSON.stringify({ to }) }),
 
   alertRules: (checkId: string) => request<AlertRule[]>(`/api/alert-rules?checkId=${checkId}`),
   createAlertRule: (input: { checkId: string; consecutiveFailures: number; channelIds: string[] }) =>

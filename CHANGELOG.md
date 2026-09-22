@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-22
+
+### Fixed
+
+- **Email alerts had no way to actually be configured**: SMTP settings were
+  env-var-only (`engine/.env`'s `SMTP_HOST`/`PORT`/`USER`/`PASSWORD`/`FROM`), with
+  nothing in the dashboard to set them — the reported symptom was "email
+  notifications aren't working." Added an SMTP settings section to the Channels page
+  (host/port/user/write-only password/from, same pattern as the Backups page's
+  repository settings) plus a "Send test email" button to confirm it actually works
+  without waiting for a real alert. The env vars still work as a fallback per-field, so
+  an existing `.env`-based setup doesn't silently break. Verified for real, not just
+  written: settings saved through the actual dashboard form, a test email sent by
+  clicking the real button, and its arrival confirmed in a real SMTP test server's
+  inbox (correct from/to/subject/body).
+
 ## [1.2.0] - 2026-09-22
 
 ### Added

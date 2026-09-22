@@ -211,6 +211,23 @@ export const alertEvents = pgTable("alert_events", {
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
 });
 
+// Singleton row (id always 1) — SMTP server config for the "email" alert
+// channel type. Was env-var-only (SMTP_HOST/PORT/USER/PASSWORD/FROM,
+// engine/.env) with no discoverable way to set it short of editing that
+// file directly on the server; this is the actual admin-UI path, following
+// the same write-only-password pattern as backupSettings below. The env
+// vars still work as a fallback per-field (see services/notifications/
+// email.ts) so an existing .env-based setup doesn't silently break.
+export const smtpSettings = pgTable("smtp_settings", {
+  id: integer("id").primaryKey(),
+  host: text("host"),
+  port: integer("port"),
+  user: text("user"),
+  password: text("password"),
+  from: text("from"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const backupRunKind = pgEnum("backup_run_kind", ["backup", "restore"]);
 export const backupRunStatus = pgEnum("backup_run_status", ["running", "success", "error"]);
 

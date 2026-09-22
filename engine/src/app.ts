@@ -18,6 +18,7 @@ import { backupsRouter } from "./routes/backups.js";
 import { dashboardsRouter } from "./routes/dashboards.js";
 import { installRouter } from "./routes/install.js";
 import { logsRouter } from "./routes/logs.js";
+import { smtpRouter } from "./routes/smtp.js";
 
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
   .split(",")
@@ -44,6 +45,7 @@ app.use("/api/push", pushRouter);
 app.use("/api/backups", backupsRouter);
 app.use("/api/dashboards", dashboardsRouter);
 app.use("/api/logs", logsRouter);
+app.use("/api/smtp", smtpRouter);
 // Outside /api on purpose — meant for plain curl, not the JSON API, and
 // deliberately unauthenticated (see routes/install.ts for why).
 app.use("/install", installRouter);

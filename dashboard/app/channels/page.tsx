@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, type Channel } from "../lib/api";
+import { api, ApiError, type Channel, type SmtpSettings } from "../lib/api";
 import { TopNav } from "../components/TopNav";
 import { Tooltip } from "../components/Tooltip";
 import {
@@ -12,6 +12,119 @@ import {
   normalizeChannelConfig,
   validateChannelConfig,
 } from "../components/ChannelConfigFields";
+
+function SmtpSettingsSection() {
+  const [settings, setSettings] = useState<SmtpSettings | null>(null);
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("");
+  const [user, setUser] = useState("");
+  const [password, setPassword] = useState("");
+  const [from, setFrom] = useState("");
+  const [testTo, setTestTo] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [testStatus, setTestStatus] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const { settings: s } = await api.smtpSettings();
+    setSettings(s);
+    setHost(s.host ?? "");
+    setPort(s.port != null ? String(s.port) : "");
+    setUser(s.user ?? "");
+    setFrom(s.from ?? "");
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaveError(null);
+    setSaved(false);
+    try {
+      await api.updateSmtpSettings({
+        host: host.trim() || null,
+        port: port.trim() ? Number(port) : null,
+        user: user.trim() || null,
+        ...(password ? { password } : {}),
+        from: from.trim() || null,
+      });
+      setPassword("");
+      setSaved(true);
+      load();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save settings");
+    }
+  }
+
+  async function handleTest() {
+    setTestStatus(null);
+    if (!testTo.trim()) return;
+    try {
+      await api.sendTestEmail(testTo.trim());
+      setTestStatus("Sent — check the inbox.");
+    } catch (err) {
+      setTestStatus(err instanceof Error ? err.message : "Failed to send");
+    }
+  }
+
+  if (!settings) return null;
+
+  return (
+    <section className="mb-6 rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
+      <h2 className="mb-3 inline-flex items-center font-medium">
+        SMTP server (for the &quot;email&quot; channel type)
+        <Tooltip text="One SMTP server for the whole engine — individual email channels below just specify a recipient address, not their own server. Previously only configurable by editing engine/.env directly; that still works as a fallback if you'd rather not use this form." />
+      </h2>
+      <form onSubmit={handleSave} className="space-y-2 text-sm">
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="text-[var(--muted)]">Host</span>
+            <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.example.com" className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1 outline-none" />
+          </label>
+          <label className="block">
+            <span className="text-[var(--muted)]">Port</span>
+            <input type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="587" className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1 outline-none" />
+          </label>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="text-[var(--muted)]">Username</span>
+            <input value={user} onChange={(e) => setUser(e.target.value)} className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1 outline-none" />
+          </label>
+          <label className="block">
+            <span className="text-[var(--muted)]">
+              Password {settings.passwordSet && <span className="text-[var(--muted)]">(already set — leave blank to keep it)</span>}
+            </span>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1 outline-none" />
+          </label>
+        </div>
+        <label className="block">
+          <span className="text-[var(--muted)]">From address</span>
+          <input value={from} onChange={(e) => setFrom(e.target.value)} placeholder='Looksee <looksee@example.com>' className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1 outline-none" />
+        </label>
+        {saveError && <p className="text-[var(--down)]">{saveError}</p>}
+        {saved && <p className="text-[var(--up)]">Saved.</p>}
+        <button type="submit" className="rounded-md bg-[var(--up)] px-3 py-1.5 font-medium text-black">
+          Save settings
+        </button>
+      </form>
+      <div className="mt-3 flex items-center gap-2 border-t border-[var(--border)] pt-3">
+        <input
+          value={testTo}
+          onChange={(e) => setTestTo(e.target.value)}
+          placeholder="you@example.com"
+          className="rounded-md border border-[var(--border)] bg-transparent px-2 py-1 text-sm outline-none"
+        />
+        <button type="button" onClick={handleTest} className="rounded-md border border-[var(--border)] px-3 py-1 text-sm">
+          Send test email
+        </button>
+        {testStatus && <span className="text-xs text-[var(--muted)]">{testStatus}</span>}
+      </div>
+    </section>
+  );
+}
 
 function ChannelRow({ channel, onChanged }: { channel: Channel; onChanged: () => void }) {
   const [renaming, setRenaming] = useState(false);
@@ -153,6 +266,9 @@ export default function ChannelsPage() {
   return (
     <main className="mx-auto max-w-3xl p-6">
       <TopNav active="/channels" />
+
+      <SmtpSettingsSection />
+
       <h2 className="mb-4 text-lg font-medium">Notification channels</h2>
 
       <section className="mb-6 rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
