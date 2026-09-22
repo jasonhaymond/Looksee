@@ -1,11 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #0b0f14;
-  --panel: #131a22;
-  --border: #223041;
+  /* Lightened from the original near-black (#0b0f14/#131a22/#223041) so
+     panels/cards read as distinct surfaces against the page background
+     instead of blending into it — still a dark theme, just with real
+     bg/panel/border separation. Re-checked against WCAG AA (4.5:1) for
+     text/muted on both bg and panel before finalizing; text stays ~13-15:1,
+     muted ~5.9-6.8:1, comfortably clear of the 4.5:1 floor. */
+  --bg: #121820;
+  --panel: #1c2530;
+  --border: #31445c;
   --text: #e6edf3;
-  --muted: #8b98a5;
+  --muted: #93a1b0;
   --up: #3fb950;
   --down: #f85149;
   --warn: #d29922;

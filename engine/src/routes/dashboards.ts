@@ -1,13 +1,17 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { dashboards, dashboardWidgets } from "../db/schema.js";
+import { dashboards, dashboardWidgets, widgetType } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const dashboardsRouter = Router();
 dashboardsRouter.use(requireAuth);
 
-const VALID_WIDGET_TYPES = ["status_tile", "group_summary", "host_metrics", "uptime_history", "note"] as const;
+// Derived from widgetType's own value list rather than hand-duplicated —
+// same fix as AGENTLESS_CHECK_TYPES in db/schema.ts, after a hand-maintained
+// copy of the valid check types went stale in services/scheduler.ts during
+// this same round.
+const VALID_WIDGET_TYPES = widgetType.enumValues;
 
 dashboardsRouter.get("/", async (_req, res) => {
   res.json(await db.query.dashboards.findMany({ orderBy: (d, { asc }) => asc(d.createdAt) }));

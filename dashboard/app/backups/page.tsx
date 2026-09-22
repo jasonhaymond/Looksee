@@ -6,6 +6,7 @@ import { api, ApiError, type BackupSettings, type BackupRun, type Archive, type 
 import { RestoreForm } from "./RestoreForm";
 import { TopNav } from "../components/TopNav";
 import { Tooltip } from "../components/Tooltip";
+import { PageHelp } from "../components/PageHelp";
 
 const POLL_MS = 5_000;
 
@@ -100,6 +101,9 @@ export default function BackupsPage() {
     <main className="mx-auto max-w-3xl p-6">
       <TopNav active="/backups" />
       <h2 className="mb-4 text-lg font-medium">Backups</h2>
+      <PageHelp anchor="backups">
+        Encrypted, deduplicated backups of the database and secrets, via Borg. Restoring discards data created after the backup you restore — read the confirmation prompt carefully.
+      </PageHelp>
 
       <div className="mb-4 flex items-center gap-2 text-sm">
         <span className={`h-2 w-2 rounded-full ${borgAvailable ? "bg-[var(--up)]" : "bg-[var(--down)]"}`} />

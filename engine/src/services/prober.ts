@@ -4,6 +4,7 @@ import net from "node:net";
 import tls from "node:tls";
 import https from "node:https";
 import dns from "node:dns/promises";
+import * as snmp from "net-snmp";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,6 +27,8 @@ export async function runProbe(type: string, config: Record<string, unknown>): P
       return probeDns(String(config.hostname ?? ""));
     case "ssl_cert":
       return probeSslCert(String(config.host ?? ""), Number(config.port) || 443, Number(config.warnDays) || 14);
+    case "snmp":
+      return probeSnmp(config);
     default:
       return { status: "warn", latencyMs: null, message: `Unknown agentless check type: ${type}` };
   }
@@ -181,6 +184,112 @@ function probeSslCert(host: string, port: number, warnDays: number): Promise<Pro
       resolve({ status: "down", latencyMs: null, message: `Timed out connecting to ${host}:${port}` });
     });
     socket.once("error", (err) => {
+      resolve({ status: "down", latencyMs: null, message: err.message });
+    });
+  });
+}
+
+// Thresholds are four independent optional directions rather than a single
+// operator — some OIDs warn when LOW (UPS battery %) and others warn when
+// HIGH (temperature), and a check might care about either or both.
+function evaluateSnmpValue(
+  value: number,
+  thresholds: { warnBelow?: number; criticalBelow?: number; warnAbove?: number; criticalAbove?: number }
+): { status: "up" | "down" | "warn"; message: string | null } {
+  if (thresholds.criticalBelow != null && value < thresholds.criticalBelow) {
+    return { status: "down", message: `${value} is below critical threshold ${thresholds.criticalBelow}` };
+  }
+  if (thresholds.criticalAbove != null && value > thresholds.criticalAbove) {
+    return { status: "down", message: `${value} is above critical threshold ${thresholds.criticalAbove}` };
+  }
+  if (thresholds.warnBelow != null && value < thresholds.warnBelow) {
+    return { status: "warn", message: `${value} is below warn threshold ${thresholds.warnBelow}` };
+  }
+  if (thresholds.warnAbove != null && value > thresholds.warnAbove) {
+    return { status: "warn", message: `${value} is above warn threshold ${thresholds.warnAbove}` };
+  }
+  return { status: "up", message: null };
+}
+
+const SNMP_AUTH_PROTOCOLS: Record<string, snmp.AuthProtocols> = { md5: snmp.AuthProtocols.md5, sha: snmp.AuthProtocols.sha };
+const SNMP_PRIV_PROTOCOLS: Record<string, snmp.PrivProtocols> = { des: snmp.PrivProtocols.des, aes: snmp.PrivProtocols.aes };
+const SNMP_SECURITY_LEVELS: Record<string, snmp.SecurityLevel> = {
+  noAuthNoPriv: snmp.SecurityLevel.noAuthNoPriv,
+  authNoPriv: snmp.SecurityLevel.authNoPriv,
+  authPriv: snmp.SecurityLevel.authPriv,
+};
+
+function openSnmpSession(config: Record<string, unknown>): snmp.Session {
+  const host = String(config.host ?? "");
+  const port = Number(config.port) || 161;
+  const version = String(config.version ?? "2c");
+  const options = { port, timeout: 5000, retries: 1 };
+
+  if (version === "3") {
+    const user: snmp.User = {
+      name: String(config.username ?? ""),
+      level: SNMP_SECURITY_LEVELS[String(config.securityLevel)] ?? snmp.SecurityLevel.authPriv,
+      authProtocol: SNMP_AUTH_PROTOCOLS[String(config.authProtocol)] ?? snmp.AuthProtocols.sha,
+      authKey: String(config.authKey ?? ""),
+      privProtocol: SNMP_PRIV_PROTOCOLS[String(config.privProtocol)] ?? snmp.PrivProtocols.aes,
+      privKey: String(config.privKey ?? ""),
+    };
+    return snmp.createV3Session(host, user, options);
+  }
+  const community = String(config.community || "public");
+  return snmp.createSession(host, community, { ...options, version: version === "1" ? snmp.Version1 : snmp.Version2c });
+}
+
+// Verified for real against a real snmpd container (v1/v2c and a v3 user)
+// during development — v3's engineID auto-discovery and every vendor's
+// specific auth/priv protocol quirks beyond that aren't independently
+// re-verified against every possible target, same honesty standard as
+// every other "tested against what was actually available" note in this
+// project.
+function probeSnmp(config: Record<string, unknown>): Promise<ProbeResult> {
+  const host = String(config.host ?? "");
+  const oid = String(config.oid ?? "");
+  if (!host || !oid) return Promise.resolve({ status: "warn", latencyMs: null, message: "Missing host or oid" });
+
+  const start = Date.now();
+  let session: snmp.Session;
+  try {
+    session = openSnmpSession(config);
+  } catch (err) {
+    return Promise.resolve({ status: "down", latencyMs: null, message: err instanceof Error ? err.message : "Failed to open SNMP session" });
+  }
+
+  return new Promise((resolve) => {
+    session.get([oid], (error, varbinds) => {
+      session.close();
+      const latencyMs = Date.now() - start;
+      if (error) {
+        resolve({ status: "down", latencyMs: null, message: error.message });
+        return;
+      }
+      const vb = varbinds?.[0];
+      if (!vb) {
+        resolve({ status: "down", latencyMs: null, message: "No response" });
+        return;
+      }
+      if (snmp.isVarbindError(vb)) {
+        resolve({ status: "down", latencyMs: null, message: snmp.varbindError(vb) });
+        return;
+      }
+      const value = Number(vb.value);
+      if (Number.isNaN(value)) {
+        resolve({ status: "warn", latencyMs, message: `Returned a non-numeric value: ${vb.value}` });
+        return;
+      }
+      const { status, message } = evaluateSnmpValue(value, {
+        warnBelow: config.warnBelow != null ? Number(config.warnBelow) : undefined,
+        criticalBelow: config.criticalBelow != null ? Number(config.criticalBelow) : undefined,
+        warnAbove: config.warnAbove != null ? Number(config.warnAbove) : undefined,
+        criticalAbove: config.criticalAbove != null ? Number(config.criticalAbove) : undefined,
+      });
+      resolve({ status, latencyMs, message: message ?? `${value}` });
+    });
+    session.on("error", (err) => {
       resolve({ status: "down", latencyMs: null, message: err.message });
     });
   });

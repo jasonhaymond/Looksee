@@ -7,6 +7,7 @@ import { StatusTile } from "../components/StatusTile";
 import { GroupSummary } from "../components/GroupSummary";
 import { AddCheckForm } from "../components/AddCheckForm";
 import { TopNav } from "../components/TopNav";
+import { PageHelp } from "../components/PageHelp";
 
 // Polling interval for refreshing dashboard data from the browser — separate
 // from (and much coarser than) individual checks' own intervalSeconds, which
@@ -129,6 +130,9 @@ export default function ManagePage() {
   return (
     <main className="mx-auto max-w-3xl p-6">
       <TopNav active="/manage" />
+      <PageHelp anchor="sites-hosts-and-checks">
+        Sites group your checks by location or network. Add checks here, or click a site to manage its hosts and settings.
+      </PageHelp>
 
       <div className="space-y-6">
         {sites.map((site) => {

@@ -25,13 +25,39 @@ export const checkType = pgEnum("check_type", [
   "ssl_cert",
   "agent_service",
   "agent_process",
+  "host_cpu",
+  "host_memory",
+  "host_disk",
+  "snmp",
 ]);
 
-// The two types the Go agent reports results for (as opposed to the
-// agentless prober) — both require a hostId, and both are what
+// The two types the Go agent actively reports results for (as opposed to
+// the agentless prober) — both require a hostId, and both are what
 // GET /api/agent/config filters on. Shared between routes/checks.ts and
 // routes/agent.ts so the two stay in sync.
 export const AGENT_CHECK_TYPES = ["agent_service", "agent_process"] as const;
+
+// Also require a hostId, but unlike AGENT_CHECK_TYPES these are never sent
+// to the agent to actively check — the engine evaluates them itself
+// against the metrics payload already included in every agent report (see
+// routes/agent.ts's POST /report), since the agent has collected
+// cpu/mem/disk on every cycle since v1.0.0 but nothing alerted on it until
+// now.
+export const HOST_METRIC_CHECK_TYPES = ["host_cpu", "host_memory", "host_disk"] as const;
+
+// Every check type that requires a hostId, for the shared gate in
+// routes/checks.ts — the union of the two sets above.
+export const HOST_SCOPED_CHECK_TYPES = [...AGENT_CHECK_TYPES, ...HOST_METRIC_CHECK_TYPES] as const;
+
+// Everything the engine itself actively probes on a timer (services/scheduler.ts) —
+// derived from checkType's own value list rather than hand-duplicated, so a
+// new agentless check type (like snmp) is picked up automatically instead of
+// silently never running until someone remembers to also update the
+// scheduler's own copy of this list (a real bug caught during 2.0 testing:
+// snmp checks got created fine but the scheduler never ran them).
+export const AGENTLESS_CHECK_TYPES = checkType.enumValues.filter(
+  (t) => !(HOST_SCOPED_CHECK_TYPES as readonly string[]).includes(t)
+) as string[];
 
 export const checkStatus = pgEnum("check_status", ["up", "down", "warn", "unknown"]);
 
@@ -262,6 +288,11 @@ export const widgetType = pgEnum("widget_type", [
   "host_metrics",
   "uptime_history",
   "note",
+  "alert_history",
+  "network_bandwidth",
+  "all_hosts",
+  "backup_status",
+  "clock",
 ]);
 
 export const dashboards = pgTable("dashboards", {

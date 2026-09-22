@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api, ApiError, type Site, type Host } from "../lib/api";
 import { TopNav } from "../components/TopNav";
 import { Tooltip } from "../components/Tooltip";
+import { PageHelp } from "../components/PageHelp";
 
 function relativeTime(iso: string | null) {
   if (!iso) return "never";
@@ -227,6 +228,9 @@ export default function HostsPage() {
     <main className="mx-auto max-w-3xl p-6">
       <TopNav active="/hosts" />
       <h2 className="mb-4 text-lg font-medium">Hosts</h2>
+      <PageHelp anchor="hosts">
+        A host is a machine with the Looksee agent installed — add one, then use its install command to set up the agent. Hosts unlock service/process/resource checks.
+      </PageHelp>
 
       <section className="mb-6 rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
         {hosts.length === 0 ? (

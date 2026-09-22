@@ -1,12 +1,11 @@
 import { eq, and, isNull, lt, or } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { checks } from "../db/schema.js";
+import { checks, AGENTLESS_CHECK_TYPES } from "../db/schema.js";
 import { runProbe } from "./prober.js";
 import { recordCheckResult } from "./alerting.js";
 import { logger } from "../lib/logger.js";
 
-const AGENTLESS_TYPES = ["ping", "tcp", "http", "dns", "ssl_cert"] as const;
 const TICK_MS = 10_000;
 
 // Polls for due agentless checks every TICK_MS rather than scheduling one
@@ -29,7 +28,7 @@ async function runDueChecks() {
     ),
   });
 
-  const dueAgentless = due.filter((c) => (AGENTLESS_TYPES as readonly string[]).includes(c.type));
+  const dueAgentless = due.filter((c) => AGENTLESS_CHECK_TYPES.includes(c.type));
   logger.debug("scheduler", `Tick: ${dueAgentless.length} agentless check(s) due`, { checkIds: dueAgentless.map((c) => c.id) });
 
   for (const check of dueAgentless) {

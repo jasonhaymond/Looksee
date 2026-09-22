@@ -1,13 +1,25 @@
 import { Router } from "express";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { checks, checkResults, AGENT_CHECK_TYPES } from "../db/schema.js";
+import { checks, checkResults, HOST_SCOPED_CHECK_TYPES } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const checksRouter = Router();
 checksRouter.use(requireAuth);
 
-const VALID_TYPES = ["ping", "tcp", "http", "dns", "ssl_cert", "agent_service", "agent_process"] as const;
+const VALID_TYPES = [
+  "ping",
+  "tcp",
+  "http",
+  "dns",
+  "ssl_cert",
+  "agent_service",
+  "agent_process",
+  "host_cpu",
+  "host_memory",
+  "host_disk",
+  "snmp",
+] as const;
 
 checksRouter.get("/", async (req, res) => {
   const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
@@ -31,7 +43,7 @@ checksRouter.post("/", async (req, res) => {
   // hostId matching a real host (see routes/agent.ts's /config filter) — a
   // null hostId here means the check silently never gets polled by any
   // agent, with no error anywhere. Reject it up front instead.
-  if ((AGENT_CHECK_TYPES as readonly string[]).includes(type) && !hostId) {
+  if ((HOST_SCOPED_CHECK_TYPES as readonly string[]).includes(type) && !hostId) {
     res.status(400).json({ error: `${type} checks require a hostId` });
     return;
   }
@@ -58,7 +70,7 @@ checksRouter.patch("/:id", async (req, res) => {
   if (req.body?.intervalSeconds !== undefined) updates.intervalSeconds = Number(req.body.intervalSeconds);
   if (req.body?.enabled !== undefined) updates.enabled = Boolean(req.body.enabled);
   const nextHostId = "hostId" in updates ? updates.hostId : existing.hostId;
-  if ((AGENT_CHECK_TYPES as readonly string[]).includes(existing.type) && !nextHostId) {
+  if ((HOST_SCOPED_CHECK_TYPES as readonly string[]).includes(existing.type) && !nextHostId) {
     res.status(400).json({ error: `${existing.type} checks require a hostId` });
     return;
   }
@@ -72,11 +84,15 @@ checksRouter.delete("/:id", async (req, res) => {
 });
 
 // Recent result history for one check, used by the dashboard's uptime %/
-// latency-sparkline widgets.
+// latency-sparkline widgets. `since` (ISO timestamp) narrows to a time
+// window; `limit` stays in effect as a safety ceiling even within a
+// window, not just as the old "last N" default when since is omitted.
 checksRouter.get("/:id/results", async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 100, 1000);
+  const limit = Math.min(Number(req.query.limit) || 100, 2000);
+  const since = typeof req.query.since === "string" ? new Date(req.query.since) : undefined;
+  const validSince = since && !Number.isNaN(since.getTime()) ? since : undefined;
   const rows = await db.query.checkResults.findMany({
-    where: eq(checkResults.checkId, req.params.id),
+    where: validSince ? and(eq(checkResults.checkId, req.params.id), gte(checkResults.checkedAt, validSince)) : eq(checkResults.checkId, req.params.id),
     orderBy: desc(checkResults.checkedAt),
     limit,
   });

@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import { api, type Check, type Host } from "../lib/api";
-import { CheckConfigFields, CHECK_TYPE_HELP, normalizeConfig, validateConfig } from "./CheckConfigFields";
+import { CheckConfigFields, CHECK_TYPE_HELP, HOST_REQUIRED_TYPES, normalizeConfig, validateConfig } from "./CheckConfigFields";
 import { Tooltip } from "./Tooltip";
 
-const AGENT_TYPES = new Set(["agent_service", "agent_process"]);
+const AGENT_TYPES = HOST_REQUIRED_TYPES;
 
 export function EditCheckForm({
   check,

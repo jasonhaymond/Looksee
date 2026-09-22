@@ -14,6 +14,10 @@ export const CHECK_TYPE_LABELS: Record<string, string> = {
   ssl_cert: "SSL certificate expiry",
   agent_service: "Service (via agent)",
   agent_process: "Process (via agent)",
+  host_cpu: "CPU usage (via agent)",
+  host_memory: "Memory usage (via agent)",
+  host_disk: "Disk usage (via agent)",
+  snmp: "SNMP / OID",
 };
 
 export const CHECK_TYPE_HELP: Record<string, string> = {
@@ -24,7 +28,28 @@ export const CHECK_TYPE_HELP: Record<string, string> = {
   ssl_cert: "Connects over TLS and checks how many days remain before the certificate expires, warning before it's too late to renew.",
   agent_service: "Asks the Looksee agent on a specific host whether a named OS service is active (systemctl on Linux, the service manager on Windows) — a real service-manager check, not just \"is some process running.\" Requires the agent installed on that host — see Hosts.",
   agent_process: "Asks the Looksee agent on a specific host whether a process matching this name is currently running, matched by substring — e.g. \"nginx\" matches both nginx and nginx.exe. Requires the agent installed on that host — see Hosts.",
+  host_cpu: "Alerts on CPU usage reported by the agent on this host, each time it reports in. Leave both thresholds blank to just track history with no alerting. Requires the agent installed on that host — see Hosts.",
+  host_memory: "Alerts on memory usage reported by the agent on this host, each time it reports in. Leave both thresholds blank to just track history with no alerting. Requires the agent installed on that host — see Hosts.",
+  host_disk: "Alerts on disk usage reported by the agent on this host, each time it reports in. Leave both thresholds blank to just track history with no alerting. Requires the agent installed on that host — see Hosts.",
+  snmp: "Reads a single OID from an SNMP-speaking device (a UPS, a switch, a printer) and optionally alerts on its value. Supports v1, v2c, and v3 (auth/priv). No agent needed — the engine talks to the device directly.",
 };
+
+// Common UPS-MIB (RFC 1628) leaves, offered as a starting point in the SNMP
+// OID preset dropdown — the free-text OID field still works for anything
+// else (switches, printers, other vendor MIBs).
+export const SNMP_OID_PRESETS: { label: string; oid: string }[] = [
+  { label: "UPS: battery charge remaining (%)", oid: "1.3.6.1.2.1.33.1.2.4.0" },
+  { label: "UPS: battery status (1=unknown 2=normal 3=low 4=depleted)", oid: "1.3.6.1.2.1.33.1.2.1.0" },
+  { label: "UPS: estimated minutes remaining", oid: "1.3.6.1.2.1.33.1.2.3.0" },
+  { label: "UPS: output load (%)", oid: "1.3.6.1.2.1.33.1.4.4.1.5.1" },
+  { label: "UPS: input voltage", oid: "1.3.6.1.2.1.33.1.3.3.1.3.1" },
+  { label: "System uptime (sysUpTime)", oid: "1.3.6.1.2.1.1.3.0" },
+];
+
+// Types that require a hostId — the check only makes sense scoped to a
+// specific agent-reporting host. Must match engine/src/db/schema.ts's
+// HOST_SCOPED_CHECK_TYPES.
+export const HOST_REQUIRED_TYPES = new Set(["agent_service", "agent_process", "host_cpu", "host_memory", "host_disk"]);
 
 export function defaultConfigFor(type: string): Record<string, unknown> {
   switch (type) {
@@ -41,6 +66,12 @@ export function defaultConfigFor(type: string): Record<string, unknown> {
     case "agent_service":
     case "agent_process":
       return { serviceName: "" };
+    case "host_cpu":
+    case "host_memory":
+    case "host_disk":
+      return { warnPercent: "", criticalPercent: "" };
+    case "snmp":
+      return { host: "", port: 161, version: "2c", community: "public", oid: "", warnBelow: "", criticalBelow: "", warnAbove: "", criticalAbove: "" };
     default:
       return {};
   }
@@ -53,7 +84,7 @@ export function normalizeConfig(type: string, config: Record<string, unknown>): 
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
     if (value === "" || value == null) continue;
-    const numericKeys = ["port", "expectedStatus", "warnDays"];
+    const numericKeys = ["port", "expectedStatus", "warnDays", "warnPercent", "criticalPercent", "warnBelow", "criticalBelow", "warnAbove", "criticalAbove"];
     out[key] = numericKeys.includes(key) ? Number(value) : value;
   }
   return out;
@@ -68,6 +99,7 @@ export function validateConfig(type: string, config: Record<string, unknown>): s
     ssl_cert: ["host"],
     agent_service: ["serviceName"],
     agent_process: ["serviceName"],
+    snmp: ["host", "oid"],
   };
   for (const key of required[type] ?? []) {
     if (!config[key] && config[key] !== 0) return `${key} is required for a ${CHECK_TYPE_LABELS[type] ?? type} check.`;
@@ -276,6 +308,64 @@ export function CheckConfigFields({
           suggestions={suggestions}
         />
       );
+    case "host_cpu":
+    case "host_memory":
+    case "host_disk":
+      return (
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Warn at (%, optional)" tooltip="Show a warning status once usage reaches this percent." value={str("warnPercent")} onChange={(v) => set("warnPercent", v)} placeholder="80" type="number" />
+          <Field label="Critical at (%, optional)" tooltip="Show a down status once usage reaches this percent." value={str("criticalPercent")} onChange={(v) => set("criticalPercent", v)} placeholder="95" type="number" />
+        </div>
+      );
+    case "snmp": {
+      const version = str("version") || "2c";
+      return (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Host" tooltip="Hostname or IP of the SNMP-speaking device." value={str("host")} onChange={(v) => set("host", v)} placeholder="10.1.30.20" />
+            <Field label="Port" tooltip="SNMP port, usually 161." value={str("port")} onChange={(v) => set("port", v)} placeholder="161" type="number" />
+          </div>
+          <SelectField label="SNMP version" tooltip="v2c is the most common for modern devices. Use v3 for authenticated/encrypted SNMP." value={version} onChange={(v) => set("version", v)} options={["1", "2c", "3"]} />
+          {version === "3" ? (
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Username" tooltip="SNMPv3 security name." value={str("username")} onChange={(v) => set("username", v)} placeholder="monitoring" />
+              <SelectField label="Security level" tooltip="What the username needs to provide. authPriv is the most secure and most common for v3." value={str("securityLevel") || "authPriv"} onChange={(v) => set("securityLevel", v)} options={["noAuthNoPriv", "authNoPriv", "authPriv"]} />
+              <SelectField label="Auth protocol" tooltip="Authentication hash algorithm — must match the device's configuration." value={str("authProtocol") || "sha"} onChange={(v) => set("authProtocol", v)} options={["md5", "sha", "sha224", "sha256", "sha384", "sha512"]} />
+              <Field label="Auth key" tooltip="Authentication password/key — must match the device's configuration." value={str("authKey")} onChange={(v) => set("authKey", v)} type="text" />
+              <SelectField label="Privacy protocol" tooltip="Encryption algorithm — must match the device's configuration." value={str("privProtocol") || "aes"} onChange={(v) => set("privProtocol", v)} options={["des", "aes", "aes256b", "aes256r"]} />
+              <Field label="Privacy key" tooltip="Encryption password/key — must match the device's configuration." value={str("privKey")} onChange={(v) => set("privKey", v)} type="text" />
+            </div>
+          ) : (
+            <Field label="Community" tooltip="SNMP v1/v2c community string — often 'public' for read access, but many devices change it." value={str("community")} onChange={(v) => set("community", v)} placeholder="public" />
+          )}
+          <label className="block">
+            <span className="inline-flex items-center text-[var(--muted)]">
+              OID preset (optional)
+              <Tooltip text="Fills in a common OID below — still editable, and free text works for anything not listed here." />
+            </span>
+            <select
+              value=""
+              onChange={(e) => e.target.value && set("oid", e.target.value)}
+              className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1 text-sm"
+            >
+              <option value="">Choose a preset…</option>
+              {SNMP_OID_PRESETS.map((p) => (
+                <option key={p.oid} value={p.oid}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Field label="OID" tooltip="The exact numeric OID to read, e.g. 1.3.6.1.2.1.1.3.0. Pick a preset above or paste one from the device's MIB." value={str("oid")} onChange={(v) => set("oid", v)} placeholder="1.3.6.1.2.1.1.3.0" />
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Warn below (optional)" tooltip="Warn if the returned value drops to or below this number. Good for battery %." value={str("warnBelow")} onChange={(v) => set("warnBelow", v)} type="number" />
+            <Field label="Critical below (optional)" tooltip="Alert down if the returned value drops to or below this number." value={str("criticalBelow")} onChange={(v) => set("criticalBelow", v)} type="number" />
+            <Field label="Warn above (optional)" tooltip="Warn if the returned value rises to or above this number. Good for temperature or load %." value={str("warnAbove")} onChange={(v) => set("warnAbove", v)} type="number" />
+            <Field label="Critical above (optional)" tooltip="Alert down if the returned value rises to or above this number." value={str("criticalAbove")} onChange={(v) => set("criticalAbove", v)} type="number" />
+          </div>
+        </div>
+      );
+    }
     default:
       return null;
   }

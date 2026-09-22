@@ -1,11 +1,51 @@
 import { Router } from "express";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { alertRules, alertRuleChannels } from "../db/schema.js";
+import { alertRules, alertRuleChannels, alertEvents, checks } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const alertRulesRouter = Router();
 alertRulesRouter.use(requireAuth);
+
+// Recent alert history for the dashboard's alert-history widget — joins
+// alertEvents -> alertRules -> checks by hand (same "fetch and merge, skip
+// drizzle relations() wiring for one small join" posture as GET / below)
+// rather than a single relational query.
+alertRulesRouter.get("/events", async (req, res) => {
+  const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
+  const since = typeof req.query.since === "string" ? new Date(req.query.since) : undefined;
+  const validSince = since && !Number.isNaN(since.getTime()) ? since : undefined;
+  const limit = Math.min(Number(req.query.limit) || 50, 500);
+
+  const checkRows = await db.query.checks.findMany({ where: siteId ? eq(checks.siteId, siteId) : undefined });
+  const checkById = new Map(checkRows.map((c) => [c.id, c]));
+  const ruleRows = await db.query.alertRules.findMany({
+    where: siteId ? inArray(alertRules.checkId, checkRows.map((c) => c.id)) : undefined,
+  });
+  const ruleById = new Map(ruleRows.map((r) => [r.id, r]));
+
+  if (ruleRows.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  const events = await db.query.alertEvents.findMany({
+    where: and(
+      inArray(alertEvents.alertRuleId, ruleRows.map((r) => r.id)),
+      validSince ? gte(alertEvents.triggeredAt, validSince) : undefined
+    ),
+    orderBy: desc(alertEvents.triggeredAt),
+    limit,
+  });
+
+  res.json(
+    events.map((e) => {
+      const rule = ruleById.get(e.alertRuleId);
+      const check = rule ? checkById.get(rule.checkId) : undefined;
+      return { ...e, checkId: rule?.checkId ?? null, checkName: check?.name ?? "(deleted check)" };
+    })
+  );
+});
 
 alertRulesRouter.get("/", async (req, res) => {
   const checkId = typeof req.query.checkId === "string" ? req.query.checkId : undefined;

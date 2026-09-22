@@ -10,20 +10,17 @@ const POLL_MS = 15_000;
 const POINTS = 20;
 const RANGE_LIMIT = 2000;
 
-function MetricRow({ label, values, color }: { label: string; values: number[]; color: string }) {
-  const latest = values[values.length - 1];
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-xs text-[var(--muted)]">{label}</span>
-      <div className="flex items-center gap-2">
-        {values.length >= 2 && <Sparkline values={values} color={color} width={64} height={18} />}
-        <span className="w-10 text-right text-xs">{latest != null ? `${Math.round(latest)}%` : "—"}</span>
-      </div>
-    </div>
-  );
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-export function HostMetricsWidget({ widget, host, onChanged }: { widget: Widget; host: Host | undefined; onChanged: () => void }) {
+// netRxBytes/netTxBytes have been in every agent report since v1.0.0 but
+// were never visualized until this widget — same hostMetrics data
+// HostMetricsWidget already reads, just the two fields it doesn't show.
+export function NetworkBandwidthWidget({ widget, host, onChanged }: { widget: Widget; host: Host | undefined; onChanged: () => void }) {
   const rangeHours = widget.config.rangeHours ?? DEFAULT_RANGE_HOURS;
   const [metrics, setMetrics] = useState<HostMetric[] | null>(null);
 
@@ -48,15 +45,13 @@ export function HostMetricsWidget({ widget, host, onChanged }: { widget: Widget;
     );
   }
 
-  // API returns newest-first; sparklines read left-to-right chronologically.
-  // Downsample to POINTS so a wide time range doesn't render an unreadably
-  // dense sparkline — the summary numbers still reflect the freshest value.
   const chronological = (metrics ?? []).slice().reverse();
   const step = Math.max(1, Math.ceil(chronological.length / POINTS));
   const sampled = chronological.filter((_, i) => i % step === 0);
-  const cpu = sampled.filter((m) => m.cpuPercent != null).map((m) => m.cpuPercent as number);
-  const mem = sampled.filter((m) => m.memPercent != null).map((m) => m.memPercent as number);
-  const disk = sampled.filter((m) => m.diskPercent != null).map((m) => m.diskPercent as number);
+  const rx = sampled.filter((m) => m.netRxBytes != null).map((m) => m.netRxBytes as number);
+  const tx = sampled.filter((m) => m.netTxBytes != null).map((m) => m.netTxBytes as number);
+  const latestRx = rx[rx.length - 1];
+  const latestTx = tx[tx.length - 1];
 
   return (
     <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
@@ -68,9 +63,20 @@ export function HostMetricsWidget({ widget, host, onChanged }: { widget: Widget;
         <p className="mt-2 text-xs text-[var(--muted)]">No metrics reported yet.</p>
       ) : (
         <div className="mt-2 space-y-1.5">
-          <MetricRow label="CPU" values={cpu} color="var(--up)" />
-          <MetricRow label="RAM" values={mem} color="var(--warn)" />
-          <MetricRow label="Disk" values={disk} color="var(--down)" />
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-[var(--muted)]">↓ RX</span>
+            <div className="flex items-center gap-2">
+              {rx.length >= 2 && <Sparkline values={rx} color="var(--up)" width={64} height={18} />}
+              <span className="w-16 text-right text-xs">{latestRx != null ? formatBytes(latestRx) : "—"}</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-[var(--muted)]">↑ TX</span>
+            <div className="flex items-center gap-2">
+              {tx.length >= 2 && <Sparkline values={tx} color="var(--warn)" width={64} height={18} />}
+              <span className="w-16 text-right text-xs">{latestTx != null ? formatBytes(latestTx) : "—"}</span>
+            </div>
+          </div>
         </div>
       )}
     </div>

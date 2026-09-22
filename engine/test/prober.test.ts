@@ -84,3 +84,24 @@ describe("prober http extras", () => {
     expect(fail.status).toBe("down");
   });
 });
+
+// SNMP needs a real daemon to talk to (unlike ping/tcp/http, there's no
+// convenient in-process fake to stand up the way the http/https servers
+// above are), so these are Docker-free code-path tests only — missing
+// config, and a real network-level failure (nothing listening) resolving
+// to "down" rather than hanging or throwing. The actual protocol —
+// v1/v2c and v3 authPriv, both a real value returned and real
+// authentication failures correctly reported — was verified for real
+// against a real snmpd (v1/v2c via a plain container, v3 against a
+// hand-configured SNMPv3 user) during development; see CHANGELOG.md.
+describe("prober snmp", () => {
+  it("warns on missing host/oid rather than attempting a request", async () => {
+    const result = await runProbe("snmp", { host: "", oid: "" });
+    expect(result.status).toBe("warn");
+  });
+
+  it("reports down (not a thrown error) when nothing is listening", async () => {
+    const result = await runProbe("snmp", { host: "127.0.0.1", port: 1, version: "2c", community: "public", oid: "1.3.6.1.2.1.1.3.0" });
+    expect(result.status).toBe("down");
+  }, 15_000);
+});

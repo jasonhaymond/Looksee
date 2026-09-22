@@ -9,7 +9,15 @@ const WIDGET_TYPE_LABELS: Record<WidgetType, string> = {
   uptime_history: "Uptime history (one check)",
   host_metrics: "Host metrics (one host)",
   note: "Note",
+  alert_history: "Alert history (one site or all)",
+  network_bandwidth: "Network bandwidth (one host)",
+  all_hosts: "All hosts grid",
+  backup_status: "Backup status",
+  clock: "Clock / date",
 };
+
+// Types that need no target picker at all — "Add" is available immediately.
+const NO_TARGET_TYPES = new Set<WidgetType>(["all_hosts", "backup_status", "clock"]);
 
 export function AddWidgetForm({
   sites,
@@ -46,11 +54,13 @@ export function AddWidgetForm({
     });
   } else if (type === "group_summary") {
     options = sites.map((s) => ({ id: s.id, label: s.name }));
-  } else if (type === "host_metrics") {
+  } else if (type === "host_metrics" || type === "network_bandwidth") {
     options = hosts.map((h) => ({ id: h.id, label: `${h.name} — ${siteNameById.get(h.siteId) ?? "unknown site"}` }));
+  } else if (type === "alert_history") {
+    options = [{ id: "", label: "All sites" }, ...sites.map((s) => ({ id: s.id, label: s.name }))];
   }
 
-  const canAdd = type === "note" || Boolean(targetId);
+  const canAdd = type === "note" || NO_TARGET_TYPES.has(type) || type === "alert_history" || Boolean(targetId);
 
   function handleAdd() {
     if (!canAdd) return;
@@ -82,9 +92,9 @@ export function AddWidgetForm({
           rows={2}
           className="min-w-40 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
         />
-      ) : (
+      ) : NO_TARGET_TYPES.has(type) ? null : (
         <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className="min-w-40 rounded-md border border-[var(--border)] bg-transparent px-2 py-1">
-          <option value="">Choose...</option>
+          {type !== "alert_history" && <option value="">Choose...</option>}
           {options.map((o) => (
             <option key={o.id} value={o.id}>
               {o.label}

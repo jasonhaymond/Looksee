@@ -57,6 +57,13 @@
       "when": 1790070137336,
       "tag": "0007_rare_gargoyle",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790089024687,
+      "tag": "0008_dazzling_winter_soldier",
+      "breakpoints": true
     }
   ]
 }

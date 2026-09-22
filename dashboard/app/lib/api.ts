@@ -98,16 +98,35 @@ export type AlertRule = {
 };
 
 export type Dashboard = { id: string; name: string; refreshSeconds: number; createdAt: string };
-export type WidgetType = "status_tile" | "group_summary" | "host_metrics" | "uptime_history" | "note";
+export type WidgetType =
+  | "status_tile"
+  | "group_summary"
+  | "host_metrics"
+  | "uptime_history"
+  | "note"
+  | "alert_history"
+  | "network_bandwidth"
+  | "all_hosts"
+  | "backup_status"
+  | "clock";
 export type Widget = {
   id: string;
   dashboardId: string;
   type: WidgetType;
-  config: { checkId?: string; siteId?: string; hostId?: string; text?: string };
+  config: { checkId?: string; siteId?: string; hostId?: string; text?: string; rangeHours?: number };
   x: number;
   y: number;
   w: number;
   h: number;
+};
+export type AlertEvent = {
+  id: string;
+  alertRuleId: string;
+  checkId: string | null;
+  checkName: string;
+  status: "triggered" | "resolved";
+  triggeredAt: string;
+  resolvedAt: string | null;
 };
 export type HostMetric = {
   id: string;
@@ -148,7 +167,8 @@ export const api = {
   updateCheck: (id: string, input: { name?: string; hostId?: string | null; config?: Record<string, unknown>; intervalSeconds?: number; enabled?: boolean }) =>
     request<Check>(`/api/checks/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteCheck: (id: string) => request<void>(`/api/checks/${id}`, { method: "DELETE" }),
-  checkResults: (checkId: string, limit = 50) => request<CheckResult[]>(`/api/checks/${checkId}/results?limit=${limit}`),
+  checkResults: (checkId: string, limit = 50, since?: string) =>
+    request<CheckResult[]>(`/api/checks/${checkId}/results?limit=${limit}${since ? `&since=${encodeURIComponent(since)}` : ""}`),
 
   channels: () => request<Channel[]>("/api/channels"),
   createChannel: (input: { name: string; type: string; config: Record<string, unknown> }) =>
@@ -202,5 +222,14 @@ export const api = {
   updateWidget: (widgetId: string, input: Partial<Pick<Widget, "x" | "y" | "w" | "h" | "config">>) =>
     request<Widget>(`/api/dashboards/widgets/${widgetId}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteWidget: (widgetId: string) => request<void>(`/api/dashboards/widgets/${widgetId}`, { method: "DELETE" }),
-  hostMetrics: (hostId: string, limit = 30) => request<HostMetric[]>(`/api/hosts/${hostId}/metrics?limit=${limit}`),
+  hostMetrics: (hostId: string, limit = 30, since?: string) =>
+    request<HostMetric[]>(`/api/hosts/${hostId}/metrics?limit=${limit}${since ? `&since=${encodeURIComponent(since)}` : ""}`),
+  alertEvents: (params?: { siteId?: string; since?: string; limit?: number }) => {
+    const query = new URLSearchParams();
+    if (params?.siteId) query.set("siteId", params.siteId);
+    if (params?.since) query.set("since", params.since);
+    if (params?.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return request<AlertEvent[]>(`/api/alert-rules/events${qs ? `?${qs}` : ""}`);
+  },
 };

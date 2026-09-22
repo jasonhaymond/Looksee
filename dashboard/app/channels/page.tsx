@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api, ApiError, type Channel, type SmtpSettings } from "../lib/api";
 import { TopNav } from "../components/TopNav";
 import { Tooltip } from "../components/Tooltip";
+import { PageHelp } from "../components/PageHelp";
 import {
   ChannelConfigFields,
   CHANNEL_TYPE_HELP,
@@ -266,6 +267,9 @@ export default function ChannelsPage() {
   return (
     <main className="mx-auto max-w-3xl p-6">
       <TopNav active="/channels" />
+      <PageHelp anchor="channels-and-notifications-alerts">
+        Channels are where alerts get sent (currently email via SMTP). Alert rules, configured per-check on Manage, decide when a channel actually gets notified.
+      </PageHelp>
 
       <SmtpSettingsSection />
 

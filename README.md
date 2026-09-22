@@ -3,11 +3,13 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v1 built and verified end-to-end (auth, sites/hosts/checks CRUD, agentless
-probing + scheduler, agent metrics/service ingest, email/webhook/Web Push alerting, a
-working dashboard), and running in production on a real homelab server with an agent
-reporting in. Current version: **v1.0.0** — see [`CHANGELOG.md`](CHANGELOG.md) for what
-changed recently, or [Deploying](#deploying) below for a first deployment of your own.
+**Status**: built and verified end-to-end (auth, sites/hosts/checks CRUD, agentless
+probing + scheduler incl. SNMP/OID, agent metrics/service ingest with OS threshold
+alerting, email/webhook/Web Push alerting, a fully customizable widget dashboard), and
+running in production on a real homelab server with an agent reporting in. Current
+version: **v2.0.0** — see [`CHANGELOG.md`](CHANGELOG.md) for what changed recently, or
+[Deploying](#deploying) below for a first deployment of your own. Day-to-day usage once
+it's running is covered in [`docs/user-guide.md`](docs/user-guide.md).
 
 ## Tech stack
 
@@ -85,5 +87,6 @@ Backups section for exactly what's been proven vs. still needs a first real run.
 - [`spec.md`](spec.md) — full project spec: architecture, data model, v1 scope, decisions
 - [`CLAUDE.md`](CLAUDE.md) — locked project-specific decisions
 - [`docs/deployment-guide.md`](docs/deployment-guide.md) — first deployment and updating
+- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: sites/hosts/checks, dashboards/widgets, channels, backups, logs
 - [`CHANGELOG.md`](CHANGELOG.md) — version history
 - [`agent/README.md`](agent/README.md) — building and running the Go agent

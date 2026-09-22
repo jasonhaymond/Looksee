@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-22
+
+Versioned as a major bump per explicit direction — this round adds real new check
+categories (OS thresholds, SNMP/OID) and a real shift in how history is queried
+(time-windowed rather than a fixed last-N), even though every API addition is itself
+backward-compatible. The agent binary didn't change this round (still v1.2.0) — only
+the engine and dashboard move to 2.0.0.
+
+### Added
+
+- **OS threshold checks** (`host_cpu`/`host_memory`/`host_disk`): alert on CPU/memory/
+  disk usage the agent has reported every cycle since v1.0.0 but nothing ever alerted
+  on. Evaluated on report arrival (`POST /api/agent/report`), no new agent code or poll
+  cycle — same "evaluate on report" shape already used for service/process checks.
+  Both warn/critical thresholds are optional; a check with neither just tracks history.
+- **SNMP/OID checks**, for UPS's, switches, and other SNMP-speaking network gear.
+  Supports v1, v2c, and v3 (auth/priv) via `net-snmp`. Four independent optional
+  thresholds (warn/critical, above/below) rather than a single operator, since some
+  OIDs warn low (battery %) and others warn high (temperature, load). The check form
+  includes a preset dropdown for common UPS-MIB OIDs (battery charge/status, load,
+  minutes remaining, input voltage) so getting started doesn't require knowing raw
+  OIDs — free text still works for anything else.
+- **Time-based, filterable history** on every history-backed widget: `GET /api/checks/
+  :id/results` and `GET /api/hosts/:id/metrics` both gained an optional `since` (ISO
+  timestamp) query param. The host-metrics and uptime-history widgets each gained their
+  own range control (1 hour–30 days), persisted per-widget (`config.rangeHours`) rather
+  than as a global setting, so two widgets on the same dashboard can show different
+  windows independently.
+- **Five new dashboard widgets**: alert history (recent alert events, filterable to one
+  site or all, with its own range control — backed by a new `GET /api/alert-rules/
+  events` route), network bandwidth (RX/TX sparklines from `hostMetrics`, collected
+  since v1.0.0 but never visualized), an all-hosts grid (every host's online/offline
+  status at a glance, based on last-seen recency), backup status (the most recent
+  backup run), and a clock/date tile.
+- **In-app help**: a short intro line at the top of Manage, Hosts, Channels, Backups,
+  and Logs, linking into a new `docs/user-guide.md` — day-to-day usage covering sites/
+  hosts/checks (including the new check types), dashboards/widgets, channels, backups,
+  and logs. Distinct from the existing ops-focused `docs/deployment-guide.md`.
+- Lightened the dashboard's near-black theme (`--bg`/`--panel`/`--border`) so panels/
+  cards read as distinct surfaces instead of blending into the page background — still
+  a dark theme, just with real separation. Contrast re-checked against WCAG AA (4.5:1)
+  before finalizing: text stays ~13-15:1 and muted text ~5.9-6.8:1 against both the new
+  background and panel colors.
+
+### Fixed
+
+- Two real bugs caught during this round's own verification, both the same shape —
+  a hand-maintained "list of valid types" that a new check/widget type needs adding to
+  separately from the schema, silently going stale: `services/scheduler.ts` kept its
+  own copy of "which check types are agentless" that never got the new `snmp` type
+  added, so SNMP checks were created successfully but silently never actually probed;
+  `routes/dashboards.ts` kept its own copy of "valid widget types" that never got the
+  5 new widget types added, so every new widget type was rejected with a 400 on
+  creation. Both are now derived directly from the schema's own enum value lists
+  (`AGENTLESS_CHECK_TYPES`, and `dashboards.ts` reading `widgetType.enumValues`
+  directly) instead of hand-duplicated, so this class of bug can't recur for a future
+  new type. Regression tests added for both.
+
+### Notes
+
+- Verified for real: SNMP v1/v2c and v3 (auth/priv) against real `snmpd` daemons in
+  Docker (community/creds correct and wrong, unreachable host, real values returned);
+  OS threshold evaluation exercised through the real API end-to-end (not just the
+  isolated prober test) with real warn/critical results recorded; the scheduler bug
+  above was caught specifically because an SNMP check created through the real API
+  never produced a result under real observation, not assumed from a passing test; all
+  five new widgets added through the real dashboard UI with real data (host metrics,
+  alert history including a real triggered alert, all-hosts online/offline, a real
+  "ERROR — spawn borg ENOENT" backup status, a live clock); a widget's chosen time
+  range confirmed to persist across a page reload; desktop and mobile screenshots taken
+  of the new theme and every new widget/check-type form.
+
 ## [1.4.0] - 2026-09-22
 
 ### Added

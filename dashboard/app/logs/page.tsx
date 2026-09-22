@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api, ApiError, type LogEntry, type LogLevel } from "../lib/api";
 import { TopNav } from "../components/TopNav";
 import { Tooltip } from "../components/Tooltip";
+import { PageHelp } from "../components/PageHelp";
 
 const POLL_MS = 5_000;
 
@@ -93,6 +94,9 @@ export default function LogsPage() {
         Logs
         <Tooltip text="Debug: verbose technical detail, mainly for troubleshooting. Info: routine events worth knowing about. Warn/Error: something needs attention — these are the ones with a plain-language explanation alongside the technical detail." />
       </h2>
+      <PageHelp anchor="logs">
+        The engine's own activity log — what it's doing and why. Filter by level below; warn/error entries include a plain-language explanation.
+      </PageHelp>
 
       <div className="mb-4 flex gap-1 text-sm">
         {LEVEL_FILTERS.map((f) => (

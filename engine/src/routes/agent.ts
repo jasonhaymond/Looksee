@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { hosts, hostMetrics, checks, AGENT_CHECK_TYPES } from "../db/schema.js";
+import { hosts, hostMetrics, checks, AGENT_CHECK_TYPES, HOST_METRIC_CHECK_TYPES } from "../db/schema.js";
 import { requireAgentAuth } from "../middleware/auth.js";
 import { recordCheckResult } from "../services/alerting.js";
 import { logger } from "../lib/logger.js";
@@ -75,6 +75,28 @@ agentRouter.post("/report", async (req, res) => {
       netRxBytes: numberOrNull(metrics.netRxBytes),
       netTxBytes: numberOrNull(metrics.netTxBytes),
     });
+
+    // OS threshold checks (host_cpu/host_memory/host_disk) — evaluated here
+    // against the metrics this same report just carried, rather than a
+    // separate poll cycle. The agent has sent this data every cycle since
+    // v1.0.0; nothing alerted on it until now.
+    const metricByType: Partial<Record<(typeof HOST_METRIC_CHECK_TYPES)[number], number | null>> = {
+      host_cpu: numberOrNull(metrics.cpuPercent),
+      host_memory: numberOrNull(metrics.memPercent),
+      host_disk: numberOrNull(metrics.diskPercent),
+    };
+    const thresholdChecks = await db.query.checks.findMany({
+      where: (c, { and, eq, inArray }) => and(eq(c.hostId, hostId), inArray(c.type, HOST_METRIC_CHECK_TYPES), eq(c.enabled, true)),
+    });
+    for (const check of thresholdChecks) {
+      const value = metricByType[check.type as (typeof HOST_METRIC_CHECK_TYPES)[number]];
+      if (value == null) continue;
+      const { warnPercent, criticalPercent } = check.config as { warnPercent?: number; criticalPercent?: number };
+      let status: "up" | "warn" | "down" = "up";
+      if (criticalPercent != null && value >= criticalPercent) status = "down";
+      else if (warnPercent != null && value >= warnPercent) status = "warn";
+      await recordCheckResult(check.id, status, null, status !== "up" ? `${value}%` : null);
+    }
   }
 
   const services = Array.isArray(req.body?.services) ? req.body.services : [];

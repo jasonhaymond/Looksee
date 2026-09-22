@@ -1,6 +1,6 @@
 import { Router } from "express";
 import crypto from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { hosts, hostMetrics } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -94,9 +94,11 @@ hostsRouter.post("/:id/request-update", async (req, res) => {
 // widget — same clamped-limit/newest-first shape as checks.ts's
 // /:id/results.
 hostsRouter.get("/:id/metrics", async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 100, 1000);
+  const limit = Math.min(Number(req.query.limit) || 100, 2000);
+  const since = typeof req.query.since === "string" ? new Date(req.query.since) : undefined;
+  const validSince = since && !Number.isNaN(since.getTime()) ? since : undefined;
   const rows = await db.query.hostMetrics.findMany({
-    where: eq(hostMetrics.hostId, req.params.id),
+    where: validSince ? and(eq(hostMetrics.hostId, req.params.id), gte(hostMetrics.recordedAt, validSince)) : eq(hostMetrics.hostId, req.params.id),
     orderBy: desc(hostMetrics.recordedAt),
     limit,
   });

@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { app } from "../src/app.js";
 import { db } from "../src/db/index.js";
-import { users, sites } from "../src/db/schema.js";
+import { users, sites, widgetType } from "../src/db/schema.js";
 
 const email = `test-dashboards-${crypto.randomUUID()}@example.com`;
 const password = "TestPass123";
@@ -76,17 +76,36 @@ describe("dashboards", () => {
     await request(app).delete(`/api/dashboards/${createRes.body.id}`).set("Cookie", cookie);
   });
 
-  it("accepts the three new widget types: host_metrics, uptime_history, note", async () => {
+  it("accepts every widget type in the widgetType enum", async () => {
+    // Iterates the schema's own enum rather than a hand-copied list of
+    // types, so a future new widget type is covered automatically instead
+    // of silently passing a stale test — this is exactly the kind of test
+    // that would have caught the 2.0 bug where routes/dashboards.ts kept
+    // its own stale VALID_WIDGET_TYPES copy after 5 new widget types were
+    // added to the schema.
     const createRes = await request(app).post("/api/dashboards").set("Cookie", cookie).send({ name: "New widget types" });
     const dashboardId = createRes.body.id;
 
-    for (const [type, config] of [
-      ["host_metrics", { hostId: crypto.randomUUID() }],
-      ["uptime_history", { checkId: crypto.randomUUID() }],
-      ["note", { text: "Remember to renew the cert" }],
-    ] as const) {
+    const configByType: Record<string, Record<string, unknown>> = {
+      status_tile: { checkId: crypto.randomUUID() },
+      group_summary: { siteId: crypto.randomUUID() },
+      host_metrics: { hostId: crypto.randomUUID() },
+      uptime_history: { checkId: crypto.randomUUID() },
+      note: { text: "Remember to renew the cert" },
+      alert_history: { siteId: crypto.randomUUID() },
+      network_bandwidth: { hostId: crypto.randomUUID() },
+      all_hosts: {},
+      backup_status: {},
+      clock: {},
+    };
+
+    for (const type of widgetType.enumValues) {
+      // Fails loudly (undefined config) rather than silently skipping if a
+      // new enum value shows up with no entry above — forces this test to
+      // be updated alongside the enum instead of quietly going stale.
+      const config = configByType[type];
       const res = await request(app).post(`/api/dashboards/${dashboardId}/widgets`).set("Cookie", cookie).send({ type, config });
-      expect(res.status).toBe(201);
+      expect(res.status, `${type} should be accepted`).toBe(201);
       expect(res.body.type).toBe(type);
       expect(res.body.config).toEqual(config);
     }

@@ -14,6 +14,11 @@ import { AddWidgetForm } from "./components/AddWidgetForm";
 import { HostMetricsWidget } from "./components/HostMetricsWidget";
 import { UptimeHistoryWidget } from "./components/UptimeHistoryWidget";
 import { NoteWidget } from "./components/NoteWidget";
+import { AlertHistoryWidget } from "./components/AlertHistoryWidget";
+import { NetworkBandwidthWidget } from "./components/NetworkBandwidthWidget";
+import { AllHostsWidget } from "./components/AllHostsWidget";
+import { BackupStatusWidget } from "./components/BackupStatusWidget";
+import { ClockWidget } from "./components/ClockWidget";
 
 const Grid = WidthProvider(GridLayout);
 const LAST_DASHBOARD_KEY = "looksee.lastDashboardId";
@@ -153,11 +158,15 @@ export default function DashboardsPage() {
     const config: Widget["config"] =
       type === "status_tile" || type === "uptime_history"
         ? { checkId: target }
-        : type === "host_metrics"
+        : type === "host_metrics" || type === "network_bandwidth"
           ? { hostId: target }
           : type === "note"
             ? { text: target }
-            : { siteId: target };
+            : type === "group_summary"
+              ? { siteId: target }
+              : type === "alert_history"
+                ? (target ? { siteId: target } : {})
+                : {}; // all_hosts, backup_status, clock — no target needed
     // Drop the new widget below whatever's already there rather than at
     // (0,0) — compaction (default RGL behavior) then settles it into the
     // first real gap.
@@ -236,16 +245,34 @@ export default function DashboardsPage() {
       }
       return <StatusTile check={check} latest={latestByCheck.get(check.id)} hosts={hosts} siteNameById={siteNameById} onChanged={loadStatusData} />;
     }
+    const onChanged = () => activeDashboardId && loadWidgets(activeDashboardId);
     if (widget.type === "uptime_history") {
       const check = widget.config.checkId ? checkById.get(widget.config.checkId) : undefined;
-      return <UptimeHistoryWidget check={check} />;
+      return <UptimeHistoryWidget widget={widget} check={check} onChanged={onChanged} />;
     }
     if (widget.type === "host_metrics") {
       const host = widget.config.hostId ? hostById.get(widget.config.hostId) : undefined;
-      return <HostMetricsWidget host={host} />;
+      return <HostMetricsWidget widget={widget} host={host} onChanged={onChanged} />;
+    }
+    if (widget.type === "network_bandwidth") {
+      const host = widget.config.hostId ? hostById.get(widget.config.hostId) : undefined;
+      return <NetworkBandwidthWidget widget={widget} host={host} onChanged={onChanged} />;
     }
     if (widget.type === "note") {
-      return <NoteWidget widget={widget} editMode={editMode} onChanged={() => activeDashboardId && loadWidgets(activeDashboardId)} />;
+      return <NoteWidget widget={widget} editMode={editMode} onChanged={onChanged} />;
+    }
+    if (widget.type === "alert_history") {
+      const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
+      return <AlertHistoryWidget widget={widget} site={site} onChanged={onChanged} />;
+    }
+    if (widget.type === "all_hosts") {
+      return <AllHostsWidget hosts={hosts} siteNameById={siteNameById} />;
+    }
+    if (widget.type === "backup_status") {
+      return <BackupStatusWidget />;
+    }
+    if (widget.type === "clock") {
+      return <ClockWidget />;
     }
     const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
     return (
