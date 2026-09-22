@@ -61,13 +61,33 @@ hostsRouter.post("/:id/agent-key", async (req, res) => {
     res.status(404).json({ error: "Host not found" });
     return;
   }
-  // One copy-pasteable command: downloads the right binary for the target
-  // host's OS/arch, writes its config with this key baked in, and (on
-  // Linux, with sudo) installs it as a systemd service — see
-  // engine/src/routes/install.ts for what it actually runs.
+  // Copy-pasteable commands per platform: each downloads the right binary,
+  // writes its config with this key baked in, and installs it as a real
+  // service (systemd/launchd on unix, a Scheduled Task on Windows) — see
+  // engine/src/routes/install.ts for what they actually run. The bash
+  // bootstrap (agent.sh) already detects Linux vs. macOS itself via `uname`,
+  // so one command covers both; Windows needs a separate PowerShell one
+  // since bash/curl/sudo aren't available there by default.
   const publicUrl = process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 4100}`;
-  const installCommand = `curl -fsSL ${publicUrl}/install/agent.sh | sudo bash -s -- ${agentApiKey}`;
-  res.json({ agentApiKey, installCommand });
+  const installCommands = {
+    unix: `curl -fsSL ${publicUrl}/install/agent.sh | sudo bash -s -- ${agentApiKey}`,
+    windows: `$env:LOOKSEE_ENGINE_URL='${publicUrl}'; $env:LOOKSEE_AGENT_KEY='${agentApiKey}'; iex (irm ${publicUrl}/install/agent.ps1)`,
+  };
+  res.json({ agentApiKey, installCommands });
+});
+
+// Push-to-update: flags this host so its agent updates itself on its next
+// config poll (see routes/agent.ts's GET /config, which consumes this flag
+// one-shot). Doesn't wait for or confirm the update — the host's
+// agentVersion changing on a later report is the real confirmation, shown
+// in the dashboard.
+hostsRouter.post("/:id/request-update", async (req, res) => {
+  const [host] = await db.update(hosts).set({ updateRequested: true }).where(eq(hosts.id, req.params.id)).returning();
+  if (!host) {
+    res.status(404).json({ error: "Host not found" });
+    return;
+  }
+  res.json({ requested: true });
 });
 
 hostsRouter.delete("/:id", async (req, res) => {

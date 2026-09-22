@@ -24,6 +24,30 @@ describe("install routes", () => {
     expect(unit.text).toContain("[Service]");
   });
 
+  it("serves install-macos.sh and the launchd plist verbatim", async () => {
+    const installMacos = await request(app).get("/install/install-macos.sh");
+    expect(installMacos.status).toBe(200);
+    expect(installMacos.text).toContain("launchd");
+
+    const plist = await request(app).get("/install/com.looksee.agent.plist");
+    expect(plist.status).toBe(200);
+    expect(plist.text).toContain("com.looksee.agent");
+  });
+
+  it("serves the Windows PowerShell installer verbatim, reading env vars rather than args", async () => {
+    const res = await request(app).get("/install/agent.ps1");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("LOOKSEE_ENGINE_URL");
+    expect(res.text).toContain("LOOKSEE_AGENT_KEY");
+    expect(res.text).toContain("Register-ScheduledTask");
+  });
+
+  it("the bootstrap script installs on both Linux and Darwin, not just Linux", async () => {
+    const res = await request(app).get("/install/agent.sh");
+    expect(res.text).toContain("install.sh looksee-agent looksee-agent.yaml");
+    expect(res.text).toContain("install-macos.sh looksee-agent looksee-agent.yaml");
+  });
+
   it("rejects an unknown platform", async () => {
     const res = await request(app).get("/install/agent/not-a-real-platform");
     expect(res.status).toBe(400);

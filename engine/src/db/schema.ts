@@ -93,6 +93,15 @@ export const hosts = pgTable("hosts", {
   // someone type an exact service/process name blind.
   availableProcesses: jsonb("available_processes"),
   availableServices: jsonb("available_services"),
+  // Push-to-update: agentVersion is set from whatever the agent itself
+  // reports (main.go's -ldflags-injected version), so it reflects what's
+  // actually running, not what was last deployed. updateRequested is a
+  // one-shot flag — set by POST /:id/request-update, consumed (flipped
+  // back to false) the next time GET /api/agent/config is read for this
+  // host, whether or not the update actually succeeds; the agentVersion
+  // changing on a later report is the real confirmation signal.
+  agentVersion: text("agent_version"),
+  updateRequested: boolean("update_requested").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

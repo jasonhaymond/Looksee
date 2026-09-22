@@ -7,22 +7,28 @@ self-contained executable per platform.
 ## The fast path: one command on the target host
 
 1. In the Looksee dashboard, create a Host under the right Site.
-2. Click "Generate agent key" — it shows a ready-to-run command like:
+2. Click "Generate agent key" — it shows two ready-to-run commands, one for Linux/macOS
+   and one for Windows (a small toggle switches between them):
    ```sh
    curl -fsSL https://your-looksee-domain/install/agent.sh | sudo bash -s -- <key>
    ```
-   Copy it now — the key is shown exactly once and can't be retrieved again afterward
-   (only reset).
-3. Run that exact command **on the host you want to monitor** (as a user who can
-   `sudo`). It detects the host's OS/arch, downloads the matching pre-built binary from
-   this engine, writes its config with the key already filled in, and — on Linux —
-   installs and starts it as a systemd service in one shot. Windows/macOS download the
-   binary + config but don't auto-install as a service yet (see below).
+   ```powershell
+   $env:LOOKSEE_ENGINE_URL='https://your-looksee-domain'; $env:LOOKSEE_AGENT_KEY='<key>'; iex (irm https://your-looksee-domain/install/agent.ps1)
+   ```
+   Copy the one for the target host's OS now — the key is shown exactly once and can't
+   be retrieved again afterward (only reset).
+3. Run that exact command **on the host you want to monitor**, elevated (a user who can
+   `sudo` on Linux/macOS; an Administrator PowerShell on Windows). It detects the host's
+   OS/arch, downloads the matching pre-built binary from this engine, writes its config
+   with the key already filled in, and installs and starts it as a real service —
+   systemd on Linux, launchd on macOS, a Scheduled Task on Windows — in one shot.
 
 This only works once binaries actually exist on the engine to serve — see "Build" below.
 If you'd rather not run a one-liner from the dashboard site, or want to inspect the script
-first: it's the exact content served at `/install/agent.sh`, `/install/install.sh`, and
-`/install/looksee-agent.service` on your engine, or just follow the manual steps below.
+first: it's the exact content served at `/install/agent.sh` (Linux/macOS bootstrap),
+`/install/install.sh` + `/install/looksee-agent.service` (Linux), `/install/install-macos.sh`
++ `/install/com.looksee.agent.plist` (macOS), and `/install/agent.ps1` (Windows) on your
+engine, or just follow the manual steps below.
 
 ## Configure manually
 
@@ -113,23 +119,79 @@ sudo ./uninstall.sh                 # stops the service, leaves the binary/confi
 sudo ./uninstall.sh --purge         # also removes the binary, config, and system user
 ```
 
-### Windows
+### Windows (Scheduled Task) — scripted, and actually tested
 
-No install script yet — register it with either:
+The one-liner at the top of this file does this automatically, using only built-in
+`Register-ScheduledTask` cmdlets — no NSSM or other third-party service wrapper. To run
+it by hand instead (needs `$env:LOOKSEE_ENGINE_URL`/`$env:LOOKSEE_AGENT_KEY` set first,
+since PowerShell's `-Command`/`iex` don't bind trailing arguments the way `-File` does):
 
-- **NSSM** (simplest): `nssm install LookseeAgent "C:\looksee\looksee-agent.exe" "-config C:\looksee\looksee-agent.yaml"`, then `nssm start LookseeAgent`.
-- **Task Scheduler**: create a task that runs at startup as SYSTEM (or a dedicated
-  service account), action = the binary with `-config <path>`, with "Restart on failure"
-  configured under Settings.
+```powershell
+$env:LOOKSEE_ENGINE_URL = "https://your-looksee-domain"
+$env:LOOKSEE_AGENT_KEY = "<key>"
+.\install-windows.ps1   # run elevated
+```
 
-### macOS (launchd)
+Downloads the binary to `C:\ProgramData\LookseeAgent\looksee-agent.exe`, writes the
+config next to it, and registers a Scheduled Task ("LookseeAgent") — startup trigger,
+runs as `SYSTEM`, restart-on-failure. Idempotent — re-run to update (unregisters and
+re-registers the task).
 
-No install script yet — create `~/Library/LaunchAgents/com.looksee.agent.plist` (or
-`/Library/LaunchDaemons/` for a system-wide install) with `ProgramArguments` pointing at
-the binary + `-config <path>`, `KeepAlive` set to `true` for auto-restart, then
-`launchctl load` it.
+Verified for real on a real Windows host during development: the exact served
+`/install/agent.ps1` content run via the real `$env:...; iex (irm ...)` one-liner
+against a real running engine (correctly downloaded the actual binary and stopped
+cleanly at the admin-elevation check when run unelevated, exactly as designed); the
+Scheduled Task registration itself needs elevation this dev sandbox didn't have, so that
+specific step is verified by cmdlet correctness + a clean script parse rather than an
+actual elevated run — worth a first real elevated run before trusting it in production.
 
-**Honestly**: the Windows and macOS paths above are standard, well-documented mechanisms
-but haven't been run on an actual Windows/macOS host during this project — only the Linux
-systemd path has been. A scripted installer for either is a reasonable follow-up once
-someone actually deploys the agent to one.
+```powershell
+Get-ScheduledTask -TaskName LookseeAgent          # confirm it's registered/running
+.\uninstall-windows.ps1                            # stops the task, leaves binary/config
+.\uninstall-windows.ps1 -Purge                     # also removes C:\ProgramData\LookseeAgent
+```
+
+### macOS (launchd) — scripted, not yet run on a real Mac
+
+```sh
+sudo ./install-macos.sh /path/to/looksee-agent-darwin-amd64 /path/to/looksee-agent.yaml
+```
+
+Installs the binary to `/usr/local/bin/looksee-agent`, config to
+`/usr/local/etc/looksee-agent/looksee-agent.yaml` (mode 600), and a system-wide launchd
+daemon (`/Library/LaunchDaemons/com.looksee.agent.plist`, `KeepAlive=true`). Idempotent —
+re-run after rebuilding to update and reload it.
+
+**Honestly**: unlike Linux and Windows above, this hasn't been run on an actual Mac
+during this project — no macOS host was available. The launchd mechanism and plist shape
+are standard and well-documented, but treat this the way any project should treat an
+unverified path: worth a first real run before trusting it.
+
+```sh
+launchctl list | grep com.looksee.agent    # confirm it's loaded
+sudo ./uninstall-macos.sh                  # stops the daemon, leaves binary/config
+sudo ./uninstall-macos.sh --purge          # also removes the binary and config
+```
+
+## Updating
+
+**Push from the dashboard** (recommended): the Hosts page shows each host's running
+agent version next to the engine's current buildable version, and an "Update agent"
+button once a host has reported at least once. Clicking it flags that host; the agent
+downloads the current build for its own platform and swaps itself in on its next
+check-in (usually within its polling interval), then restarts itself — no re-running
+the install script, no touching the host by hand. Verified for real: an old build
+running in a real container, flagged for update via the real API, autonomously
+downloaded the new binary, swapped it in, relaunched, and reported the new version back
+— all without any manual step on the host itself. On Windows specifically, the
+file-swap-while-running behavior (rename the running exe aside, move the new one into
+its place) was verified against a real running exe on a real Windows host before relying
+on it, not assumed.
+
+This only updates the binary — config (the agent key, engine URL, interval) is
+untouched. There's no way to downgrade from the dashboard; re-run the install one-liner
+with an older binary if you ever need to.
+
+**Manually**: re-run the platform's install script (`install.sh`/`install-macos.sh`/
+`install-windows.ps1`) with a newer binary — all three are idempotent and overwrite the
+running installation.

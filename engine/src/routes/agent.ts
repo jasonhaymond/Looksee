@@ -23,8 +23,20 @@ agentRouter.get("/config", async (req, res) => {
   const rows = await db.query.checks.findMany({
     where: (c, { and, eq, inArray }) => and(eq(c.hostId, hostId), inArray(c.type, AGENT_CHECK_TYPES), eq(c.enabled, true)),
   });
+
+  // Push-to-update: one-shot — consumed (flipped back to false) as soon as
+  // it's read, regardless of whether the agent actually manages to update.
+  // A stuck/failed update just means clicking "Update agent" again; there's
+  // no separate in-progress state to get out of sync.
+  const host = await db.query.hosts.findFirst({ where: eq(hosts.id, hostId) });
+  const updateAvailable = host?.updateRequested ?? false;
+  if (updateAvailable) {
+    await db.update(hosts).set({ updateRequested: false }).where(eq(hosts.id, hostId));
+    logger.info("agent", `Host ${hostId} polled /config with an update pending — flag consumed`, `An agent update was requested for this host and has been handed off.`, { hostId });
+  }
+
   logger.debug("agent", `Host ${hostId} polled /config, returned ${rows.length} check(s)`, { hostId, checkIds: rows.map((c) => c.id) });
-  res.json({ checks: rows.map((c) => ({ id: c.id, type: c.type, config: c.config })) });
+  res.json({ checks: rows.map((c) => ({ id: c.id, type: c.type, config: c.config })), updateAvailable });
 });
 
 // POST /api/agent/report
@@ -47,6 +59,9 @@ agentRouter.post("/report", async (req, res) => {
   }
   if (Array.isArray(req.body?.availableServices)) {
     hostUpdate.availableServices = req.body.availableServices.map(String);
+  }
+  if (typeof req.body?.version === "string" && req.body.version) {
+    hostUpdate.agentVersion = req.body.version;
   }
   await db.update(hosts).set(hostUpdate).where(eq(hosts.id, hostId));
 

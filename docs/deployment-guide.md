@@ -245,24 +245,37 @@ Outputs to `agent/bin/` — the engine serves these directly from there, so this
 re-running after pulling agent code changes, not on every host you add.
 
 **Then, on each host you want to monitor**, generate that host's agent key in the
-dashboard (Hosts page) and run the one-line command it shows:
+dashboard (Hosts page) — it shows one command for Linux/macOS and one for Windows
+(a toggle switches between them):
 
 ```sh
 curl -fsSL https://looksee.yourdomain.com/install/agent.sh | sudo bash -s -- <key>
 ```
+```powershell
+$env:LOOKSEE_ENGINE_URL='https://looksee.yourdomain.com'; $env:LOOKSEE_AGENT_KEY='<key>'; iex (irm https://looksee.yourdomain.com/install/agent.ps1)
+```
 
-This detects the host's OS/arch, downloads the matching binary from this engine
+Either one detects the host's OS/arch, downloads the matching binary from this engine
 (`/install/agent/:platform`, unauthenticated by design — the key is the only real
-credential involved, and it's baked into the command itself), writes its config, and — on
-Linux — installs and starts it as a systemd service (dedicated unprivileged user,
-`Restart=on-failure`, config locked to mode 600) in one shot, using the exact same
-`agent/install.sh` this server already has. Windows and macOS download the binary +
-config but don't auto-install as a service yet — see `agent/README.md` for the manual
-NSSM/Task Scheduler/launchd steps.
+credential involved, and it's baked into the command itself), writes its config, and
+installs and starts it as a real service in one shot: systemd on Linux (dedicated
+unprivileged user, `Restart=on-failure`), launchd on macOS, a Scheduled Task on Windows
+(no third-party service wrapper) — all using this server's own install scripts, not a
+reimplementation.
 
 Verified for real, not just written: a live agent key generated via the dashboard's own
 API, the exact one-line command run verbatim in a fresh container, and the resulting
-host's "last report" time confirmed updating on the engine afterward.
+host's "last report" time confirmed updating on the engine afterward — for both the
+Linux path (full end-to-end, including the systemd install) and the Windows path (the
+download + config + admin-elevation check; the Scheduled Task registration itself needs
+elevation this dev environment didn't have — see `agent/README.md` for exactly what was
+and wasn't exercised). macOS is scripted the same way as Linux but hasn't been run on a
+real Mac — flagged honestly in `agent/README.md` rather than claimed as tested.
+
+**Updating an already-installed agent**: the Hosts page shows each host's running agent
+version and an "Update agent" button — click it and the agent downloads the current
+build and swaps itself in on its next check-in, no re-running the install script by
+hand. Verified for real end-to-end (see `agent/README.md`'s Updating section).
 
 ## 10. Troubleshooting
 

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-22
+
+### Added
+
+- **Windows and macOS agent install, scripted** — previously only Linux had a one-command
+  install; Windows and macOS were manual (NSSM/Task Scheduler, launchd) and explicitly
+  untested. The Hosts page now shows two install commands (a toggle switches between
+  them): the existing Linux/macOS one-liner (the bash bootstrap already detected both via
+  `uname`; it just never finished the macOS install before now) and a new PowerShell
+  one-liner for Windows, which registers a Scheduled Task (startup trigger, runs as
+  `SYSTEM`, restart-on-failure) using only built-in cmdlets — no third-party service
+  wrapper. The Windows path's argument-passing needed a real fix during development: a
+  first attempt bound the agent key via PowerShell's `$args[0]`, which turned out not to
+  work at all through `-Command`/`iex` (that binding is `-File`-only) — caught by
+  actually running it, not assumed, and fixed with an environment-variable handoff
+  instead. Verified for real on a real Windows host up to the point this sandbox's lack
+  of admin rights allowed (download + config + the elevation check); macOS is scripted
+  identically to Linux but honestly flagged as unrun on a real Mac (none available).
+- **Push-to-update**: the Hosts page shows each host's running agent version next to the
+  engine's current buildable version, with an "Update agent" button. Clicking it flags
+  that host (a one-shot server-side flag, not a persistent "desired state"); the agent
+  notices on its next poll, downloads the current build for its own platform, swaps
+  itself in, and relaunches — no re-running the install script by hand. Verified for
+  real, not simulated: an old build running in a real container was flagged via the
+  real API and autonomously updated itself, with the engine confirming the new version
+  on its next report. The Windows binary-swap-while-running sequence (rename the
+  running exe aside, move the new one into place) was verified against a real running
+  executable on a real Windows host before being relied on — Windows generally blocks
+  overwriting a running executable outright, but renaming one aside turned out to work
+  cleanly.
+- **HTTP checks can require specific response text**: a new optional field checks that
+  the response body contains a given string, in addition to (not instead of) the status
+  code check — catches endpoints that return 200 even when something's actually wrong.
+
 ## [1.1.0] - 2026-09-22
 
 ### Added

@@ -11,6 +11,9 @@ describe("GET /api/health", () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("ok");
     expect(res.body.db).toBe("connected");
+    // agent/VERSION exists in this checkout, so this should read a real
+    // version string, not just be present-but-null.
+    expect(res.body.agentVersion).toMatch(/^\d+\.\d+\.\d+$/);
   });
 });
 

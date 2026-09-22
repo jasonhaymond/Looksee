@@ -37,17 +37,27 @@ function HostRow({
   onChanged,
   revealed,
   onIssueKey,
+  latestAgentVersion,
 }: {
   host: Host;
   siteName: string;
   onChanged: () => void;
-  revealed: { agentApiKey: string; installCommand: string } | undefined;
+  revealed: { agentApiKey: string; installCommands: { unix: string; windows: string } } | undefined;
   onIssueKey: () => void;
+  latestAgentVersion: string | null;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(host.name);
   const [hostname, setHostname] = useState(host.hostname ?? "");
   const [os, setOs] = useState(host.os ?? "");
+  const [platform, setPlatform] = useState<"unix" | "windows">("unix");
+  const [updateRequested, setUpdateRequested] = useState(false);
+  const updateAvailable = Boolean(host.agentVersion && latestAgentVersion && host.agentVersion !== latestAgentVersion);
+
+  async function handleRequestUpdate() {
+    await api.requestHostUpdate(host.id);
+    setUpdateRequested(true);
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -90,12 +100,22 @@ function HostRow({
           <span className="text-[var(--muted)]">
             ({siteName}){host.hostname ? ` · ${host.hostname}` : ""}
             {host.os ? ` · ${host.os}` : ""} · last report: {relativeTime(host.lastSeenAt)}
+            {host.agentVersion && ` · agent v${host.agentVersion}`}
+            {updateAvailable && <span className="text-[var(--warn)]"> (v{latestAgentVersion} available)</span>}
           </span>
         </div>
         <div className="flex items-center gap-3">
           <button onClick={() => setEditing(true)} className="text-xs text-[var(--muted)] hover:underline">
             Edit
           </button>
+          {host.agentVersion && (
+            <span className="inline-flex items-center text-xs text-[var(--up)]">
+              <button onClick={handleRequestUpdate} disabled={updateRequested} className="hover:underline disabled:opacity-40 disabled:no-underline">
+                {updateRequested ? "Update requested" : "Update agent"}
+              </button>
+              <Tooltip text="Flags this host's agent to download and install the current build on its next check-in (usually within its polling interval). Its version above will change once it's done — no separate progress indicator, since it's the same signal." />
+            </span>
+          )}
           <span className="inline-flex items-center text-xs text-[var(--up)]">
             <button onClick={onIssueKey} className="hover:underline">
               Generate agent key
@@ -110,12 +130,25 @@ function HostRow({
       {revealed && (
         <div className="mt-2 space-y-2 rounded-md border border-[var(--warn)]/40 bg-[var(--warn)]/10 p-2 text-xs">
           <p className="text-[var(--warn)]">
-            Copy this now — it won&apos;t be shown again. Run it on <strong>{host.name}</strong> itself (as a user who
-            can <code>sudo</code>, for the automatic Linux service install):
+            Copy this now — it won&apos;t be shown again. Run it on <strong>{host.name}</strong> itself, elevated
+            (<code>sudo</code> on Linux/macOS, an Administrator PowerShell on Windows), for the automatic service
+            install:
           </p>
+          <div className="flex gap-1">
+            {(["unix", "windows"] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setPlatform(p)}
+                className={`rounded px-2 py-0.5 ${platform === p ? "bg-[var(--warn)]/30 text-[var(--text)]" : "text-[var(--muted)]"}`}
+              >
+                {p === "unix" ? "Linux / macOS" : "Windows"}
+              </button>
+            ))}
+          </div>
           <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded bg-black/30 p-1.5">{revealed.installCommand}</code>
-            <CopyButton text={revealed.installCommand} />
+            <code className="flex-1 break-all rounded bg-black/30 p-1.5">{revealed.installCommands[platform]}</code>
+            <CopyButton text={revealed.installCommands[platform]} />
           </div>
           <details>
             <summary className="cursor-pointer text-[var(--muted)]">Just the raw key (manual setup)</summary>
@@ -140,13 +173,15 @@ export default function HostsPage() {
   const [hostname, setHostname] = useState("");
   const [os, setOs] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [revealedKeys, setRevealedKeys] = useState<Record<string, { agentApiKey: string; installCommand: string }>>({});
+  const [revealedKeys, setRevealedKeys] = useState<Record<string, { agentApiKey: string; installCommands: { unix: string; windows: string } }>>({});
+  const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const siteList = await api.sites();
     setSites(siteList);
     if (!selectedSiteId && siteList[0]) setSelectedSiteId(siteList[0].id);
     setHosts(await api.hosts());
+    setLatestAgentVersion((await api.health()).agentVersion);
   }, [selectedSiteId]);
 
   useEffect(() => {
@@ -181,8 +216,8 @@ export default function HostsPage() {
   }
 
   async function handleIssueKey(hostId: string) {
-    const { agentApiKey, installCommand } = await api.issueAgentKey(hostId);
-    setRevealedKeys((prev) => ({ ...prev, [hostId]: { agentApiKey, installCommand } }));
+    const { agentApiKey, installCommands } = await api.issueAgentKey(hostId);
+    setRevealedKeys((prev) => ({ ...prev, [hostId]: { agentApiKey, installCommands } }));
   }
 
   if (!authChecked) return null;
@@ -199,7 +234,7 @@ export default function HostsPage() {
         ) : (
           <ul className="space-y-3">
             {hosts.map((h) => (
-              <HostRow key={h.id} host={h} siteName={siteName(h.siteId)} onChanged={load} revealed={revealedKeys[h.id]} onIssueKey={() => handleIssueKey(h.id)} />
+              <HostRow key={h.id} host={h} siteName={siteName(h.siteId)} onChanged={load} revealed={revealedKeys[h.id]} onIssueKey={() => handleIssueKey(h.id)} latestAgentVersion={latestAgentVersion} />
             ))}
           </ul>
         )}

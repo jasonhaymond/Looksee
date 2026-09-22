@@ -34,6 +34,9 @@ export type Host = {
   // at least once — feeds the check form's name suggestions.
   availableProcesses: string[] | null;
   availableServices: string[] | null;
+  // Set from whatever the agent itself reports — reflects what's actually
+  // running, not what was last pushed.
+  agentVersion: string | null;
 };
 export type Check = {
   id: string;
@@ -115,7 +118,10 @@ export const api = {
   updateHost: (id: string, input: { name?: string; hostname?: string | null; os?: string | null }) =>
     request<Host>(`/api/hosts/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteHost: (hostId: string) => request<void>(`/api/hosts/${hostId}`, { method: "DELETE" }),
-  issueAgentKey: (hostId: string) => request<{ agentApiKey: string; installCommand: string }>(`/api/hosts/${hostId}/agent-key`, { method: "POST" }),
+  issueAgentKey: (hostId: string) =>
+    request<{ agentApiKey: string; installCommands: { unix: string; windows: string } }>(`/api/hosts/${hostId}/agent-key`, { method: "POST" }),
+  requestHostUpdate: (hostId: string) => request<{ requested: boolean }>(`/api/hosts/${hostId}/request-update`, { method: "POST" }),
+  health: () => request<{ status: string; db: string; version: string; agentVersion: string | null }>("/api/health"),
 
   checks: (siteId?: string) => request<Check[]>(`/api/checks${siteId ? `?siteId=${siteId}` : ""}`),
   createCheck: (input: { siteId: string; hostId?: string | null; name: string; type: string; config: Record<string, unknown>; intervalSeconds?: number }) =>

@@ -20,6 +20,7 @@ export async function runProbe(type: string, config: Record<string, unknown>): P
         method: typeof config.method === "string" && config.method ? config.method : "GET",
         headers: parseHeaders(typeof config.headers === "string" ? config.headers : ""),
         insecureSkipVerify: Boolean(config.insecureSkipVerify),
+        bodyContains: typeof config.bodyContains === "string" && config.bodyContains ? config.bodyContains : undefined,
       });
     case "dns":
       return probeDns(String(config.hostname ?? ""));
@@ -81,7 +82,17 @@ function parseHeaders(raw: string): Record<string, string> {
   return headers;
 }
 
-type HttpOptions = { method: string; headers: Record<string, string>; insecureSkipVerify: boolean };
+type HttpOptions = { method: string; headers: Record<string, string>; insecureSkipVerify: boolean; bodyContains?: string };
+
+// Checked in addition to (not instead of) the status code — a check can
+// have an expectedStatus, a bodyContains, both, or neither.
+function bodyCheck(ok: boolean, status: number, body: string | null, bodyContains: string | undefined): { ok: boolean; message: string | null } {
+  if (!ok) return { ok, message: `HTTP ${status}` };
+  if (bodyContains && !(body ?? "").includes(bodyContains)) {
+    return { ok: false, message: `Response didn't contain "${bodyContains}"` };
+  }
+  return { ok: true, message: null };
+}
 
 async function probeHttp(url: string, expectedStatus: number | undefined, options: HttpOptions): Promise<ProbeResult> {
   if (!url) return { status: "warn", latencyMs: null, message: "Missing url" };
@@ -97,8 +108,10 @@ async function probeHttp(url: string, expectedStatus: number | undefined, option
   try {
     const res = await fetch(url, { signal: controller.signal, redirect: "follow", method: options.method, headers: options.headers });
     const latencyMs = Date.now() - start;
-    const ok = expectedStatus ? res.status === expectedStatus : res.status < 400;
-    return { status: ok ? "up" : "down", latencyMs, message: ok ? null : `HTTP ${res.status}` };
+    const statusOk = expectedStatus ? res.status === expectedStatus : res.status < 400;
+    const body = options.bodyContains ? await res.text() : null;
+    const { ok, message } = bodyCheck(statusOk, res.status, body, options.bodyContains);
+    return { status: ok ? "up" : "down", latencyMs, message };
   } catch (err) {
     return { status: "down", latencyMs: null, message: err instanceof Error ? err.message : "Request failed" };
   } finally {
@@ -113,11 +126,17 @@ function probeHttpInsecure(url: string, expectedStatus: number | undefined, opti
       new URL(url),
       { method: options.method, headers: options.headers, rejectUnauthorized: false, timeout: 10_000 },
       (res) => {
-        res.resume(); // drain the body — only the status matters here
-        const latencyMs = Date.now() - start;
-        const status = res.statusCode ?? 0;
-        const ok = expectedStatus ? status === expectedStatus : status < 400;
-        resolve({ status: ok ? "up" : "down", latencyMs, message: ok ? null : `HTTP ${status}` });
+        const chunks: Buffer[] = [];
+        if (options.bodyContains) res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          const latencyMs = Date.now() - start;
+          const status = res.statusCode ?? 0;
+          const statusOk = expectedStatus ? status === expectedStatus : status < 400;
+          const body = options.bodyContains ? Buffer.concat(chunks).toString("utf-8") : null;
+          const { ok, message } = bodyCheck(statusOk, status, body, options.bodyContains);
+          resolve({ status: ok ? "up" : "down", latencyMs, message });
+        });
+        res.resume();
       }
     );
     req.once("timeout", () => {

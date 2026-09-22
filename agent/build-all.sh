@@ -21,12 +21,18 @@ TARGETS=(
 
 mkdir -p bin
 
+# Single source of truth for the agent's own version — stamped into every
+# binary below so `-version` and every report to the engine reflect what's
+# actually running, not just what's on disk in this directory.
+VERSION="$(cat VERSION)"
+LDFLAGS="-X main.version=$VERSION"
+
 build_one() {
   local goos="$1" goarch="$2" out="$3"
   local ext=""
   [ "$goos" = "windows" ] && ext=".exe"
   echo "==> Building $goos/$goarch"
-  GOOS="$goos" GOARCH="$goarch" go build -o "bin/${out}${ext}" .
+  GOOS="$goos" GOARCH="$goarch" go build -ldflags "$LDFLAGS" -o "bin/${out}${ext}" .
 }
 
 if command -v go >/dev/null 2>&1; then
@@ -41,7 +47,7 @@ else
     read -r goos goarch <<< "$target"
     ext=""
     [ "$goos" = "windows" ] && ext=".exe"
-    build_cmd+="GOOS=$goos GOARCH=$goarch go build -o bin/looksee-agent-${goos}-${goarch}${ext} . && "
+    build_cmd+="GOOS=$goos GOARCH=$goarch go build -ldflags \"$LDFLAGS\" -o bin/looksee-agent-${goos}-${goarch}${ext} . && "
   done
   build_cmd+="echo done"
   docker run --rm -v "$SCRIPT_DIR:/agent" -w /agent golang:1.22 sh -c "$build_cmd"

@@ -69,24 +69,25 @@ agent_key: "$AGENT_KEY"
 interval_seconds: 30
 CFG
 
-if [ "$OS" != "Linux" ]; then
-  echo "Downloaded to $WORK_DIR — no automated service install for $OS yet."
-  echo "Copy looksee-agent + looksee-agent.yaml somewhere permanent, then see"
-  echo "agent/README.md for NSSM/Task Scheduler (Windows) or launchd (macOS)."
-  exit 0
-fi
-
 if [ "$(id -u)" -ne 0 ]; then
   echo "Binary + config ready in $WORK_DIR."
-  echo "Re-run this same command with sudo to also install it as a systemd service."
+  echo "Re-run this same command with sudo to also install it as a system service."
   exit 0
 fi
 
-echo "==> Installing as a systemd service"
-curl -fsSL "$ENGINE_URL/install/install.sh" -o "$WORK_DIR/install.sh"
-curl -fsSL "$ENGINE_URL/install/looksee-agent.service" -o "$WORK_DIR/looksee-agent.service"
-chmod +x "$WORK_DIR/install.sh"
-(cd "$WORK_DIR" && ./install.sh looksee-agent looksee-agent.yaml)
+if [ "$OS" = "Linux" ]; then
+  echo "==> Installing as a systemd service"
+  curl -fsSL "$ENGINE_URL/install/install.sh" -o "$WORK_DIR/install.sh"
+  curl -fsSL "$ENGINE_URL/install/looksee-agent.service" -o "$WORK_DIR/looksee-agent.service"
+  chmod +x "$WORK_DIR/install.sh"
+  (cd "$WORK_DIR" && ./install.sh looksee-agent looksee-agent.yaml)
+else
+  echo "==> Installing as a launchd daemon"
+  curl -fsSL "$ENGINE_URL/install/install-macos.sh" -o "$WORK_DIR/install-macos.sh"
+  curl -fsSL "$ENGINE_URL/install/com.looksee.agent.plist" -o "$WORK_DIR/com.looksee.agent.plist"
+  chmod +x "$WORK_DIR/install-macos.sh"
+  (cd "$WORK_DIR" && ./install-macos.sh looksee-agent looksee-agent.yaml)
+fi
 `;
   res.type("text/x-shellscript").send(script);
 });
@@ -107,6 +108,40 @@ installRouter.get("/looksee-agent.service", (_req, res) => {
   const filePath = path.join(agentDir, "looksee-agent.service");
   if (!fs.existsSync(filePath)) {
     res.status(404).send("looksee-agent.service not found on this engine.");
+    return;
+  }
+  res.type("text/plain").sendFile(filePath);
+});
+
+installRouter.get("/install-macos.sh", (_req, res) => {
+  const filePath = path.join(agentDir, "install-macos.sh");
+  if (!fs.existsSync(filePath)) {
+    res.status(404).send("install-macos.sh not found on this engine.");
+    return;
+  }
+  res.type("text/x-shellscript").sendFile(filePath);
+});
+
+installRouter.get("/com.looksee.agent.plist", (_req, res) => {
+  const filePath = path.join(agentDir, "com.looksee.agent.plist");
+  if (!fs.existsSync(filePath)) {
+    res.status(404).send("com.looksee.agent.plist not found on this engine.");
+    return;
+  }
+  res.type("application/xml").sendFile(filePath);
+});
+
+// GET /install/agent.ps1
+// The Windows one command shown in the dashboard:
+// `$env:LOOKSEE_ENGINE_URL='...'; $env:LOOKSEE_AGENT_KEY='...'; iex (irm <engine>/install/agent.ps1)`.
+// Served verbatim (unlike agent.sh, this doesn't need per-request templating
+// — the engine URL and key travel via environment variables the one-liner
+// sets first, since PowerShell's -Command/iex don't bind trailing arguments
+// the way bash's `sudo bash -s -- <key>` does).
+installRouter.get("/agent.ps1", (_req, res) => {
+  const filePath = path.join(agentDir, "install-windows.ps1");
+  if (!fs.existsSync(filePath)) {
+    res.status(404).send("install-windows.ps1 not found on this engine.");
     return;
   }
   res.type("text/plain").sendFile(filePath);

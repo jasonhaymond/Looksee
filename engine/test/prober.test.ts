@@ -19,7 +19,7 @@ beforeAll(async () => {
   httpServer = http.createServer((req, res) => {
     lastRequest = { method: req.method, headers: req.headers };
     res.writeHead(200);
-    res.end("ok");
+    res.end('{"status":"healthy"}');
   });
   await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
   httpPort = (httpServer.address() as { port: number }).port;
@@ -31,7 +31,7 @@ beforeAll(async () => {
     },
     (_req, res) => {
       res.writeHead(200);
-      res.end("ok");
+      res.end('{"status":"healthy"}');
     }
   );
   await new Promise<void>((resolve) => httpsServer.listen(0, "127.0.0.1", resolve));
@@ -64,5 +64,23 @@ describe("prober http extras", () => {
   it("succeeds against the same self-signed endpoint with insecureSkipVerify", async () => {
     const result = await runProbe("http", { url: `https://127.0.0.1:${httpsPort}/`, insecureSkipVerify: true });
     expect(result.status).toBe("up");
+  });
+
+  it("passes bodyContains when the text is present (fetch path)", async () => {
+    const result = await runProbe("http", { url: `http://127.0.0.1:${httpPort}/`, bodyContains: "healthy" });
+    expect(result.status).toBe("up");
+  });
+
+  it("fails bodyContains when the text is missing, even with a 200 (fetch path)", async () => {
+    const result = await runProbe("http", { url: `http://127.0.0.1:${httpPort}/`, bodyContains: "totally-not-present" });
+    expect(result.status).toBe("down");
+    expect(result.message).toMatch(/didn't contain/);
+  });
+
+  it("checks bodyContains on the insecure-TLS path too", async () => {
+    const pass = await runProbe("http", { url: `https://127.0.0.1:${httpsPort}/`, insecureSkipVerify: true, bodyContains: "healthy" });
+    expect(pass.status).toBe("up");
+    const fail = await runProbe("http", { url: `https://127.0.0.1:${httpsPort}/`, insecureSkipVerify: true, bodyContains: "nope" });
+    expect(fail.status).toBe("down");
   });
 });

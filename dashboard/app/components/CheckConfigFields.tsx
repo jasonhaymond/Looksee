@@ -33,7 +33,7 @@ export function defaultConfigFor(type: string): Record<string, unknown> {
     case "tcp":
       return { host: "", port: "" };
     case "http":
-      return { url: "", expectedStatus: "", method: "GET", headers: "", insecureSkipVerify: false };
+      return { url: "", expectedStatus: "", method: "GET", headers: "", insecureSkipVerify: false, bodyContains: "" };
     case "dns":
       return { hostname: "" };
     case "ssl_cert":
@@ -228,6 +228,13 @@ export function CheckConfigFields({
             value={str("headers")}
             onChange={(v) => set("headers", v)}
             placeholder={"Authorization: Bearer ...\nX-Api-Key: ..."}
+          />
+          <Field
+            label="Response must contain (optional)"
+            tooltip="Checked in addition to the status code — the check only passes if this exact text appears somewhere in the response body. Useful for endpoints that return 200 even when something's actually wrong."
+            value={str("bodyContains")}
+            onChange={(v) => set("bodyContains", v)}
+            placeholder={'e.g. "status": "ok"'}
           />
           <CheckboxField
             label="Skip TLS certificate verification"

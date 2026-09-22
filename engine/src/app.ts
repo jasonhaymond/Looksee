@@ -4,6 +4,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import { pool } from "./db/index.js";
 import { VERSION } from "./lib/version.js";
+import { readAgentVersion } from "./lib/agentVersion.js";
 import { logger } from "./lib/logger.js";
 import { authRouter } from "./routes/auth.js";
 import { sitesRouter } from "./routes/sites.js";
@@ -54,11 +55,11 @@ app.use("/install", installRouter);
 app.get("/api/health", async (_req, res) => {
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "ok", db: "connected", version: VERSION });
+    res.json({ status: "ok", db: "connected", version: VERSION, agentVersion: readAgentVersion() });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     logger.error("http", `Health check DB query failed: ${detail}`, "The engine can't reach its database right now.");
-    res.status(500).json({ status: "error", db: "unreachable", version: VERSION });
+    res.status(500).json({ status: "error", db: "unreachable", version: VERSION, agentVersion: readAgentVersion() });
   }
 });
 
