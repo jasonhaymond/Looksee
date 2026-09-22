@@ -199,9 +199,37 @@ protect against this server failing.
 ```
 
 Takes a pre-update snapshot (to `~/looksee-backups/` by default, override with
-`LOOKSEE_BACKUP_DIR`), pulls, reinstalls dependencies, migrates, rebuilds both engine and
-dashboard, restarts both pm2 processes, and polls `/api/health` for up to 60s before
-declaring success. Refuses to run if there are uncommitted changes in the checkout.
+`LOOKSEE_BACKUP_DIR`, named after the version it was taken from — see below), pulls,
+reinstalls dependencies, migrates, rebuilds both engine and dashboard, restarts both pm2
+processes, and polls `/api/health` for up to 60s before declaring success. Refuses to run
+if there are uncommitted changes in the checkout.
+
+### Rolling back
+
+```bash
+~/Looksee/scripts/update.sh v0.3.1
+```
+
+Same script, one optional argument: a git tag to check out instead of pulling latest.
+This is the same command whether you're deploying the newest version or rolling back to
+an older one — it still takes its own pre-update snapshot first regardless of direction.
+
+**This only rolls back code, and that part is always safe.** There are no down-migrations
+in this project. If nothing schema-relevant changed between the two versions, the older
+code just runs fine against the current database and there's nothing more to do.
+
+**Rolling back the database is a separate, manual decision — never automatic.** If a
+column or table was renamed, dropped, or had a constraint tightened (not just additively
+added) between the version you're rolling back to and now, the old code will error
+against the current schema. The fix is restoring the database snapshot taken around that
+older version's original deploy, using `scripts/restore.sh` against the matching file in
+`~/looksee-backups/` — every snapshot is named `pre-update-v<version>-<timestamp>.sql.gz`
+(or `v<version>-<timestamp>` for `backup.sh`'s cron-driven snapshots, and the in-app Borg
+backups on `/backups` follow the same `looksee-v<version>-<timestamp>` naming), so the
+right one is a directory listing away, not a timestamp cross-reference against
+CHANGELOG.md. **Restoring a snapshot discards any data created since it was taken** —
+that's a real trade-off to weigh, not a formality, and `restore.sh` requires typed
+confirmation before it touches anything.
 
 ## 9. Distributing and installing agent binaries
 
@@ -237,6 +265,14 @@ API, the exact one-line command run verbatim in a fresh container, and the resul
 host's "last report" time confirmed updating on the engine afterward.
 
 ## 10. Troubleshooting
+
+**Check the in-app Logs page (`/logs`) first** — the engine logs its own errors (failed
+checks, failed notifications, failed backups, unhandled request errors) there with a
+plain-language explanation alongside the technical detail, retained for
+`LOOKSEE_LOG_RETENTION_DAYS` (default 30) and pruned automatically after that. `pm2 logs
+looksee-engine`/`looksee-dashboard` remain the fallback for anything that happens before
+the database is reachable, or for the dashboard process specifically (which doesn't write
+to this table).
 
 - **Postgres port already in use** — something else already owns 5432 on this box. Set
   `POSTGRES_HOST_PORT` in a root `.env` (see `.env.example`) rather than hand-editing

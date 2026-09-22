@@ -11,6 +11,7 @@ const LINKS = [
   { href: "/hosts", label: "Hosts" },
   { href: "/channels", label: "Channels" },
   { href: "/backups", label: "Backups" },
+  { href: "/logs", label: "Logs" },
 ] as const;
 
 export function TopNav({ active }: { active: (typeof LINKS)[number]["href"] }) {

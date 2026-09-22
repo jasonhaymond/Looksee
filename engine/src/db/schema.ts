@@ -248,3 +248,30 @@ export const webPushSubscriptions = pgTable("web_push_subscriptions", {
   auth: text("auth").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const logLevel = pgEnum("log_level", ["debug", "info", "warn", "error"]);
+
+// Server-side structured logging — separate from pm2's stdout capture, this
+// is what the in-app /logs viewer reads. humanMessage is required by the
+// logger's own types for every level except debug (see lib/logger.ts); it's
+// nullable here only because debug rows never populate it.
+export const logs = pgTable("logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  level: logLevel("level").notNull(),
+  source: text("source").notNull(),
+  message: text("message").notNull(),
+  humanMessage: text("human_message"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Singleton row (id always 1), upserted on every successful boot — not just
+// deploys — so it reflects what's actually been running rather than what a
+// deploy script assumed. This is what backup filenames stamp themselves
+// with (see services/backup.ts), so a snapshot's origin version is
+// answerable by its filename, not by cross-referencing timestamps.
+export const appMeta = pgTable("app_meta", {
+  id: integer("id").primaryKey(),
+  version: text("version").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

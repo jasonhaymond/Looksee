@@ -1,14 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { api } from "../lib/api";
+import { api, type Host } from "../lib/api";
 import { CheckConfigFields, CHECK_TYPE_LABELS, CHECK_TYPE_HELP, defaultConfigFor, normalizeConfig, validateConfig } from "./CheckConfigFields";
 import { Tooltip } from "./Tooltip";
 
-export function AddCheckForm({ siteId, onCreated }: { siteId: string; onCreated: () => void }) {
+export function AddCheckForm({ siteId, hosts, onCreated }: { siteId: string; hosts: Host[]; onCreated: () => void }) {
   const [name, setName] = useState("");
   const [type, setType] = useState("ping");
   const [config, setConfig] = useState<Record<string, unknown>>(defaultConfigFor("ping"));
+  const [hostId, setHostId] = useState("");
   const [interval, setIntervalSeconds] = useState(60);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -22,11 +23,16 @@ export function AddCheckForm({ siteId, onCreated }: { siteId: string; onCreated:
       setError(validationError);
       return;
     }
+    if (type === "agent_service" && !hostId) {
+      setError("Service checks need a host to run the agent on.");
+      return;
+    }
     try {
-      await api.createCheck({ siteId, name, type, config: normalized, intervalSeconds: interval });
+      await api.createCheck({ siteId, hostId: hostId || null, name, type, config: normalized, intervalSeconds: interval });
       setName("");
       setType("ping");
       setConfig(defaultConfigFor("ping"));
+      setHostId("");
       setOpen(false);
       onCreated();
     } catch (err) {
@@ -71,6 +77,27 @@ export function AddCheckForm({ siteId, onCreated }: { siteId: string; onCreated:
           ))}
         </select>
       </label>
+      {(type === "agent_service" || hosts.length > 0) && (
+        <label className="block">
+          <span className="inline-flex items-center text-[var(--muted)]">
+            Host{type === "agent_service" ? "" : " (optional)"}
+            <Tooltip text="Which host this check belongs to. Service checks require the Looksee agent installed on that host — see the Hosts page to generate an install command." />
+          </span>
+          <select
+            value={hostId}
+            onChange={(e) => setHostId(e.target.value)}
+            required={type === "agent_service"}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
+          >
+            <option value="">{type === "agent_service" ? "Select a host…" : "None"}</option>
+            {hosts.map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <CheckConfigFields type={type} config={config} onChange={setConfig} />
       <label className="block w-32">
         <span className="inline-flex items-center text-[var(--muted)]">

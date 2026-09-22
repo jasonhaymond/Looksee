@@ -4,6 +4,7 @@ import { db } from "../db/index.js";
 import { checks } from "../db/schema.js";
 import { runProbe } from "./prober.js";
 import { recordCheckResult } from "./alerting.js";
+import { logger } from "../lib/logger.js";
 
 const AGENTLESS_TYPES = ["ping", "tcp", "http", "dns", "ssl_cert"] as const;
 const TICK_MS = 10_000;
@@ -28,10 +29,18 @@ async function runDueChecks() {
     ),
   });
 
-  for (const check of due) {
-    if (!(AGENTLESS_TYPES as readonly string[]).includes(check.type)) continue;
+  const dueAgentless = due.filter((c) => (AGENTLESS_TYPES as readonly string[]).includes(c.type));
+  logger.debug("scheduler", `Tick: ${dueAgentless.length} agentless check(s) due`, { checkIds: dueAgentless.map((c) => c.id) });
+
+  for (const check of dueAgentless) {
     runOneCheck(check.id, check.type, (check.config as Record<string, unknown>) ?? {}).catch((err) => {
-      console.error(`Check ${check.id} (${check.type}) failed to run:`, err);
+      const detail = err instanceof Error ? err.message : String(err);
+      logger.error(
+        "scheduler",
+        `Check ${check.id} (${check.type}) failed to run: ${detail}`,
+        `The "${check.type}" check couldn't be run — see its recent results for detail.`,
+        { checkId: check.id, checkType: check.type }
+      );
     });
   }
 }

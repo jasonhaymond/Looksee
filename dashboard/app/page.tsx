@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 // flat v1-style props (cols, rowHeight, onDragStop, ...) this file uses.
 import GridLayout, { WidthProvider } from "react-grid-layout/legacy";
 import type { LayoutItem } from "react-grid-layout";
-import { api, ApiError, type Site, type Check, type CheckResult, type Dashboard, type Widget, type WidgetType } from "./lib/api";
+import { api, ApiError, type Site, type Check, type CheckResult, type Dashboard, type Widget, type WidgetType, type Host } from "./lib/api";
 import { TopNav } from "./components/TopNav";
 import { StatusTile } from "./components/StatusTile";
 import { GroupSummaryCard } from "./components/GroupSummaryCard";
@@ -35,6 +35,7 @@ export default function DashboardsPage() {
 
   const [sites, setSites] = useState<Site[]>([]);
   const [checks, setChecks] = useState<Check[]>([]);
+  const [hosts, setHosts] = useState<Host[]>([]);
   const [latestByCheck, setLatestByCheck] = useState<Map<string, CheckResult>>(new Map());
 
   useEffect(() => {
@@ -79,6 +80,8 @@ export default function DashboardsPage() {
     const perSiteChecks = await Promise.all(siteList.map((s) => api.checks(s.id)));
     const allChecks = perSiteChecks.flat();
     setChecks(allChecks);
+    const perSiteHosts = await Promise.all(siteList.map((s) => api.hosts(s.id)));
+    setHosts(perSiteHosts.flat());
     const latestPairs = await Promise.all(
       allChecks.map(async (c) => {
         const results = await api.checkResults(c.id, 1);
@@ -151,11 +154,25 @@ export default function DashboardsPage() {
     setWidgets((prev) => prev.filter((w) => w.id !== id));
   }
 
-  async function persistPosition(item: LayoutItem | null) {
-    if (!item) return;
-    const { i: widgetId, x, y, w, h } = item;
-    setWidgets((prev) => prev.map((widget) => (widget.id === widgetId ? { ...widget, x, y, w, h } : widget)));
-    await api.updateWidget(widgetId, { x, y, w, h });
+  // react-grid-layout's default vertical compaction/collision avoidance means
+  // moving or resizing one widget often shifts others too — it hands back the
+  // full recomputed layout, not just the item that was directly touched.
+  // Persisting only that one item leaves every widget it displaced holding a
+  // stale DB position, which snaps back on the next reload. Diff the whole
+  // settled layout against current state and persist everything that moved.
+  async function persistLayout(layout: readonly LayoutItem[]) {
+    const changed = layout.filter((item) => {
+      const widget = widgets.find((w) => w.id === item.i);
+      return widget && (widget.x !== item.x || widget.y !== item.y || widget.w !== item.w || widget.h !== item.h);
+    });
+    if (changed.length === 0) return;
+    setWidgets((prev) =>
+      prev.map((widget) => {
+        const item = changed.find((i) => i.i === widget.id);
+        return item ? { ...widget, x: item.x, y: item.y, w: item.w, h: item.h } : widget;
+      })
+    );
+    await Promise.all(changed.map((item) => api.updateWidget(item.i, { x: item.x, y: item.y, w: item.w, h: item.h })));
   }
 
   if (!authChecked || isDesktop === null) return null;
@@ -173,7 +190,7 @@ export default function DashboardsPage() {
           </p>
         );
       }
-      return <StatusTile check={check} latest={latestByCheck.get(check.id)} onChanged={loadStatusData} />;
+      return <StatusTile check={check} latest={latestByCheck.get(check.id)} hosts={hosts} onChanged={loadStatusData} />;
     }
     const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
     return (
@@ -267,8 +284,8 @@ export default function DashboardsPage() {
             isResizable={editMode}
             draggableCancel=".no-drag"
             layout={widgets.map((w) => ({ i: w.id, x: w.x, y: w.y, w: w.w, h: w.h }))}
-            onDragStop={(_layout: readonly LayoutItem[], _old: LayoutItem | null, item: LayoutItem | null) => persistPosition(item)}
-            onResizeStop={(_layout: readonly LayoutItem[], _old: LayoutItem | null, item: LayoutItem | null) => persistPosition(item)}
+            onDragStop={(layout: readonly LayoutItem[]) => persistLayout(layout)}
+            onResizeStop={(layout: readonly LayoutItem[]) => persistLayout(layout)}
           >
             {widgets.map((widget) => (
               <div key={widget.id} className="relative overflow-auto">

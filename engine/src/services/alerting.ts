@@ -4,6 +4,7 @@ import { checkResults, alertRules, alertRuleChannels, alertEvents, notificationC
 import { sendEmail } from "./notifications/email.js";
 import { sendWebhook } from "./notifications/webhook.js";
 import { sendWebPush } from "./notifications/webpush.js";
+import { logger } from "../lib/logger.js";
 
 type Status = "up" | "down" | "warn" | "unknown";
 
@@ -66,7 +67,13 @@ async function notify(alertRuleId: string, message: string) {
       // SMS sender lands once a provider is chosen (see spec.md deferred
       // items) — an enabled sms channel is a no-op for now, not an error.
     } catch (err) {
-      console.error(`Failed to notify via channel ${channel.id} (${channel.type}):`, err);
+      const detail = err instanceof Error ? err.message : String(err);
+      logger.error(
+        "alerting",
+        `Failed to notify via channel ${channel.id} (${channel.type}): ${detail}`,
+        `An alert couldn't be delivered through your "${channel.type}" channel — check its configuration on the Channels page.`,
+        { channelId: channel.id, channelType: channel.type }
+      );
     }
   }
 }

@@ -13,6 +13,7 @@ import {
   restoreBackup,
   runBackup,
 } from "../services/backup.js";
+import { logger } from "../lib/logger.js";
 
 export const backupsRouter = Router();
 backupsRouter.use(requireAuth);
@@ -110,7 +111,8 @@ backupsRouter.post("/run", async (_req, res) => {
     return;
   }
   runBackup().catch((err) => {
-    console.error("Backup failed:", err instanceof Error ? err.message : err);
+    const detail = err instanceof Error ? err.message : String(err);
+    logger.error("backups", `Backup failed: ${detail}`, "A backup you started didn't complete — check your repository/passphrase settings on the Backups page.");
   });
   res.status(202).json({ started: true });
 });
@@ -139,7 +141,8 @@ backupsRouter.post("/restore", async (req, res) => {
   }
 
   restoreBackup(archiveName, { restoreDb: Boolean(restoreDb), restoreConfig: Boolean(restoreConfig) }).catch((err) => {
-    console.error("Restore failed:", err instanceof Error ? err.message : err);
+    const detail = err instanceof Error ? err.message : String(err);
+    logger.error("backups", `Restore failed: ${detail}`, `Restoring archive "${archiveName}" didn't complete — the database may be left in a partial state. Check before relying on it.`, { archiveName });
   });
   res.status(202).json({ started: true });
 });

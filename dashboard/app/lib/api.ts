@@ -55,6 +55,16 @@ export type BackupRun = {
   finishedAt: string | null;
 };
 export type Archive = { name: string; time: string };
+export type LogLevel = "debug" | "info" | "warn" | "error";
+export type LogEntry = {
+  id: string;
+  level: LogLevel;
+  source: string;
+  message: string;
+  humanMessage: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+};
 export type CurrentOperation = { kind: "backup" | "restore"; startedAt: string } | null;
 export type AlertRule = {
   id: string;
@@ -99,7 +109,7 @@ export const api = {
   checks: (siteId?: string) => request<Check[]>(`/api/checks${siteId ? `?siteId=${siteId}` : ""}`),
   createCheck: (input: { siteId: string; hostId?: string | null; name: string; type: string; config: Record<string, unknown>; intervalSeconds?: number }) =>
     request<Check>("/api/checks", { method: "POST", body: JSON.stringify(input) }),
-  updateCheck: (id: string, input: { name?: string; config?: Record<string, unknown>; intervalSeconds?: number; enabled?: boolean }) =>
+  updateCheck: (id: string, input: { name?: string; hostId?: string | null; config?: Record<string, unknown>; intervalSeconds?: number; enabled?: boolean }) =>
     request<Check>(`/api/checks/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteCheck: (id: string) => request<void>(`/api/checks/${id}`, { method: "DELETE" }),
   checkResults: (checkId: string, limit = 50) => request<CheckResult[]>(`/api/checks/${checkId}/results?limit=${limit}`),
@@ -127,6 +137,13 @@ export const api = {
   backupSshPublicKey: () => request<{ publicKey: string }>("/api/backups/ssh-public-key"),
   backupStatus: () => request<{ borgAvailable: boolean; borgVersion: string | null; currentOperation: CurrentOperation }>("/api/backups/status"),
   backupRuns: () => request<{ runs: BackupRun[] }>("/api/backups/runs"),
+  logs: (params?: { level?: LogLevel; limit?: number }) => {
+    const query = new URLSearchParams();
+    if (params?.level) query.set("level", params.level);
+    if (params?.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return request<LogEntry[]>(`/api/logs${qs ? `?${qs}` : ""}`);
+  },
   backupArchives: () => request<{ archives: Archive[] }>("/api/backups/archives"),
   runBackup: () => request<{ started: true }>("/api/backups/run", { method: "POST" }),
   restoreBackup: (input: { archiveName: string; confirmArchiveName: string; restoreDb: boolean; restoreConfig: boolean }) =>

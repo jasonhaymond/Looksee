@@ -3,10 +3,11 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v1 skeleton built and verified end-to-end (auth, sites/hosts/checks CRUD,
-agentless probing + scheduler, agent metrics/service ingest, email/webhook/Web Push
-alerting, a working dashboard). Not yet deployed anywhere real — see
-[Deploying](#deploying) below for what's still missing before that.
+**Status**: v1 built and verified end-to-end (auth, sites/hosts/checks CRUD, agentless
+probing + scheduler, agent metrics/service ingest, email/webhook/Web Push alerting, a
+working dashboard), and running in production on a real homelab server with an agent
+reporting in. Current version: **v1.0.0** — see [`CHANGELOG.md`](CHANGELOG.md) for what
+changed recently, or [Deploying](#deploying) below for a first deployment of your own.
 
 ## Tech stack
 

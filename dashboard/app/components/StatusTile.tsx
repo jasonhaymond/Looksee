@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api, type Check, type CheckResult } from "../lib/api";
+import { api, type Check, type CheckResult, type Host } from "../lib/api";
 import { AlertRuleManager } from "./AlertRuleManager";
 import { CheckHistory } from "./CheckHistory";
 import { EditCheckForm } from "./EditCheckForm";
@@ -32,7 +32,7 @@ function relativeTime(iso: string) {
   return `${Math.round(seconds / 3600)}h ago`;
 }
 
-export function StatusTile({ check, latest, onChanged }: { check: Check; latest: CheckResult | undefined; onChanged?: () => void }) {
+export function StatusTile({ check, latest, hosts, onChanged }: { check: Check; latest: CheckResult | undefined; hosts: Host[]; onChanged?: () => void }) {
   const status = latest?.status ?? "unknown";
   const [expanded, setExpanded] = useState<"alerts" | "edit" | null>(null);
 
@@ -79,6 +79,7 @@ export function StatusTile({ check, latest, onChanged }: { check: Check; latest:
       {expanded === "edit" && (
         <EditCheckForm
           check={check}
+          hosts={hosts}
           onSaved={() => {
             setExpanded(null);
             onChanged?.();

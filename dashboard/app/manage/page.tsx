@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, type Site, type Check, type CheckResult } from "../lib/api";
+import { api, ApiError, type Site, type Check, type CheckResult, type Host } from "../lib/api";
 import { StatusTile } from "../components/StatusTile";
 import { GroupSummary } from "../components/GroupSummary";
 import { AddCheckForm } from "../components/AddCheckForm";
@@ -68,6 +68,7 @@ export default function ManagePage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [sites, setSites] = useState<Site[]>([]);
   const [checksBySite, setChecksBySite] = useState<Map<string, Check[]>>(new Map());
+  const [hostsBySite, setHostsBySite] = useState<Map<string, Host[]>>(new Map());
   const [latestByCheck, setLatestByCheck] = useState<Map<string, CheckResult>>(new Map());
   const [newSiteName, setNewSiteName] = useState("");
 
@@ -78,6 +79,9 @@ export default function ManagePage() {
     const perSiteChecks = await Promise.all(siteList.map((s) => api.checks(s.id)));
     const byId = new Map(siteList.map((s, i) => [s.id, perSiteChecks[i]]));
     setChecksBySite(byId);
+
+    const perSiteHosts = await Promise.all(siteList.map((s) => api.hosts(s.id)));
+    setHostsBySite(new Map(siteList.map((s, i) => [s.id, perSiteHosts[i]])));
 
     const allChecks = perSiteChecks.flat();
     const latestPairs = await Promise.all(
@@ -122,6 +126,7 @@ export default function ManagePage() {
       <div className="space-y-6">
         {sites.map((site) => {
           const checks = checksBySite.get(site.id) ?? [];
+          const hosts = hostsBySite.get(site.id) ?? [];
           return (
             <section key={site.id} className="rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
               <div className="mb-3 flex items-center gap-2">
@@ -130,11 +135,11 @@ export default function ManagePage() {
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {checks.map((check) => (
-                  <StatusTile key={check.id} check={check} latest={latestByCheck.get(check.id)} onChanged={loadAll} />
+                  <StatusTile key={check.id} check={check} latest={latestByCheck.get(check.id)} hosts={hosts} onChanged={loadAll} />
                 ))}
               </div>
               <div className="mt-3">
-                <AddCheckForm siteId={site.id} onCreated={loadAll} />
+                <AddCheckForm siteId={site.id} hosts={hosts} onCreated={loadAll} />
               </div>
             </section>
           );

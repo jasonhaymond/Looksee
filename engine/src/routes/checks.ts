@@ -27,6 +27,14 @@ checksRouter.post("/", async (req, res) => {
     return;
   }
   const hostId = req.body?.hostId ? String(req.body.hostId) : null;
+  // Results for this type only ever arrive via the agent's push, gated on
+  // hostId matching a real host (see routes/agent.ts's /config filter) — a
+  // null hostId here means the check silently never gets polled by any
+  // agent, with no error anywhere. Reject it up front instead.
+  if (type === "agent_service" && !hostId) {
+    res.status(400).json({ error: "agent_service checks require a hostId" });
+    return;
+  }
   const config = req.body?.config && typeof req.body.config === "object" ? req.body.config : {};
   const intervalSeconds = Number.isFinite(req.body?.intervalSeconds) ? Number(req.body.intervalSeconds) : 60;
 
@@ -38,16 +46,23 @@ checksRouter.post("/", async (req, res) => {
 });
 
 checksRouter.patch("/:id", async (req, res) => {
-  const updates: Partial<typeof checks.$inferInsert> = {};
-  if (req.body?.name !== undefined) updates.name = String(req.body.name).trim();
-  if (req.body?.config !== undefined) updates.config = req.body.config;
-  if (req.body?.intervalSeconds !== undefined) updates.intervalSeconds = Number(req.body.intervalSeconds);
-  if (req.body?.enabled !== undefined) updates.enabled = Boolean(req.body.enabled);
-  const [check] = await db.update(checks).set(updates).where(eq(checks.id, req.params.id)).returning();
-  if (!check) {
+  const existing = await db.query.checks.findFirst({ where: eq(checks.id, req.params.id) });
+  if (!existing) {
     res.status(404).json({ error: "Check not found" });
     return;
   }
+  const updates: Partial<typeof checks.$inferInsert> = {};
+  if (req.body?.name !== undefined) updates.name = String(req.body.name).trim();
+  if (req.body?.hostId !== undefined) updates.hostId = req.body.hostId ? String(req.body.hostId) : null;
+  if (req.body?.config !== undefined) updates.config = req.body.config;
+  if (req.body?.intervalSeconds !== undefined) updates.intervalSeconds = Number(req.body.intervalSeconds);
+  if (req.body?.enabled !== undefined) updates.enabled = Boolean(req.body.enabled);
+  const nextHostId = "hostId" in updates ? updates.hostId : existing.hostId;
+  if (existing.type === "agent_service" && !nextHostId) {
+    res.status(400).json({ error: "agent_service checks require a hostId" });
+    return;
+  }
+  const [check] = await db.update(checks).set(updates).where(eq(checks.id, req.params.id)).returning();
   res.json(check);
 });
 

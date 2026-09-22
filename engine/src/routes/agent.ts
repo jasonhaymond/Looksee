@@ -4,6 +4,7 @@ import { db } from "../db/index.js";
 import { hosts, hostMetrics, checks } from "../db/schema.js";
 import { requireAgentAuth } from "../middleware/auth.js";
 import { recordCheckResult } from "../services/alerting.js";
+import { logger } from "../lib/logger.js";
 
 export const agentRouter = Router();
 agentRouter.use(requireAgentAuth);
@@ -19,6 +20,7 @@ agentRouter.get("/config", async (req, res) => {
   const rows = await db.query.checks.findMany({
     where: (c, { and, eq }) => and(eq(c.hostId, hostId), eq(c.type, "agent_service"), eq(c.enabled, true)),
   });
+  logger.debug("agent", `Host ${hostId} polled /config, returned ${rows.length} agent_service check(s)`, { hostId, checkIds: rows.map((c) => c.id) });
   res.json({ checks: rows.map((c) => ({ id: c.id, config: c.config })) });
 });
 
@@ -45,6 +47,7 @@ agentRouter.post("/report", async (req, res) => {
   }
 
   const services = Array.isArray(req.body?.services) ? req.body.services : [];
+  let accepted = 0;
   for (const svc of services) {
     const checkId = String(svc?.checkId ?? "");
     if (!checkId) continue;
@@ -54,7 +57,9 @@ agentRouter.post("/report", async (req, res) => {
     // check results.
     if (!check || check.hostId !== hostId || check.type !== "agent_service") continue;
     await recordCheckResult(checkId, svc.running ? "up" : "down", null, svc.message ? String(svc.message) : null);
+    accepted++;
   }
+  logger.debug("agent", `Host ${hostId} reported ${services.length} service result(s), ${accepted} accepted`, { hostId, reported: services.length, accepted });
 
   res.json({ ok: true });
 });

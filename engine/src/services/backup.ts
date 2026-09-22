@@ -26,6 +26,8 @@ import cron from "node-cron";
 import { db } from "../db/index.js";
 import { backupRuns, backupSettings } from "../db/schema.js";
 import { run } from "../lib/shell.js";
+import { VERSION } from "../lib/version.js";
+import { logger } from "../lib/logger.js";
 
 type BackupSettingsRow = typeof backupSettings.$inferSelect;
 
@@ -79,8 +81,15 @@ function dbConnInfo(): { user: string; dbName: string } {
   return { user: decodeURIComponent(url.username), dbName: decodeURIComponent(url.pathname.replace(/^\//, "")) };
 }
 
-function newArchiveName(): string {
-  return `looksee-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+// Stamps the archive with the version actually running when it was taken —
+// read from app_meta (upserted on every boot in index.ts), not package.json,
+// since that's what can drift from what's actually running. Falls back to
+// the in-process VERSION only if the row hasn't been populated yet (e.g. a
+// backup triggered in the same instant as a very first boot).
+async function newArchiveName(): Promise<string> {
+  const meta = await db.query.appMeta.findFirst({ where: (m, { eq }) => eq(m.id, 1) });
+  const version = meta?.version ?? VERSION;
+  return `looksee-v${version}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
 }
 
 // Process-local, single-instance-scale guard against two operations
@@ -99,7 +108,7 @@ export async function runBackup(): Promise<void> {
   }
 
   currentOperation = { kind: "backup", startedAt: new Date() };
-  const archiveName = newArchiveName();
+  const archiveName = await newArchiveName();
   const [runRow] = await db.insert(backupRuns).values({ kind: "backup", archiveName }).returning();
   const stagingDir = await fsp.mkdtemp(path.join(os.tmpdir(), "looksee-backup-"));
 
@@ -232,7 +241,8 @@ export function rescheduleBackupCron(cronExpression: string | null): void {
   if (!cronExpression) return;
   scheduledTask = cron.schedule(cronExpression, () => {
     runBackup().catch((err) => {
-      console.error("Scheduled backup failed:", err instanceof Error ? err.message : err);
+      const detail = err instanceof Error ? err.message : String(err);
+      logger.error("backup", `Scheduled backup failed: ${detail}`, "A scheduled backup didn't complete — check the Backups page and your repository/passphrase settings.");
     });
   });
 }

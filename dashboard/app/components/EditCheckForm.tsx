@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { api, type Check } from "../lib/api";
+import { api, type Check, type Host } from "../lib/api";
 import { CheckConfigFields, CHECK_TYPE_HELP, normalizeConfig, validateConfig } from "./CheckConfigFields";
 import { Tooltip } from "./Tooltip";
 
-export function EditCheckForm({ check, onSaved, onCancel }: { check: Check; onSaved: () => void; onCancel: () => void }) {
+export function EditCheckForm({ check, hosts, onSaved, onCancel }: { check: Check; hosts: Host[]; onSaved: () => void; onCancel: () => void }) {
   const [name, setName] = useState(check.name);
   const [config, setConfig] = useState<Record<string, unknown>>(check.config);
+  const [hostId, setHostId] = useState(check.hostId ?? "");
   const [interval, setIntervalSeconds] = useState(check.intervalSeconds);
   const [enabled, setEnabled] = useState(check.enabled);
   const [error, setError] = useState<string | null>(null);
@@ -21,8 +22,12 @@ export function EditCheckForm({ check, onSaved, onCancel }: { check: Check; onSa
       setError(validationError);
       return;
     }
+    if (check.type === "agent_service" && !hostId) {
+      setError("Service checks need a host to run the agent on.");
+      return;
+    }
     try {
-      await api.updateCheck(check.id, { name, config: normalized, intervalSeconds: interval, enabled });
+      await api.updateCheck(check.id, { name, hostId: hostId || null, config: normalized, intervalSeconds: interval, enabled });
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save check");
@@ -40,6 +45,27 @@ export function EditCheckForm({ check, onSaved, onCancel }: { check: Check; onSa
       <p className="inline-flex items-center text-xs text-[var(--muted)]">
         Type: {check.type} <Tooltip text={CHECK_TYPE_HELP[check.type] ?? ""} /> (can't be changed — delete and recreate to switch types)
       </p>
+      {(check.type === "agent_service" || hosts.length > 0) && (
+        <label className="block">
+          <span className="inline-flex items-center text-[var(--muted)]">
+            Host{check.type === "agent_service" ? "" : " (optional)"}
+            <Tooltip text="Which host this check belongs to. Service checks require the Looksee agent installed on that host." />
+          </span>
+          <select
+            value={hostId}
+            onChange={(e) => setHostId(e.target.value)}
+            required={check.type === "agent_service"}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
+          >
+            <option value="">{check.type === "agent_service" ? "Select a host…" : "None"}</option>
+            {hosts.map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <CheckConfigFields type={check.type} config={config} onChange={setConfig} />
       <div className="flex items-center gap-4">
         <label className="flex items-center gap-1">

@@ -2,6 +2,7 @@ import webpush from "web-push";
 import { db } from "../../db/index.js";
 import { webPushSubscriptions } from "../../db/schema.js";
 import { eq } from "drizzle-orm";
+import { logger } from "../../lib/logger.js";
 
 let configured = false;
 
@@ -38,7 +39,13 @@ export async function sendWebPush(_config: unknown, message: string) {
         if (statusCode === 404 || statusCode === 410) {
           await db.delete(webPushSubscriptions).where(eq(webPushSubscriptions.id, sub.id));
         } else {
-          console.error(`Web push failed for subscription ${sub.id}:`, err);
+          const detail = err instanceof Error ? err.message : String(err);
+          logger.error(
+            "webpush",
+            `Web push failed for subscription ${sub.id}: ${detail}`,
+            "A push notification couldn't be delivered to one of your browsers/devices.",
+            { subscriptionId: sub.id }
+          );
         }
       }
     })

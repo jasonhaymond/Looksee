@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-22
+
+Now running in production on a real homelab server with an agent reporting in — the
+first release versioned as a stable milestone rather than a v1-in-progress skeleton.
+
+### Fixed
+
+- **Agent-service checks never received results**: the "add check" form never had a way
+  to associate any check with a host at all, so every check was created with
+  `hostId = null`. The engine's `/api/agent/config` endpoint filters strictly on
+  `hostId`, so a null-hostId check could never match a real host and was silently
+  excluded from every config response the agent polls — no error anywhere, just an
+  empty check list forever. Added a host selector to both the add and edit check forms
+  (required for `agent_service` checks, optional otherwise), added `hostId` support to
+  the checks `PATCH` route so an already-broken check can be fixed via the UI instead of
+  delete/recreate, and added a defensive `400` on `POST /api/checks` for an
+  `agent_service` check with no host — this class of bug is now a visible API error
+  instead of a silent no-op.
+- **Dashboard widgets didn't stay where they were arranged**: react-grid-layout's default
+  vertical compaction/collision avoidance means moving or resizing one widget often
+  shifts others too, and only the directly-touched widget's new position was being
+  persisted — every widget displaced as a side effect kept its stale DB position and
+  snapped back on the next reload (and could visibly overlap in the meantime). Now
+  persists every widget whose position actually changed in the settled layout, not just
+  the one dragged.
+
+### Added
+
+- **Leveled server logging + an in-app Logs page** (`/logs`). Four levels
+  (`debug < info < warn < error`); every level except `debug` carries a human-readable
+  translation alongside the technical detail, enforced at the type level. Persisted to a
+  new `logs` table (pruned daily past `LOOKSEE_LOG_RETENTION_DAYS`, default 30) in
+  addition to the existing stdout/pm2 output, so restarts don't lose history. Every
+  existing `console.error` in server-runtime code (scheduler, alerting, webpush, backups,
+  the global error handler) now goes through this instead, each with a plain-language
+  explanation added. New debug-level instrumentation on the agent's `/config` and
+  `/report` endpoints and the scheduler's tick — the exact visibility that would have
+  made the agent-service bug above obvious immediately instead of requiring a full
+  investigation.
+- **App version stamped into the database** (`app_meta`, upserted on every successful
+  boot, not just deploys) — reflects what's actually running rather than what a deploy
+  script assumed. Backup filenames (both the in-app Borg backups and the manual
+  `scripts/backup.sh`/`update.sh` snapshots) now read this and stamp themselves
+  `<name>-v<version>-<timestamp>`, so the right snapshot for a rollback is a directory
+  listing away, not a timestamp cross-reference against this file.
+- **Version-pinned deploy/rollback**: `scripts/update.sh` now accepts an optional git
+  tag argument (`./update.sh v0.3.1`) to check out instead of pulling latest — the same
+  command deploys the newest version or rolls back to an older one. Rollback is
+  code-only and always safe; a non-additive schema change since the target version needs
+  a database snapshot restore instead, documented plainly (never automatic) in
+  `docs/deployment-guide.md`'s new "Rolling back" section.
+
+### Changed
+
+- README's status line updated — this project is now actually deployed on a real
+  homelab server, not just locally verified; the stale "not yet deployed anywhere real"
+  line was wrong as of this release.
+
+### Notes
+
+- This release also closes out a standards audit against the project's global
+  development standards, queued earlier by peer sessions and requested directly by the
+  user this round: staging environments remain explicitly out of scope (this project's
+  own `CLAUDE.md` already opts out as a solo tool), a metrics/observability panel beyond
+  `/api/health` remains an optional future hook rather than a requirement, and the
+  security baseline (rate limiting, cookie flags, bcrypt, CORS) was re-checked with no
+  gaps found.
+
 ## [0.3.1] - 2026-09-22
 
 ### Fixed

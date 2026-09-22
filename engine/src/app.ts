@@ -4,6 +4,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import { pool } from "./db/index.js";
 import { VERSION } from "./lib/version.js";
+import { logger } from "./lib/logger.js";
 import { authRouter } from "./routes/auth.js";
 import { sitesRouter } from "./routes/sites.js";
 import { hostsRouter } from "./routes/hosts.js";
@@ -15,6 +16,7 @@ import { pushRouter } from "./routes/push.js";
 import { backupsRouter } from "./routes/backups.js";
 import { dashboardsRouter } from "./routes/dashboards.js";
 import { installRouter } from "./routes/install.js";
+import { logsRouter } from "./routes/logs.js";
 
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
   .split(",")
@@ -40,6 +42,7 @@ app.use("/api/agent", agentRouter);
 app.use("/api/push", pushRouter);
 app.use("/api/backups", backupsRouter);
 app.use("/api/dashboards", dashboardsRouter);
+app.use("/api/logs", logsRouter);
 // Outside /api on purpose — meant for plain curl, not the JSON API, and
 // deliberately unauthenticated (see routes/install.ts for why).
 app.use("/install", installRouter);
@@ -53,13 +56,20 @@ app.get("/api/health", async (_req, res) => {
     await pool.query("SELECT 1");
     res.json({ status: "ok", db: "connected", version: VERSION });
   } catch (err) {
-    console.error("Health check DB query failed:", err);
+    const detail = err instanceof Error ? err.message : String(err);
+    logger.error("http", `Health check DB query failed: ${detail}`, "The engine can't reach its database right now.");
     res.status(500).json({ status: "error", db: "unreachable", version: VERSION });
   }
 });
 
 app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, err);
+  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  logger.error(
+    "http",
+    `Unhandled error on ${req.method} ${req.originalUrl}: ${detail}`,
+    "A request failed unexpectedly — see the technical detail for what broke.",
+    { method: req.method, path: req.originalUrl }
+  );
   if (res.headersSent) {
     next(err);
     return;
