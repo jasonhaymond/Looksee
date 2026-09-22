@@ -85,3 +85,25 @@ describe("push-to-update", () => {
     await request(app).delete(`/api/hosts/${hostId}`).set("Cookie", cookie);
   });
 });
+
+describe("host metrics history", () => {
+  it("returns reported metrics newest-first, for the dashboard's host-metrics widget", async () => {
+    const createRes = await request(app).post("/api/hosts").set("Cookie", cookie).send({ siteId, name: "metrics-test-host" });
+    const hostId = createRes.body.id;
+    const keyRes = await request(app).post(`/api/hosts/${hostId}/agent-key`).set("Cookie", cookie);
+    const agentAuth = { Authorization: `Bearer ${keyRes.body.agentApiKey}` };
+
+    await request(app).post("/api/agent/report").set(agentAuth).send({ metrics: { cpuPercent: 10, memPercent: 20, diskPercent: 30 } });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await request(app).post("/api/agent/report").set(agentAuth).send({ metrics: { cpuPercent: 15, memPercent: 25, diskPercent: 35 } });
+
+    const res = await request(app).get(`/api/hosts/${hostId}/metrics`).set("Cookie", cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.length).toBe(2);
+    // Newest first: the second report (cpuPercent 15) should come before the first (10).
+    expect(res.body[0].cpuPercent).toBe(15);
+    expect(res.body[1].cpuPercent).toBe(10);
+
+    await request(app).delete(`/api/hosts/${hostId}`).set("Cookie", cookie);
+  });
+});

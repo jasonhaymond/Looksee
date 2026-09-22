@@ -97,17 +97,27 @@ export type AlertRule = {
   channelIds: string[];
 };
 
-export type Dashboard = { id: string; name: string; createdAt: string };
-export type WidgetType = "status_tile" | "group_summary";
+export type Dashboard = { id: string; name: string; refreshSeconds: number; createdAt: string };
+export type WidgetType = "status_tile" | "group_summary" | "host_metrics" | "uptime_history" | "note";
 export type Widget = {
   id: string;
   dashboardId: string;
   type: WidgetType;
-  config: { checkId?: string; siteId?: string };
+  config: { checkId?: string; siteId?: string; hostId?: string; text?: string };
   x: number;
   y: number;
   w: number;
   h: number;
+};
+export type HostMetric = {
+  id: string;
+  hostId: string;
+  cpuPercent: number | null;
+  memPercent: number | null;
+  diskPercent: number | null;
+  netRxBytes: number | null;
+  netTxBytes: number | null;
+  recordedAt: string;
 };
 
 export const api = {
@@ -183,6 +193,8 @@ export const api = {
   dashboards: () => request<Dashboard[]>("/api/dashboards"),
   createDashboard: (name: string) => request<Dashboard>("/api/dashboards", { method: "POST", body: JSON.stringify({ name }) }),
   renameDashboard: (id: string, name: string) => request<Dashboard>(`/api/dashboards/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  updateDashboardRefresh: (id: string, refreshSeconds: number) =>
+    request<Dashboard>(`/api/dashboards/${id}`, { method: "PATCH", body: JSON.stringify({ refreshSeconds }) }),
   deleteDashboard: (id: string) => request<void>(`/api/dashboards/${id}`, { method: "DELETE" }),
   widgets: (dashboardId: string) => request<Widget[]>(`/api/dashboards/${dashboardId}/widgets`),
   createWidget: (dashboardId: string, input: { type: WidgetType; config: Widget["config"]; x: number; y: number; w: number; h: number }) =>
@@ -190,4 +202,5 @@ export const api = {
   updateWidget: (widgetId: string, input: Partial<Pick<Widget, "x" | "y" | "w" | "h" | "config">>) =>
     request<Widget>(`/api/dashboards/widgets/${widgetId}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteWidget: (widgetId: string) => request<void>(`/api/dashboards/widgets/${widgetId}`, { method: "DELETE" }),
+  hostMetrics: (hostId: string, limit = 30) => request<HostMetric[]>(`/api/hosts/${hostId}/metrics?limit=${limit}`),
 };

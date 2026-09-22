@@ -256,11 +256,20 @@ export const backupRuns = pgTable("backup_runs", {
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
 
-export const widgetType = pgEnum("widget_type", ["status_tile", "group_summary"]);
+export const widgetType = pgEnum("widget_type", [
+  "status_tile",
+  "group_summary",
+  "host_metrics",
+  "uptime_history",
+  "note",
+]);
 
 export const dashboards = pgTable("dashboards", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
+  // How often the dashboard page polls for fresh status/metrics while this
+  // dashboard is active — was a hardcoded 15s constant, now per-dashboard.
+  refreshSeconds: integer("refresh_seconds").notNull().default(15),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

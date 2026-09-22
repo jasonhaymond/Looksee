@@ -75,4 +75,41 @@ describe("dashboards", () => {
     expect(res.status).toBe(400);
     await request(app).delete(`/api/dashboards/${createRes.body.id}`).set("Cookie", cookie);
   });
+
+  it("accepts the three new widget types: host_metrics, uptime_history, note", async () => {
+    const createRes = await request(app).post("/api/dashboards").set("Cookie", cookie).send({ name: "New widget types" });
+    const dashboardId = createRes.body.id;
+
+    for (const [type, config] of [
+      ["host_metrics", { hostId: crypto.randomUUID() }],
+      ["uptime_history", { checkId: crypto.randomUUID() }],
+      ["note", { text: "Remember to renew the cert" }],
+    ] as const) {
+      const res = await request(app).post(`/api/dashboards/${dashboardId}/widgets`).set("Cookie", cookie).send({ type, config });
+      expect(res.status).toBe(201);
+      expect(res.body.type).toBe(type);
+      expect(res.body.config).toEqual(config);
+    }
+
+    await request(app).delete(`/api/dashboards/${dashboardId}`).set("Cookie", cookie);
+  });
+
+  it("updates a dashboard's name and refreshSeconds independently", async () => {
+    const createRes = await request(app).post("/api/dashboards").set("Cookie", cookie).send({ name: "Refresh test" });
+    const dashboardId = createRes.body.id;
+    expect(createRes.body.refreshSeconds).toBe(15);
+
+    const renameRes = await request(app).patch(`/api/dashboards/${dashboardId}`).set("Cookie", cookie).send({ name: "Renamed" });
+    expect(renameRes.body.name).toBe("Renamed");
+    expect(renameRes.body.refreshSeconds).toBe(15);
+
+    const refreshRes = await request(app).patch(`/api/dashboards/${dashboardId}`).set("Cookie", cookie).send({ refreshSeconds: 30 });
+    expect(refreshRes.body.refreshSeconds).toBe(30);
+    expect(refreshRes.body.name).toBe("Renamed");
+
+    const rejectRes = await request(app).patch(`/api/dashboards/${dashboardId}`).set("Cookie", cookie).send({ refreshSeconds: 2 });
+    expect(rejectRes.status).toBe(400);
+
+    await request(app).delete(`/api/dashboards/${dashboardId}`).set("Cookie", cookie);
+  });
 });

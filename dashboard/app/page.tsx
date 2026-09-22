@@ -11,9 +11,11 @@ import { TopNav } from "./components/TopNav";
 import { StatusTile } from "./components/StatusTile";
 import { GroupSummaryCard } from "./components/GroupSummaryCard";
 import { AddWidgetForm } from "./components/AddWidgetForm";
+import { HostMetricsWidget } from "./components/HostMetricsWidget";
+import { UptimeHistoryWidget } from "./components/UptimeHistoryWidget";
+import { NoteWidget } from "./components/NoteWidget";
 
 const Grid = WidthProvider(GridLayout);
-const REFRESH_MS = 15_000;
 const LAST_DASHBOARD_KEY = "looksee.lastDashboardId";
 // Below this width, dragging/resizing a grid is more fiddly than useful —
 // widgets render as a plain stacked list instead. Matches this app's
@@ -94,9 +96,19 @@ export default function DashboardsPage() {
     if (!authChecked) return;
     loadDashboards();
     loadStatusData();
-    const timer = setInterval(loadStatusData, REFRESH_MS);
-    return () => clearInterval(timer);
   }, [authChecked, loadDashboards, loadStatusData]);
+
+  // Polling cadence is per-dashboard (Dashboard.refreshSeconds, editable via
+  // the "Refresh" control below) rather than one fixed constant — the
+  // interval restarts whenever the active dashboard or its own setting
+  // changes.
+  const activeDashboard = dashboards.find((d) => d.id === activeDashboardId);
+  useEffect(() => {
+    if (!authChecked) return;
+    const ms = (activeDashboard?.refreshSeconds ?? 15) * 1000;
+    const timer = setInterval(loadStatusData, ms);
+    return () => clearInterval(timer);
+  }, [authChecked, loadStatusData, activeDashboard?.refreshSeconds]);
 
   useEffect(() => {
     if (activeDashboardId) {
@@ -136,9 +148,16 @@ export default function DashboardsPage() {
     await loadDashboards();
   }
 
-  async function handleAddWidget(type: WidgetType, targetId: string) {
+  async function handleAddWidget(type: WidgetType, target: string) {
     if (!activeDashboardId) return;
-    const config = type === "status_tile" ? { checkId: targetId } : { siteId: targetId };
+    const config: Widget["config"] =
+      type === "status_tile" || type === "uptime_history"
+        ? { checkId: target }
+        : type === "host_metrics"
+          ? { hostId: target }
+          : type === "note"
+            ? { text: target }
+            : { siteId: target };
     // Drop the new widget below whatever's already there rather than at
     // (0,0) — compaction (default RGL behavior) then settles it into the
     // first real gap.
@@ -146,6 +165,20 @@ export default function DashboardsPage() {
     const created = await api.createWidget(activeDashboardId, { type, config, x: 0, y, w: 4, h: 3 });
     setWidgets((prev) => [...prev, created]);
     setShowAddWidget(false);
+  }
+
+  async function handleDuplicateDashboard() {
+    if (!activeDashboardId || !activeDashboard) return;
+    const copy = await api.createDashboard(`${activeDashboard.name} copy`);
+    await Promise.all(widgets.map((w) => api.createWidget(copy.id, { type: w.type, config: w.config, x: w.x, y: w.y, w: w.w, h: w.h })));
+    setDashboards((prev) => [...prev, copy]);
+    setActiveDashboardId(copy.id);
+  }
+
+  async function handleChangeRefresh(seconds: number) {
+    if (!activeDashboardId) return;
+    const updated = await api.updateDashboardRefresh(activeDashboardId, seconds);
+    setDashboards((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
   }
 
   async function handleRemoveWidget(id: string) {
@@ -179,6 +212,7 @@ export default function DashboardsPage() {
   const siteById = new Map(sites.map((s) => [s.id, s]));
   const siteNameById = new Map(sites.map((s) => [s.id, s.name]));
   const checkById = new Map(checks.map((c) => [c.id, c]));
+  const hostById = new Map(hosts.map((h) => [h.id, h]));
 
   function renderWidgetContent(widget: Widget) {
     if (widget.type === "status_tile") {
@@ -201,6 +235,17 @@ export default function DashboardsPage() {
         );
       }
       return <StatusTile check={check} latest={latestByCheck.get(check.id)} hosts={hosts} siteNameById={siteNameById} onChanged={loadStatusData} />;
+    }
+    if (widget.type === "uptime_history") {
+      const check = widget.config.checkId ? checkById.get(widget.config.checkId) : undefined;
+      return <UptimeHistoryWidget check={check} />;
+    }
+    if (widget.type === "host_metrics") {
+      const host = widget.config.hostId ? hostById.get(widget.config.hostId) : undefined;
+      return <HostMetricsWidget host={host} />;
+    }
+    if (widget.type === "note") {
+      return <NoteWidget widget={widget} editMode={editMode} onChanged={() => activeDashboardId && loadWidgets(activeDashboardId)} />;
     }
     const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
     return (
@@ -258,6 +303,23 @@ export default function DashboardsPage() {
         <button onClick={handleDeleteDashboard} className="text-sm text-[var(--down)] hover:underline">
           Delete
         </button>
+        <button onClick={handleDuplicateDashboard} className="text-sm text-[var(--muted)] hover:text-[var(--text)]">
+          Duplicate
+        </button>
+        <label className="flex items-center gap-1 text-sm text-[var(--muted)]">
+          Refresh
+          <select
+            value={activeDashboard?.refreshSeconds ?? 15}
+            onChange={(e) => handleChangeRefresh(Number(e.target.value))}
+            className="rounded-md border border-[var(--border)] bg-transparent px-1 py-0.5 text-sm"
+          >
+            {[5, 15, 30, 60, 300].map((s) => (
+              <option key={s} value={s}>
+                {s < 60 ? `${s}s` : `${s / 60}m`}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <span className="flex-1" />
 

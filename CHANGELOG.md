@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-22
+
+### Added
+
+- **Three new dashboard widget types**: a host metrics widget (CPU/RAM/disk sparklines
+  for one host, reusing the same hand-rolled `Sparkline` component every other trend
+  line in the app already uses — no new charting dependency), a standalone uptime/
+  history widget (the uptime %/sparkline that's always lived embedded inside a status
+  tile, now available as its own tile), and a note widget (free text, edited in place
+  in the dashboard's existing edit mode — the one widget type whose content doesn't
+  point at an existing check/site/host, since there's nothing to pick at add-time).
+- **Duplicate a dashboard**: copies every widget (type, config, and exact position)
+  to a new dashboard in one click, instead of rebuilding a similar layout by hand.
+- **Per-dashboard refresh interval**: was a single hardcoded 15-second constant for
+  every dashboard; now editable per dashboard (5s–5m).
+- New `GET /api/hosts/:id/metrics` route — the host metrics table has been written to
+  by the agent's report endpoint since v1.0.0, but nothing ever read it back until now.
+
+### Notes
+
+- The uptime-history data-fetching logic (`api.checkResults` + the uptime-%/sparkline-
+  point math) was extracted from `StatusTile`'s embedded `CheckHistory` into a shared
+  `useCheckHistory` hook, used by both the embedded version and the new standalone
+  widget — one implementation, not two copies to keep in sync.
+- Verified for real: host metrics and uptime-history widgets rendering real numbers
+  from real API data (a live agent report and real check results, not mocked), a note
+  edited in place and confirmed to survive a reload, and a duplicated dashboard
+  confirmed via the database to have copied every widget's type/config/position
+  exactly. One rabbit hole during verification turned out to be a false alarm: widgets
+  briefly showed "no data yet" under this session's unusually heavy concurrent load
+  (many stacked browser/dev-server processes from back-to-back verification runs) —
+  traced with actual render/fetch logging before concluding the code was correct and
+  just slow under that load, not assumed.
+
 ## [1.3.0] - 2026-09-22
 
 ### Fixed

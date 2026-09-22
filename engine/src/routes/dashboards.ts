@@ -7,7 +7,7 @@ import { requireAuth } from "../middleware/auth.js";
 export const dashboardsRouter = Router();
 dashboardsRouter.use(requireAuth);
 
-const VALID_WIDGET_TYPES = ["status_tile", "group_summary"] as const;
+const VALID_WIDGET_TYPES = ["status_tile", "group_summary", "host_metrics", "uptime_history", "note"] as const;
 
 dashboardsRouter.get("/", async (_req, res) => {
   res.json(await db.query.dashboards.findMany({ orderBy: (d, { asc }) => asc(d.createdAt) }));
@@ -24,12 +24,24 @@ dashboardsRouter.post("/", async (req, res) => {
 });
 
 dashboardsRouter.patch("/:id", async (req, res) => {
-  const name = String(req.body?.name ?? "").trim();
-  if (!name) {
-    res.status(400).json({ error: "name is required" });
-    return;
+  const updates: Partial<typeof dashboards.$inferInsert> = {};
+  if (req.body?.name !== undefined) {
+    const name = String(req.body.name).trim();
+    if (!name) {
+      res.status(400).json({ error: "name is required" });
+      return;
+    }
+    updates.name = name;
   }
-  const [dashboard] = await db.update(dashboards).set({ name }).where(eq(dashboards.id, req.params.id)).returning();
+  if (req.body?.refreshSeconds !== undefined) {
+    const refreshSeconds = Number(req.body.refreshSeconds);
+    if (!Number.isInteger(refreshSeconds) || refreshSeconds < 5) {
+      res.status(400).json({ error: "refreshSeconds must be an integer of at least 5" });
+      return;
+    }
+    updates.refreshSeconds = refreshSeconds;
+  }
+  const [dashboard] = await db.update(dashboards).set(updates).where(eq(dashboards.id, req.params.id)).returning();
   if (!dashboard) {
     res.status(404).json({ error: "Dashboard not found" });
     return;

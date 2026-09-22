@@ -1,8 +1,8 @@
 import { Router } from "express";
 import crypto from "node:crypto";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { hosts } from "../db/schema.js";
+import { hosts, hostMetrics } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const hostsRouter = Router();
@@ -88,6 +88,19 @@ hostsRouter.post("/:id/request-update", async (req, res) => {
     return;
   }
   res.json({ requested: true });
+});
+
+// Recent metrics history for one host, used by the dashboard's host-metrics
+// widget — same clamped-limit/newest-first shape as checks.ts's
+// /:id/results.
+hostsRouter.get("/:id/metrics", async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 100, 1000);
+  const rows = await db.query.hostMetrics.findMany({
+    where: eq(hostMetrics.hostId, req.params.id),
+    orderBy: desc(hostMetrics.recordedAt),
+    limit,
+  });
+  res.json(rows);
 });
 
 hostsRouter.delete("/:id", async (req, res) => {
