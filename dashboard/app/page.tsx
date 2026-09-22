@@ -80,8 +80,7 @@ export default function DashboardsPage() {
     const perSiteChecks = await Promise.all(siteList.map((s) => api.checks(s.id)));
     const allChecks = perSiteChecks.flat();
     setChecks(allChecks);
-    const perSiteHosts = await Promise.all(siteList.map((s) => api.hosts(s.id)));
-    setHosts(perSiteHosts.flat());
+    setHosts(await api.hosts());
     const latestPairs = await Promise.all(
       allChecks.map(async (c) => {
         const results = await api.checkResults(c.id, 1);
@@ -178,6 +177,7 @@ export default function DashboardsPage() {
   if (!authChecked || isDesktop === null) return null;
 
   const siteById = new Map(sites.map((s) => [s.id, s]));
+  const siteNameById = new Map(sites.map((s) => [s.id, s.name]));
   const checkById = new Map(checks.map((c) => [c.id, c]));
 
   function renderWidgetContent(widget: Widget) {
@@ -190,7 +190,7 @@ export default function DashboardsPage() {
           </p>
         );
       }
-      return <StatusTile check={check} latest={latestByCheck.get(check.id)} hosts={hosts} onChanged={loadStatusData} />;
+      return <StatusTile check={check} latest={latestByCheck.get(check.id)} hosts={hosts} siteNameById={siteNameById} onChanged={loadStatusData} />;
     }
     const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
     return (

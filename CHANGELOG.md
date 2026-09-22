@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-22
+
+### Fixed
+
+- **The new check-form host selector showed no hosts even when several were
+  configured**, found immediately after 1.0.0 went to production. It was scoping the
+  selector to hosts registered under the check's own site — but a check's `hostId` has
+  no actual constraint tying it to the check's own site (`engine/src/routes/checks.ts`
+  never enforced one), and in practice hosts commonly live under a different site than
+  the checks that reference them (e.g. all hosts registered under one central site,
+  with checks organized under separate per-service sites). The selector now lists every
+  host regardless of site, labeling any host from a different site than the current one
+  (e.g. `WebProxy Server (NextCloud Server)`) so it's clear which site actually owns it.
+
 ## [1.0.0] - 2026-09-22
 
 Now running in production on a real homelab server with an agent reporting in — the

@@ -5,7 +5,19 @@ import { api, type Check, type Host } from "../lib/api";
 import { CheckConfigFields, CHECK_TYPE_HELP, normalizeConfig, validateConfig } from "./CheckConfigFields";
 import { Tooltip } from "./Tooltip";
 
-export function EditCheckForm({ check, hosts, onSaved, onCancel }: { check: Check; hosts: Host[]; onSaved: () => void; onCancel: () => void }) {
+export function EditCheckForm({
+  check,
+  hosts,
+  siteNameById,
+  onSaved,
+  onCancel,
+}: {
+  check: Check;
+  hosts: Host[];
+  siteNameById?: Map<string, string>;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
   const [name, setName] = useState(check.name);
   const [config, setConfig] = useState<Record<string, unknown>>(check.config);
   const [hostId, setHostId] = useState(check.hostId ?? "");
@@ -61,6 +73,7 @@ export function EditCheckForm({ check, hosts, onSaved, onCancel }: { check: Chec
             {hosts.map((h) => (
               <option key={h.id} value={h.id}>
                 {h.name}
+                {siteNameById && h.siteId !== check.siteId ? ` (${siteNameById.get(h.siteId) ?? "other site"})` : ""}
               </option>
             ))}
           </select>

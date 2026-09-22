@@ -32,7 +32,19 @@ function relativeTime(iso: string) {
   return `${Math.round(seconds / 3600)}h ago`;
 }
 
-export function StatusTile({ check, latest, hosts, onChanged }: { check: Check; latest: CheckResult | undefined; hosts: Host[]; onChanged?: () => void }) {
+export function StatusTile({
+  check,
+  latest,
+  hosts,
+  siteNameById,
+  onChanged,
+}: {
+  check: Check;
+  latest: CheckResult | undefined;
+  hosts: Host[];
+  siteNameById?: Map<string, string>;
+  onChanged?: () => void;
+}) {
   const status = latest?.status ?? "unknown";
   const [expanded, setExpanded] = useState<"alerts" | "edit" | null>(null);
 
@@ -80,6 +92,7 @@ export function StatusTile({ check, latest, hosts, onChanged }: { check: Check; 
         <EditCheckForm
           check={check}
           hosts={hosts}
+          siteNameById={siteNameById}
           onSaved={() => {
             setExpanded(null);
             onChanged?.();

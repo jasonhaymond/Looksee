@@ -5,7 +5,17 @@ import { api, type Host } from "../lib/api";
 import { CheckConfigFields, CHECK_TYPE_LABELS, CHECK_TYPE_HELP, defaultConfigFor, normalizeConfig, validateConfig } from "./CheckConfigFields";
 import { Tooltip } from "./Tooltip";
 
-export function AddCheckForm({ siteId, hosts, onCreated }: { siteId: string; hosts: Host[]; onCreated: () => void }) {
+export function AddCheckForm({
+  siteId,
+  hosts,
+  siteNameById,
+  onCreated,
+}: {
+  siteId: string;
+  hosts: Host[];
+  siteNameById?: Map<string, string>;
+  onCreated: () => void;
+}) {
   const [name, setName] = useState("");
   const [type, setType] = useState("ping");
   const [config, setConfig] = useState<Record<string, unknown>>(defaultConfigFor("ping"));
@@ -93,6 +103,7 @@ export function AddCheckForm({ siteId, hosts, onCreated }: { siteId: string; hos
             {hosts.map((h) => (
               <option key={h.id} value={h.id}>
                 {h.name}
+                {siteNameById && h.siteId !== siteId ? ` (${siteNameById.get(h.siteId) ?? "other site"})` : ""}
               </option>
             ))}
           </select>

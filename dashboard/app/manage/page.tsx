@@ -68,7 +68,13 @@ export default function ManagePage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [sites, setSites] = useState<Site[]>([]);
   const [checksBySite, setChecksBySite] = useState<Map<string, Check[]>>(new Map());
-  const [hostsBySite, setHostsBySite] = useState<Map<string, Host[]>>(new Map());
+  // Not scoped per-site: a check's hostId has no constraint tying it to the
+  // check's own site (see engine/src/routes/checks.ts), and in practice
+  // hosts often live under a different "site" than the checks that
+  // reference them (e.g. one site per monitored service, hosts registered
+  // under a separate "infrastructure" site) — so the selector offers every
+  // host, not just the current site's.
+  const [allHosts, setAllHosts] = useState<Host[]>([]);
   const [latestByCheck, setLatestByCheck] = useState<Map<string, CheckResult>>(new Map());
   const [newSiteName, setNewSiteName] = useState("");
 
@@ -80,8 +86,7 @@ export default function ManagePage() {
     const byId = new Map(siteList.map((s, i) => [s.id, perSiteChecks[i]]));
     setChecksBySite(byId);
 
-    const perSiteHosts = await Promise.all(siteList.map((s) => api.hosts(s.id)));
-    setHostsBySite(new Map(siteList.map((s, i) => [s.id, perSiteHosts[i]])));
+    setAllHosts(await api.hosts());
 
     const allChecks = perSiteChecks.flat();
     const latestPairs = await Promise.all(
@@ -117,6 +122,8 @@ export default function ManagePage() {
     loadAll();
   }
 
+  const siteNameById = new Map(sites.map((s) => [s.id, s.name]));
+
   if (!authChecked) return null;
 
   return (
@@ -126,7 +133,6 @@ export default function ManagePage() {
       <div className="space-y-6">
         {sites.map((site) => {
           const checks = checksBySite.get(site.id) ?? [];
-          const hosts = hostsBySite.get(site.id) ?? [];
           return (
             <section key={site.id} className="rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
               <div className="mb-3 flex items-center gap-2">
@@ -135,11 +141,11 @@ export default function ManagePage() {
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {checks.map((check) => (
-                  <StatusTile key={check.id} check={check} latest={latestByCheck.get(check.id)} hosts={hosts} onChanged={loadAll} />
+                  <StatusTile key={check.id} check={check} latest={latestByCheck.get(check.id)} hosts={allHosts} siteNameById={siteNameById} onChanged={loadAll} />
                 ))}
               </div>
               <div className="mt-3">
-                <AddCheckForm siteId={site.id} hosts={hosts} onCreated={loadAll} />
+                <AddCheckForm siteId={site.id} hosts={allHosts} siteNameById={siteNameById} onCreated={loadAll} />
               </div>
             </section>
           );
