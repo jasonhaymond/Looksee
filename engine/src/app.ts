@@ -7,7 +7,7 @@ import { VERSION } from "./lib/version.js";
 import { readAgentVersion } from "./lib/agentVersion.js";
 import { logger } from "./lib/logger.js";
 import { authRouter } from "./routes/auth.js";
-import { sitesRouter } from "./routes/sites.js";
+import { endpointsRouter } from "./routes/endpoints.js";
 import { hostsRouter } from "./routes/hosts.js";
 import { checksRouter } from "./routes/checks.js";
 import { channelsRouter } from "./routes/channels.js";
@@ -35,7 +35,7 @@ app.use(cookieParser());
 app.use(express.json());
 
 app.use("/api/auth", authRouter);
-app.use("/api/sites", sitesRouter);
+app.use("/api/endpoints", endpointsRouter);
 app.use("/api/hosts", hostsRouter);
 app.use("/api/checks", checksRouter);
 app.use("/api/channels", channelsRouter);

@@ -22,9 +22,9 @@ const VALID_TYPES = [
 ] as const;
 
 checksRouter.get("/", async (req, res) => {
-  const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
+  const endpointId = typeof req.query.endpointId === "string" ? req.query.endpointId : undefined;
   const rows = await db.query.checks.findMany({
-    where: siteId ? eq(checks.siteId, siteId) : undefined,
+    where: endpointId ? eq(checks.endpointId, endpointId) : undefined,
     orderBy: (c, { asc }) => asc(c.name),
   });
   res.json(rows);
@@ -32,10 +32,10 @@ checksRouter.get("/", async (req, res) => {
 
 checksRouter.post("/", async (req, res) => {
   const name = String(req.body?.name ?? "").trim();
-  const siteId = String(req.body?.siteId ?? "");
+  const endpointId = String(req.body?.endpointId ?? "");
   const type = req.body?.type;
-  if (!name || !siteId || !VALID_TYPES.includes(type)) {
-    res.status(400).json({ error: `name, siteId, and a valid type (${VALID_TYPES.join(", ")}) are required` });
+  if (!name || !endpointId || !VALID_TYPES.includes(type)) {
+    res.status(400).json({ error: `name, endpointId, and a valid type (${VALID_TYPES.join(", ")}) are required` });
     return;
   }
   const hostId = req.body?.hostId ? String(req.body.hostId) : null;
@@ -52,7 +52,7 @@ checksRouter.post("/", async (req, res) => {
 
   const [check] = await db
     .insert(checks)
-    .values({ name, siteId, hostId, type, config, intervalSeconds })
+    .values({ name, endpointId, hostId, type, config, intervalSeconds })
     .returning();
   res.status(201).json(check);
 });

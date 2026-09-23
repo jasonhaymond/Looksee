@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-23
+
+### Changed
+
+- **Renamed "sites" to "endpoints" throughout the app** — the database table and its
+  `site_id` foreign key columns on `hosts`/`checks`, every engine route (`/api/sites` →
+  `/api/endpoints`, every `?siteId=` query param and request body field), and all
+  dashboard UI labels/copy. A real `ALTER TABLE ... RENAME` migration (hand-written
+  rather than `drizzle-kit generate`, whose rename-detection prompt has no
+  non-interactive answer in this environment — answering it wrong would have emitted a
+  destructive `DROP TABLE` + `CREATE TABLE` instead of a real rename), verified against
+  the local dev database to preserve every existing row and relationship with zero data
+  loss before being trusted. A second, follow-up migration fixes a gap the first one
+  couldn't cover: `dashboard_widgets.config` is an app-managed jsonb blob, not a typed
+  schema column, so the table/column rename never touched an existing group-summary or
+  alert-history widget's stored `{siteId: ...}` config — caught during real verification
+  (an existing widget showed "Endpoint not found" after the rename despite its target
+  endpoint still existing) and fixed with a second migration that rewrites the jsonb key
+  in place.
+- The `group_summary` widget type's internal (wire/database) name is unchanged — only
+  its display label and the endpoint it points at were renamed. Renaming the stored
+  enum value itself would be a separate, higher-blast-radius change with no material
+  benefit, since every existing dashboard's widget rows already reference it by that
+  name.
+
+### Added
+
+- **Section header widget**: a full-width labeled divider for grouping other widgets
+  visually within one dashboard (e.g. "Network", "Backups"), instead of only being able
+  to separate concerns via entirely separate dashboards. Not a data tile and not
+  collapsible — click to name it, the same edit-in-place interaction the note widget
+  already uses.
+
+### Notes
+
+- Verified for real: the rename migration's data integrity was checked directly against
+  the database (identical ids/names/relationships, both foreign key constraints
+  correctly renamed) before any code changed to depend on it; the real pre-existing
+  "Homelab" endpoint and its hosts/checks/dashboard widgets were confirmed to render
+  correctly after both migrations, in a real browser, before and after a page reload;
+  adding a new endpoint and a section-header widget were both exercised end-to-end
+  through the real UI, including the section header's text surviving a reload; desktop
+  and mobile screenshots taken of the renamed Manage/Hosts pages and the new widget.
+
 ## [2.0.0] - 2026-09-22
 
 Versioned as a major bump per explicit direction — this round adds real new check

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type AlertEvent, type Site, type Widget } from "../lib/api";
+import { api, type AlertEvent, type Endpoint, type Widget } from "../lib/api";
 import { rangeToSince, DEFAULT_RANGE_HOURS, RANGE_OPTIONS } from "../lib/timeRange";
 import { RangeSelect } from "./RangeSelect";
 
@@ -12,16 +12,16 @@ const STATUS_COLOR: Record<AlertEvent["status"], string> = {
   resolved: "var(--up)",
 };
 
-export function AlertHistoryWidget({ widget, site, onChanged }: { widget: Widget; site: Site | undefined; onChanged: () => void }) {
+export function AlertHistoryWidget({ widget, endpoint, onChanged }: { widget: Widget; endpoint: Endpoint | undefined; onChanged: () => void }) {
   const rangeHours = widget.config.rangeHours ?? DEFAULT_RANGE_HOURS;
   const [events, setEvents] = useState<AlertEvent[] | null>(null);
 
   useEffect(() => {
-    const load = () => api.alertEvents({ siteId: widget.config.siteId, since: rangeToSince(rangeHours), limit: 50 }).then(setEvents);
+    const load = () => api.alertEvents({ endpointId: widget.config.endpointId, since: rangeToSince(rangeHours), limit: 50 }).then(setEvents);
     load();
     const timer = setInterval(load, POLL_MS);
     return () => clearInterval(timer);
-  }, [widget.config.siteId, rangeHours]);
+  }, [widget.config.endpointId, rangeHours]);
 
   async function handleRangeChange(hours: number) {
     await api.updateWidget(widget.id, { config: { ...widget.config, rangeHours: hours } });
@@ -33,7 +33,7 @@ export function AlertHistoryWidget({ widget, site, onChanged }: { widget: Widget
   return (
     <div className="h-full overflow-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="truncate font-medium">Alert history{site ? ` — ${site.name}` : ""}</h3>
+        <h3 className="truncate font-medium">Alert history{endpoint ? ` — ${endpoint.name}` : ""}</h3>
         <RangeSelect hours={rangeHours} onChange={handleRangeChange} />
       </div>
       {!events ? (

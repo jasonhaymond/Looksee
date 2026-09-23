@@ -4,7 +4,7 @@ import { useState } from "react";
 import { api, type Widget } from "../lib/api";
 
 // The one widget type whose content is edited in place rather than
-// pointing at an existing check/site/host — editing just PATCHes the
+// pointing at an existing check/endpoint/host — editing just PATCHes the
 // widget's own config.text, reusing the same endpoint every other config
 // update already goes through.
 export function NoteWidget({ widget, editMode, onChanged }: { widget: Widget; editMode: boolean; onChanged: () => void }) {

@@ -3,11 +3,11 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: built and verified end-to-end (auth, sites/hosts/checks CRUD, agentless
+**Status**: built and verified end-to-end (auth, endpoints/hosts/checks CRUD, agentless
 probing + scheduler incl. SNMP/OID, agent metrics/service ingest with OS threshold
 alerting, email/webhook/Web Push alerting, a fully customizable widget dashboard), and
 running in production on a real homelab server with an agent reporting in. Current
-version: **v2.0.0** — see [`CHANGELOG.md`](CHANGELOG.md) for what changed recently, or
+version: **v2.1.0** — see [`CHANGELOG.md`](CHANGELOG.md) for what changed recently, or
 [Deploying](#deploying) below for a first deployment of your own. Day-to-day usage once
 it's running is covered in [`docs/user-guide.md`](docs/user-guide.md).
 
@@ -53,7 +53,7 @@ npm install
 npm run dev              # http://localhost:3100
 ```
 
-Sign in with the admin account from step 2, add a Site, then add a check (ping/tcp/http/
+Sign in with the admin account from step 2, add an Endpoint, then add a check (ping/tcp/http/
 dns/ssl_cert run agentless; agent_service needs the agent below).
 
 **4. Agent** (optional — only needed for host metrics / service checks)
@@ -87,6 +87,6 @@ Backups section for exactly what's been proven vs. still needs a first real run.
 - [`spec.md`](spec.md) — full project spec: architecture, data model, v1 scope, decisions
 - [`CLAUDE.md`](CLAUDE.md) — locked project-specific decisions
 - [`docs/deployment-guide.md`](docs/deployment-guide.md) — first deployment and updating
-- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: sites/hosts/checks, dashboards/widgets, channels, backups, logs
+- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: endpoints/hosts/checks, dashboards/widgets, channels, backups, logs
 - [`CHANGELOG.md`](CHANGELOG.md) — version history
 - [`agent/README.md`](agent/README.md) — building and running the Go agent

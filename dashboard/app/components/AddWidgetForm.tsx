@@ -1,37 +1,39 @@
 "use client";
 
 import { useState } from "react";
-import type { Check, Host, Site, WidgetType } from "../lib/api";
+import type { Check, Host, Endpoint, WidgetType } from "../lib/api";
 
 const WIDGET_TYPE_LABELS: Record<WidgetType, string> = {
   status_tile: "Status tile (one check)",
-  group_summary: "Group summary (one site)",
+  group_summary: "Group summary (one endpoint)",
   uptime_history: "Uptime history (one check)",
   host_metrics: "Host metrics (one host)",
   note: "Note",
-  alert_history: "Alert history (one site or all)",
+  alert_history: "Alert history (one endpoint or all)",
   network_bandwidth: "Network bandwidth (one host)",
   all_hosts: "All hosts grid",
   backup_status: "Backup status",
   clock: "Clock / date",
+  section_header: "Section header (group widgets visually)",
 };
 
 // Types that need no target picker at all — "Add" is available immediately.
 const NO_TARGET_TYPES = new Set<WidgetType>(["all_hosts", "backup_status", "clock"]);
 
 export function AddWidgetForm({
-  sites,
+  endpoints,
   checks,
   hosts,
   onAdd,
   onCancel,
 }: {
-  sites: Site[];
+  endpoints: Endpoint[];
   checks: Check[];
   hosts: Host[];
-  // For every type except "note", target is the chosen check/site/host id.
-  // For "note", target is the note's initial text instead — there's
-  // nothing existing to pick, so the form collects the content directly.
+  // For every type except "note"/"section_header", target is the chosen
+  // check/endpoint/host id. For those two, target is the initial text
+  // instead — there's nothing existing to pick, so the form collects the
+  // content directly.
   onAdd: (type: WidgetType, target: string) => void;
   onCancel: () => void;
 }) {
@@ -39,32 +41,33 @@ export function AddWidgetForm({
   const [targetId, setTargetId] = useState("");
   const [noteText, setNoteText] = useState("");
 
-  const siteNameById = new Map(sites.map((s) => [s.id, s.name]));
+  const endpointNameById = new Map(endpoints.map((e) => [e.id, e.name]));
   const hostNameById = new Map(hosts.map((h) => [h.id, h.name]));
 
-  // Which site/host a check or host belongs to isn't obvious from its name
-  // alone once there's more than a couple — label each option with its
+  // Which endpoint/host a check or host belongs to isn't obvious from its
+  // name alone once there's more than a couple — label each option with its
   // source so picking the right one doesn't require guessing.
   let options: { id: string; label: string }[] = [];
   if (type === "status_tile" || type === "uptime_history") {
     options = checks.map((c) => {
-      const site = siteNameById.get(c.siteId) ?? "unknown site";
+      const endpoint = endpointNameById.get(c.endpointId) ?? "unknown endpoint";
       const host = c.hostId ? hostNameById.get(c.hostId) : undefined;
-      return { id: c.id, label: host ? `${c.name} — ${site} / ${host}` : `${c.name} — ${site}` };
+      return { id: c.id, label: host ? `${c.name} — ${endpoint} / ${host}` : `${c.name} — ${endpoint}` };
     });
   } else if (type === "group_summary") {
-    options = sites.map((s) => ({ id: s.id, label: s.name }));
+    options = endpoints.map((e) => ({ id: e.id, label: e.name }));
   } else if (type === "host_metrics" || type === "network_bandwidth") {
-    options = hosts.map((h) => ({ id: h.id, label: `${h.name} — ${siteNameById.get(h.siteId) ?? "unknown site"}` }));
+    options = hosts.map((h) => ({ id: h.id, label: `${h.name} — ${endpointNameById.get(h.endpointId) ?? "unknown endpoint"}` }));
   } else if (type === "alert_history") {
-    options = [{ id: "", label: "All sites" }, ...sites.map((s) => ({ id: s.id, label: s.name }))];
+    options = [{ id: "", label: "All endpoints" }, ...endpoints.map((e) => ({ id: e.id, label: e.name }))];
   }
 
-  const canAdd = type === "note" || NO_TARGET_TYPES.has(type) || type === "alert_history" || Boolean(targetId);
+  const isFreeText = type === "note" || type === "section_header";
+  const canAdd = isFreeText || NO_TARGET_TYPES.has(type) || type === "alert_history" || Boolean(targetId);
 
   function handleAdd() {
     if (!canAdd) return;
-    onAdd(type, type === "note" ? noteText : targetId);
+    onAdd(type, isFreeText ? noteText : targetId);
   }
 
   return (
@@ -90,6 +93,14 @@ export function AddWidgetForm({
           onChange={(e) => setNoteText(e.target.value)}
           placeholder="Note text…"
           rows={2}
+          className="min-w-40 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
+        />
+      ) : type === "section_header" ? (
+        <input
+          autoFocus
+          value={noteText}
+          onChange={(e) => setNoteText(e.target.value)}
+          placeholder="Section name…"
           className="min-w-40 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
         />
       ) : NO_TARGET_TYPES.has(type) ? null : (

@@ -5,12 +5,12 @@ import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { app } from "../src/app.js";
 import { db } from "../src/db/index.js";
-import { users, sites } from "../src/db/schema.js";
+import { users, endpoints } from "../src/db/schema.js";
 
 const email = `test-hosts-${crypto.randomUUID()}@example.com`;
 const password = "TestPass123";
 let cookie: string;
-let siteId: string;
+let endpointId: string;
 
 beforeAll(async () => {
   const passwordHash = await bcrypt.hash(password, 10);
@@ -18,18 +18,18 @@ beforeAll(async () => {
   const loginRes = await request(app).post("/api/auth/login").send({ email, password });
   cookie = loginRes.headers["set-cookie"]![0];
 
-  const [site] = await db.insert(sites).values({ name: `test-hosts-site-${crypto.randomUUID()}` }).returning();
-  siteId = site.id;
+  const [endpoint] = await db.insert(endpoints).values({ name: `test-hosts-endpoint-${crypto.randomUUID()}` }).returning();
+  endpointId = endpoint.id;
 });
 
 afterAll(async () => {
   await db.delete(users).where(eq(users.email, email));
-  await db.delete(sites).where(eq(sites.id, siteId));
+  await db.delete(endpoints).where(eq(endpoints.id, endpointId));
 });
 
 describe("hosts agent-key", () => {
   it("returns both a unix and a windows install command", async () => {
-    const createRes = await request(app).post("/api/hosts").set("Cookie", cookie).send({ siteId, name: "key-test-host" });
+    const createRes = await request(app).post("/api/hosts").set("Cookie", cookie).send({ endpointId, name: "key-test-host" });
     const hostId = createRes.body.id;
 
     const res = await request(app).post(`/api/hosts/${hostId}/agent-key`).set("Cookie", cookie);
@@ -48,7 +48,7 @@ describe("hosts agent-key", () => {
 
 describe("push-to-update", () => {
   it("flags updateAvailable one-shot: true on the first poll after a request, false after", async () => {
-    const createRes = await request(app).post("/api/hosts").set("Cookie", cookie).send({ siteId, name: "update-test-host" });
+    const createRes = await request(app).post("/api/hosts").set("Cookie", cookie).send({ endpointId, name: "update-test-host" });
     const hostId = createRes.body.id;
     const keyRes = await request(app).post(`/api/hosts/${hostId}/agent-key`).set("Cookie", cookie);
     const agentAuth = { Authorization: `Bearer ${keyRes.body.agentApiKey}` };
@@ -69,7 +69,7 @@ describe("push-to-update", () => {
   });
 
   it("stores the agent's reported version and surfaces it on the host", async () => {
-    const createRes = await request(app).post("/api/hosts").set("Cookie", cookie).send({ siteId, name: "version-test-host" });
+    const createRes = await request(app).post("/api/hosts").set("Cookie", cookie).send({ endpointId, name: "version-test-host" });
     const hostId = createRes.body.id;
     const keyRes = await request(app).post(`/api/hosts/${hostId}/agent-key`).set("Cookie", cookie);
 
@@ -88,7 +88,7 @@ describe("push-to-update", () => {
 
 describe("host metrics history", () => {
   it("returns reported metrics newest-first, for the dashboard's host-metrics widget", async () => {
-    const createRes = await request(app).post("/api/hosts").set("Cookie", cookie).send({ siteId, name: "metrics-test-host" });
+    const createRes = await request(app).post("/api/hosts").set("Cookie", cookie).send({ endpointId, name: "metrics-test-host" });
     const hostId = createRes.body.id;
     const keyRes = await request(app).post(`/api/hosts/${hostId}/agent-key`).set("Cookie", cookie);
     const agentAuth = { Authorization: `Bearer ${keyRes.body.agentApiKey}` };

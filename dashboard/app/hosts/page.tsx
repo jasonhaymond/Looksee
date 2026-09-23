@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, type Site, type Host } from "../lib/api";
+import { api, ApiError, type Endpoint, type Host } from "../lib/api";
 import { TopNav } from "../components/TopNav";
 import { Tooltip } from "../components/Tooltip";
 import { PageHelp } from "../components/PageHelp";
@@ -34,14 +34,14 @@ function CopyButton({ text }: { text: string }) {
 
 function HostRow({
   host,
-  siteName,
+  endpointName,
   onChanged,
   revealed,
   onIssueKey,
   latestAgentVersion,
 }: {
   host: Host;
-  siteName: string;
+  endpointName: string;
   onChanged: () => void;
   revealed: { agentApiKey: string; installCommands: { unix: string; windows: string } } | undefined;
   onIssueKey: () => void;
@@ -99,7 +99,7 @@ function HostRow({
         <div>
           <span className="font-medium">{host.name}</span>{" "}
           <span className="text-[var(--muted)]">
-            ({siteName}){host.hostname ? ` · ${host.hostname}` : ""}
+            ({endpointName}){host.hostname ? ` · ${host.hostname}` : ""}
             {host.os ? ` · ${host.os}` : ""} · last report: {relativeTime(host.lastSeenAt)}
             {host.agentVersion && ` · agent v${host.agentVersion}`}
             {updateAvailable && <span className="text-[var(--warn)]"> (v{latestAgentVersion} available)</span>}
@@ -167,9 +167,9 @@ function HostRow({
 export default function HostsPage() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
-  const [sites, setSites] = useState<Site[]>([]);
+  const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
-  const [selectedSiteId, setSelectedSiteId] = useState("");
+  const [selectedEndpointId, setSelectedEndpointId] = useState("");
   const [name, setName] = useState("");
   const [hostname, setHostname] = useState("");
   const [os, setOs] = useState("");
@@ -178,12 +178,12 @@ export default function HostsPage() {
   const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const siteList = await api.sites();
-    setSites(siteList);
-    if (!selectedSiteId && siteList[0]) setSelectedSiteId(siteList[0].id);
+    const endpointList = await api.endpoints();
+    setEndpoints(endpointList);
+    if (!selectedEndpointId && endpointList[0]) setSelectedEndpointId(endpointList[0].id);
     setHosts(await api.hosts());
     setLatestAgentVersion((await api.health()).agentVersion);
-  }, [selectedSiteId]);
+  }, [selectedEndpointId]);
 
   useEffect(() => {
     api
@@ -201,12 +201,12 @@ export default function HostsPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!selectedSiteId) {
-      setError("Choose a site first");
+    if (!selectedEndpointId) {
+      setError("Choose an endpoint first");
       return;
     }
     try {
-      await api.createHost({ siteId: selectedSiteId, name, hostname: hostname || undefined, os: os || undefined });
+      await api.createHost({ endpointId: selectedEndpointId, name, hostname: hostname || undefined, os: os || undefined });
       setName("");
       setHostname("");
       setOs("");
@@ -222,7 +222,7 @@ export default function HostsPage() {
   }
 
   if (!authChecked) return null;
-  const siteName = (id: string) => sites.find((s) => s.id === id)?.name ?? "?";
+  const endpointName = (id: string) => endpoints.find((e) => e.id === id)?.name ?? "?";
 
   return (
     <main className="mx-auto max-w-3xl p-6">
@@ -238,7 +238,7 @@ export default function HostsPage() {
         ) : (
           <ul className="space-y-3">
             {hosts.map((h) => (
-              <HostRow key={h.id} host={h} siteName={siteName(h.siteId)} onChanged={load} revealed={revealedKeys[h.id]} onIssueKey={() => handleIssueKey(h.id)} latestAgentVersion={latestAgentVersion} />
+              <HostRow key={h.id} host={h} endpointName={endpointName(h.endpointId)} onChanged={load} revealed={revealedKeys[h.id]} onIssueKey={() => handleIssueKey(h.id)} latestAgentVersion={latestAgentVersion} />
             ))}
           </ul>
         )}
@@ -249,13 +249,13 @@ export default function HostsPage() {
         <form onSubmit={handleCreate} className="space-y-2 text-sm">
           <div className="flex flex-wrap gap-2">
             <select
-              value={selectedSiteId}
-              onChange={(e) => setSelectedSiteId(e.target.value)}
+              value={selectedEndpointId}
+              onChange={(e) => setSelectedEndpointId(e.target.value)}
               className="rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
             >
-              {sites.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
+              {endpoints.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
                 </option>
               ))}
             </select>

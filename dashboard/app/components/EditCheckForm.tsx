@@ -10,13 +10,13 @@ const AGENT_TYPES = HOST_REQUIRED_TYPES;
 export function EditCheckForm({
   check,
   hosts,
-  siteNameById,
+  endpointNameById,
   onSaved,
   onCancel,
 }: {
   check: Check;
   hosts: Host[];
-  siteNameById?: Map<string, string>;
+  endpointNameById?: Map<string, string>;
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -76,7 +76,7 @@ export function EditCheckForm({
             {hosts.map((h) => (
               <option key={h.id} value={h.id}>
                 {h.name}
-                {siteNameById && h.siteId !== check.siteId ? ` (${siteNameById.get(h.siteId) ?? "other site"})` : ""}
+                {endpointNameById && h.endpointId !== check.endpointId ? ` (${endpointNameById.get(h.endpointId) ?? "other endpoint"})` : ""}
               </option>
             ))}
           </select>

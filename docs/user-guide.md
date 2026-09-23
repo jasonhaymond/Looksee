@@ -5,10 +5,10 @@ dashboards, and getting notified when something breaks. For getting a server run
 the first place, see [deployment-guide.md](deployment-guide.md); for local development,
 see the [README](../README.md).
 
-## Sites, hosts, and checks
+## Endpoints, hosts, and checks
 
-Everything in Looksee starts with a **site** — a logical group, usually a physical
-location or network (e.g. "Home", "Office", "Client A"). Sites live on the **Manage**
+Everything in Looksee starts with an **endpoint** — a logical group, usually a physical
+location or network (e.g. "Home", "Office", "Client A"). Endpoints live on the **Manage**
 page, where you also add and edit checks.
 
 A **host** is a specific machine you've installed the Looksee agent on (see Hosts
@@ -71,18 +71,22 @@ Widget types:
 
 - **Status tile** — one check's current status, with an inline sparkline of recent
   history.
-- **Group summary** — a whole site's checks at a glance.
+- **Group summary** — a whole endpoint's checks at a glance.
 - **Uptime history** — a bigger view of one check's uptime % and latency sparkline, with
   its own time-range control (1 hour to 30 days).
 - **Host metrics** — a host's CPU/RAM/disk sparklines, with its own time-range control.
 - **Network bandwidth** — a host's RX/TX sparklines.
 - **All hosts grid** — every host's online/offline status (based on last-seen recency)
   and last-seen time in one compact list.
-- **Alert history** — recent alerts, filterable to one site or all, with its own
+- **Alert history** — recent alerts, filterable to one endpoint or all, with its own
   time-range control.
 - **Backup status** — the most recent backup run's status and time.
 - **Clock / date** — a plain current time/date tile.
 - **Note** — free text, click to edit in layout-edit mode.
+- **Section header** — a full-width labeled divider for grouping other widgets
+  visually within one dashboard (e.g. "Network", "Backups") — not itself a data tile,
+  and not collapsible; just a way to organize a busy dashboard without splitting it
+  into several. Click to name it, the same way a note is edited.
 
 Any widget with a time-range control remembers its own chosen range — two uptime-history
 widgets on the same dashboard can show different windows independently.

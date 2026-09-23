@@ -64,6 +64,27 @@
       "when": 1790089024687,
       "tag": "0008_dazzling_winter_soldier",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790109428078,
+      "tag": "0009_gifted_spitfire",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790110000000,
+      "tag": "0010_rename_sites_to_endpoints",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790111000000,
+      "tag": "0011_rename_widget_config_site_id",
+      "breakpoints": true
     }
   ]
 }

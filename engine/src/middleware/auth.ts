@@ -8,7 +8,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: { id: string; email: string };
-      agentHost?: { id: string; siteId: string };
+      agentHost?: { id: string; endpointId: string };
     }
   }
 }
@@ -51,6 +51,6 @@ export async function requireAgentAuth(req: Request, res: Response, next: NextFu
     res.status(401).json({ error: "Invalid agent token" });
     return;
   }
-  req.agentHost = { id: host.id, siteId: host.siteId };
+  req.agentHost = { id: host.id, endpointId: host.endpointId };
   next();
 }

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 // flat v1-style props (cols, rowHeight, onDragStop, ...) this file uses.
 import GridLayout, { WidthProvider } from "react-grid-layout/legacy";
 import type { LayoutItem } from "react-grid-layout";
-import { api, ApiError, type Site, type Check, type CheckResult, type Dashboard, type Widget, type WidgetType, type Host } from "./lib/api";
+import { api, ApiError, type Endpoint, type Check, type CheckResult, type Dashboard, type Widget, type WidgetType, type Host } from "./lib/api";
 import { TopNav } from "./components/TopNav";
 import { StatusTile } from "./components/StatusTile";
 import { GroupSummaryCard } from "./components/GroupSummaryCard";
@@ -14,6 +14,7 @@ import { AddWidgetForm } from "./components/AddWidgetForm";
 import { HostMetricsWidget } from "./components/HostMetricsWidget";
 import { UptimeHistoryWidget } from "./components/UptimeHistoryWidget";
 import { NoteWidget } from "./components/NoteWidget";
+import { SectionHeaderWidget } from "./components/SectionHeaderWidget";
 import { AlertHistoryWidget } from "./components/AlertHistoryWidget";
 import { NetworkBandwidthWidget } from "./components/NetworkBandwidthWidget";
 import { AllHostsWidget } from "./components/AllHostsWidget";
@@ -40,7 +41,7 @@ export default function DashboardsPage() {
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
 
-  const [sites, setSites] = useState<Site[]>([]);
+  const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [checks, setChecks] = useState<Check[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [latestByCheck, setLatestByCheck] = useState<Map<string, CheckResult>>(new Map());
@@ -82,10 +83,10 @@ export default function DashboardsPage() {
   }, []);
 
   const loadStatusData = useCallback(async () => {
-    const siteList = await api.sites();
-    setSites(siteList);
-    const perSiteChecks = await Promise.all(siteList.map((s) => api.checks(s.id)));
-    const allChecks = perSiteChecks.flat();
+    const endpointList = await api.endpoints();
+    setEndpoints(endpointList);
+    const perEndpointChecks = await Promise.all(endpointList.map((e) => api.checks(e.id)));
+    const allChecks = perEndpointChecks.flat();
     setChecks(allChecks);
     setHosts(await api.hosts());
     const latestPairs = await Promise.all(
@@ -147,7 +148,7 @@ export default function DashboardsPage() {
 
   async function handleDeleteDashboard() {
     if (!activeDashboardId) return;
-    if (!confirm("Delete this dashboard? Its widgets go with it — the checks/sites themselves are unaffected.")) return;
+    if (!confirm("Delete this dashboard? Its widgets go with it — the checks/endpoints themselves are unaffected.")) return;
     await api.deleteDashboard(activeDashboardId);
     setActiveDashboardId(null);
     await loadDashboards();
@@ -160,18 +161,22 @@ export default function DashboardsPage() {
         ? { checkId: target }
         : type === "host_metrics" || type === "network_bandwidth"
           ? { hostId: target }
-          : type === "note"
+          : type === "note" || type === "section_header"
             ? { text: target }
             : type === "group_summary"
-              ? { siteId: target }
+              ? { endpointId: target }
               : type === "alert_history"
-                ? (target ? { siteId: target } : {})
+                ? (target ? { endpointId: target } : {})
                 : {}; // all_hosts, backup_status, clock — no target needed
     // Drop the new widget below whatever's already there rather than at
     // (0,0) — compaction (default RGL behavior) then settles it into the
     // first real gap.
     const y = widgets.reduce((max, w) => Math.max(max, w.y + w.h), 0);
-    const created = await api.createWidget(activeDashboardId, { type, config, x: 0, y, w: 4, h: 3 });
+    // Section headers span the full 12-col grid and are a single short row
+    // tall — a divider, not a data tile — while every other widget keeps
+    // the existing default tile size.
+    const [w, h] = type === "section_header" ? [12, 1] : [4, 3];
+    const created = await api.createWidget(activeDashboardId, { type, config, x: 0, y, w, h });
     setWidgets((prev) => [...prev, created]);
     setShowAddWidget(false);
   }
@@ -218,8 +223,8 @@ export default function DashboardsPage() {
 
   if (!authChecked || isDesktop === null) return null;
 
-  const siteById = new Map(sites.map((s) => [s.id, s]));
-  const siteNameById = new Map(sites.map((s) => [s.id, s.name]));
+  const endpointById = new Map(endpoints.map((e) => [e.id, e]));
+  const endpointNameById = new Map(endpoints.map((e) => [e.id, e.name]));
   const checkById = new Map(checks.map((c) => [c.id, c]));
   const hostById = new Map(hosts.map((h) => [h.id, h]));
 
@@ -243,7 +248,7 @@ export default function DashboardsPage() {
           </p>
         );
       }
-      return <StatusTile check={check} latest={latestByCheck.get(check.id)} hosts={hosts} siteNameById={siteNameById} onChanged={loadStatusData} />;
+      return <StatusTile check={check} latest={latestByCheck.get(check.id)} hosts={hosts} endpointNameById={endpointNameById} onChanged={loadStatusData} />;
     }
     const onChanged = () => activeDashboardId && loadWidgets(activeDashboardId);
     if (widget.type === "uptime_history") {
@@ -261,12 +266,15 @@ export default function DashboardsPage() {
     if (widget.type === "note") {
       return <NoteWidget widget={widget} editMode={editMode} onChanged={onChanged} />;
     }
+    if (widget.type === "section_header") {
+      return <SectionHeaderWidget widget={widget} editMode={editMode} onChanged={onChanged} />;
+    }
     if (widget.type === "alert_history") {
-      const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
-      return <AlertHistoryWidget widget={widget} site={site} onChanged={onChanged} />;
+      const endpoint = widget.config.endpointId ? endpointById.get(widget.config.endpointId) : undefined;
+      return <AlertHistoryWidget widget={widget} endpoint={endpoint} onChanged={onChanged} />;
     }
     if (widget.type === "all_hosts") {
-      return <AllHostsWidget hosts={hosts} siteNameById={siteNameById} />;
+      return <AllHostsWidget hosts={hosts} endpointNameById={endpointNameById} />;
     }
     if (widget.type === "backup_status") {
       return <BackupStatusWidget />;
@@ -274,11 +282,11 @@ export default function DashboardsPage() {
     if (widget.type === "clock") {
       return <ClockWidget />;
     }
-    const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
+    const endpoint = widget.config.endpointId ? endpointById.get(widget.config.endpointId) : undefined;
     return (
       <GroupSummaryCard
-        site={site}
-        checks={checks.filter((c) => c.siteId === widget.config.siteId && c.enabled)}
+        endpoint={endpoint}
+        checks={checks.filter((c) => c.endpointId === widget.config.endpointId && c.enabled)}
         latestByCheck={latestByCheck}
       />
     );
@@ -360,7 +368,7 @@ export default function DashboardsPage() {
         )}
       </div>
 
-      {showAddWidget && <div className="mb-4"><AddWidgetForm sites={sites} checks={checks} hosts={hosts} onAdd={handleAddWidget} onCancel={() => setShowAddWidget(false)} /></div>}
+      {showAddWidget && <div className="mb-4"><AddWidgetForm endpoints={endpoints} checks={checks} hosts={hosts} onAdd={handleAddWidget} onCancel={() => setShowAddWidget(false)} /></div>}
 
       {widgets.length === 0 && !showAddWidget && (
         <p className="mb-4 text-sm text-[var(--muted)]">

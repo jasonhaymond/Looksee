@@ -1,4 +1,4 @@
-import type { Check, CheckResult, Site } from "../lib/api";
+import type { Check, CheckResult, Endpoint } from "../lib/api";
 import { GroupSummary } from "./GroupSummary";
 
 const DOT_COLOR: Record<string, string> = {
@@ -9,18 +9,18 @@ const DOT_COLOR: Record<string, string> = {
 };
 
 export function GroupSummaryCard({
-  site,
+  endpoint,
   checks,
   latestByCheck,
 }: {
-  site: Site | undefined;
+  endpoint: Endpoint | undefined;
   checks: Check[];
   latestByCheck: Map<string, CheckResult>;
 }) {
-  if (!site) {
+  if (!endpoint) {
     return (
       <p className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3 text-xs text-[var(--muted)]">
-        Site not found — it may have been deleted.
+        Endpoint not found — it may have been deleted.
       </p>
     );
   }
@@ -28,11 +28,11 @@ export function GroupSummaryCard({
   return (
     <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
       <div className="mb-2 flex items-center gap-2">
-        <h3 className="font-medium">{site.name}</h3>
+        <h3 className="font-medium">{endpoint.name}</h3>
         <GroupSummary checks={checks} latestByCheck={latestByCheck} />
       </div>
       {checks.length === 0 ? (
-        <p className="text-xs text-[var(--muted)]">No checks on this site yet.</p>
+        <p className="text-xs text-[var(--muted)]">No checks on this endpoint yet.</p>
       ) : (
         <ul className="space-y-1 text-xs">
           {checks.map((c) => {

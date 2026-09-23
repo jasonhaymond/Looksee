@@ -86,10 +86,12 @@ export const sessions = pgTable("sessions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// A Site exists from v1 even with only one row configured (the personal
+// An Endpoint exists from v1 even with only one row configured (the personal
 // homelab) so a second network later (e.g. the church/AV network) is a row,
-// not a schema migration — see spec.md.
-export const sites = pgTable("sites", {
+// not a schema migration — see spec.md. Named "endpoints" (renamed from
+// "sites" in 2.1.0) since "site" read as web-hosting terminology to some
+// users; the concept itself — a logical group/network — is unchanged.
+export const endpoints = pgTable("endpoints", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   description: text("description"),
@@ -101,9 +103,9 @@ export const sites = pgTable("sites", {
 // nullable for that reason.
 export const hosts = pgTable("hosts", {
   id: uuid("id").primaryKey().defaultRandom(),
-  siteId: uuid("site_id")
+  endpointId: uuid("endpoint_id")
     .notNull()
-    .references(() => sites.id, { onDelete: "cascade" }),
+    .references(() => endpoints.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   hostname: text("hostname"),
   os: text("os"),
@@ -139,9 +141,9 @@ export const hosts = pgTable("hosts", {
 // route handler, not user-defined.
 export const checks = pgTable("checks", {
   id: uuid("id").primaryKey().defaultRandom(),
-  siteId: uuid("site_id")
+  endpointId: uuid("endpoint_id")
     .notNull()
-    .references(() => sites.id, { onDelete: "cascade" }),
+    .references(() => endpoints.id, { onDelete: "cascade" }),
   hostId: uuid("host_id").references(() => hosts.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   type: checkType("type").notNull(),
@@ -293,6 +295,7 @@ export const widgetType = pgEnum("widget_type", [
   "all_hosts",
   "backup_status",
   "clock",
+  "section_header",
 ]);
 
 export const dashboards = pgTable("dashboards", {
@@ -305,7 +308,7 @@ export const dashboards = pgTable("dashboards", {
 });
 
 // A widget's `config` shape depends on `type` — { checkId } for status_tile,
-// { siteId } for group_summary — same "fixed shape per type, not a generic
+// { endpointId } for group_summary — same "fixed shape per type, not a generic
 // template" posture as checks.config. x/y/w/h are react-grid-layout's own
 // grid units, persisted as-is so the canvas restores exactly where it was
 // left; there's no separate "layout" concept beyond these four columns.

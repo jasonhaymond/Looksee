@@ -19,7 +19,7 @@ describe("GET /api/health", () => {
 
 describe("auth", () => {
   it("rejects unauthenticated requests to protected routes", async () => {
-    const res = await request(app).get("/api/sites");
+    const res = await request(app).get("/api/endpoints");
     expect(res.status).toBe(401);
   });
 });

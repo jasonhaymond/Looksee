@@ -8,14 +8,14 @@ import { Tooltip } from "./Tooltip";
 const AGENT_TYPES = HOST_REQUIRED_TYPES;
 
 export function AddCheckForm({
-  siteId,
+  endpointId,
   hosts,
-  siteNameById,
+  endpointNameById,
   onCreated,
 }: {
-  siteId: string;
+  endpointId: string;
   hosts: Host[];
-  siteNameById?: Map<string, string>;
+  endpointNameById?: Map<string, string>;
   onCreated: () => void;
 }) {
   const [name, setName] = useState("");
@@ -41,7 +41,7 @@ export function AddCheckForm({
       return;
     }
     try {
-      await api.createCheck({ siteId, hostId: hostId || null, name, type, config: normalized, intervalSeconds: interval });
+      await api.createCheck({ endpointId, hostId: hostId || null, name, type, config: normalized, intervalSeconds: interval });
       setName("");
       setType("ping");
       setConfig(defaultConfigFor("ping"));
@@ -106,7 +106,7 @@ export function AddCheckForm({
             {hosts.map((h) => (
               <option key={h.id} value={h.id}>
                 {h.name}
-                {siteNameById && h.siteId !== siteId ? ` (${siteNameById.get(h.siteId) ?? "other site"})` : ""}
+                {endpointNameById && h.endpointId !== endpointId ? ` (${endpointNameById.get(h.endpointId) ?? "other endpoint"})` : ""}
               </option>
             ))}
           </select>

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."widget_type" ADD VALUE 'section_header';

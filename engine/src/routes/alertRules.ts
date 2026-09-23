@@ -12,15 +12,15 @@ alertRulesRouter.use(requireAuth);
 // drizzle relations() wiring for one small join" posture as GET / below)
 // rather than a single relational query.
 alertRulesRouter.get("/events", async (req, res) => {
-  const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
+  const endpointId = typeof req.query.endpointId === "string" ? req.query.endpointId : undefined;
   const since = typeof req.query.since === "string" ? new Date(req.query.since) : undefined;
   const validSince = since && !Number.isNaN(since.getTime()) ? since : undefined;
   const limit = Math.min(Number(req.query.limit) || 50, 500);
 
-  const checkRows = await db.query.checks.findMany({ where: siteId ? eq(checks.siteId, siteId) : undefined });
+  const checkRows = await db.query.checks.findMany({ where: endpointId ? eq(checks.endpointId, endpointId) : undefined });
   const checkById = new Map(checkRows.map((c) => [c.id, c]));
   const ruleRows = await db.query.alertRules.findMany({
-    where: siteId ? inArray(alertRules.checkId, checkRows.map((c) => c.id)) : undefined,
+    where: endpointId ? inArray(alertRules.checkId, checkRows.map((c) => c.id)) : undefined,
   });
   const ruleById = new Map(ruleRows.map((r) => [r.id, r]));
 

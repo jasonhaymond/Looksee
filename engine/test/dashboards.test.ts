@@ -5,12 +5,12 @@ import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { app } from "../src/app.js";
 import { db } from "../src/db/index.js";
-import { users, sites, widgetType } from "../src/db/schema.js";
+import { users, endpoints, widgetType } from "../src/db/schema.js";
 
 const email = `test-dashboards-${crypto.randomUUID()}@example.com`;
 const password = "TestPass123";
 let cookie: string;
-let siteId: string;
+let endpointId: string;
 
 beforeAll(async () => {
   const passwordHash = await bcrypt.hash(password, 10);
@@ -18,13 +18,13 @@ beforeAll(async () => {
   const loginRes = await request(app).post("/api/auth/login").send({ email, password });
   cookie = loginRes.headers["set-cookie"]![0];
 
-  const [site] = await db.insert(sites).values({ name: `test-dashboards-site-${crypto.randomUUID()}` }).returning();
-  siteId = site.id;
+  const [endpoint] = await db.insert(endpoints).values({ name: `test-dashboards-endpoint-${crypto.randomUUID()}` }).returning();
+  endpointId = endpoint.id;
 });
 
 afterAll(async () => {
   await db.delete(users).where(eq(users.email, email));
-  await db.delete(sites).where(eq(sites.id, siteId));
+  await db.delete(endpoints).where(eq(endpoints.id, endpointId));
 });
 
 describe("dashboards", () => {
@@ -41,7 +41,7 @@ describe("dashboards", () => {
     const widgetRes = await request(app)
       .post(`/api/dashboards/${dashboardId}/widgets`)
       .set("Cookie", cookie)
-      .send({ type: "group_summary", config: { siteId }, x: 0, y: 0, w: 4, h: 3 });
+      .send({ type: "group_summary", config: { endpointId }, x: 0, y: 0, w: 4, h: 3 });
     expect(widgetRes.status).toBe(201);
     const widgetId = widgetRes.body.id;
 
@@ -88,15 +88,16 @@ describe("dashboards", () => {
 
     const configByType: Record<string, Record<string, unknown>> = {
       status_tile: { checkId: crypto.randomUUID() },
-      group_summary: { siteId: crypto.randomUUID() },
+      group_summary: { endpointId: crypto.randomUUID() },
       host_metrics: { hostId: crypto.randomUUID() },
       uptime_history: { checkId: crypto.randomUUID() },
       note: { text: "Remember to renew the cert" },
-      alert_history: { siteId: crypto.randomUUID() },
+      alert_history: { endpointId: crypto.randomUUID() },
       network_bandwidth: { hostId: crypto.randomUUID() },
       all_hosts: {},
       backup_status: {},
       clock: {},
+      section_header: { text: "Network" },
     };
 
     for (const type of widgetType.enumValues) {

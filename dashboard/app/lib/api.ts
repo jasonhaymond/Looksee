@@ -22,10 +22,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
-export type Site = { id: string; name: string; description: string | null };
+export type Endpoint = { id: string; name: string; description: string | null };
 export type Host = {
   id: string;
-  siteId: string;
+  endpointId: string;
   name: string;
   hostname: string | null;
   os: string | null;
@@ -40,7 +40,7 @@ export type Host = {
 };
 export type Check = {
   id: string;
-  siteId: string;
+  endpointId: string;
   hostId: string | null;
   name: string;
   type: string;
@@ -108,12 +108,13 @@ export type WidgetType =
   | "network_bandwidth"
   | "all_hosts"
   | "backup_status"
-  | "clock";
+  | "clock"
+  | "section_header";
 export type Widget = {
   id: string;
   dashboardId: string;
   type: WidgetType;
-  config: { checkId?: string; siteId?: string; hostId?: string; text?: string; rangeHours?: number };
+  config: { checkId?: string; endpointId?: string; hostId?: string; text?: string; rangeHours?: number };
   x: number;
   y: number;
   w: number;
@@ -144,14 +145,14 @@ export const api = {
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   me: () => request<{ id: string; email: string }>("/api/auth/me"),
 
-  sites: () => request<Site[]>("/api/sites"),
-  createSite: (name: string) => request<Site>("/api/sites", { method: "POST", body: JSON.stringify({ name }) }),
-  updateSite: (id: string, input: { name?: string; description?: string | null }) =>
-    request<Site>(`/api/sites/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
-  deleteSite: (id: string) => request<void>(`/api/sites/${id}`, { method: "DELETE" }),
+  endpoints: () => request<Endpoint[]>("/api/endpoints"),
+  createEndpoint: (name: string) => request<Endpoint>("/api/endpoints", { method: "POST", body: JSON.stringify({ name }) }),
+  updateEndpoint: (id: string, input: { name?: string; description?: string | null }) =>
+    request<Endpoint>(`/api/endpoints/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+  deleteEndpoint: (id: string) => request<void>(`/api/endpoints/${id}`, { method: "DELETE" }),
 
-  hosts: (siteId?: string) => request<Host[]>(`/api/hosts${siteId ? `?siteId=${siteId}` : ""}`),
-  createHost: (input: { siteId: string; name: string; hostname?: string; os?: string }) =>
+  hosts: (endpointId?: string) => request<Host[]>(`/api/hosts${endpointId ? `?endpointId=${endpointId}` : ""}`),
+  createHost: (input: { endpointId: string; name: string; hostname?: string; os?: string }) =>
     request<Host>("/api/hosts", { method: "POST", body: JSON.stringify(input) }),
   updateHost: (id: string, input: { name?: string; hostname?: string | null; os?: string | null }) =>
     request<Host>(`/api/hosts/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
@@ -161,8 +162,8 @@ export const api = {
   requestHostUpdate: (hostId: string) => request<{ requested: boolean }>(`/api/hosts/${hostId}/request-update`, { method: "POST" }),
   health: () => request<{ status: string; db: string; version: string; agentVersion: string | null }>("/api/health"),
 
-  checks: (siteId?: string) => request<Check[]>(`/api/checks${siteId ? `?siteId=${siteId}` : ""}`),
-  createCheck: (input: { siteId: string; hostId?: string | null; name: string; type: string; config: Record<string, unknown>; intervalSeconds?: number }) =>
+  checks: (endpointId?: string) => request<Check[]>(`/api/checks${endpointId ? `?endpointId=${endpointId}` : ""}`),
+  createCheck: (input: { endpointId: string; hostId?: string | null; name: string; type: string; config: Record<string, unknown>; intervalSeconds?: number }) =>
     request<Check>("/api/checks", { method: "POST", body: JSON.stringify(input) }),
   updateCheck: (id: string, input: { name?: string; hostId?: string | null; config?: Record<string, unknown>; intervalSeconds?: number; enabled?: boolean }) =>
     request<Check>(`/api/checks/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
@@ -224,9 +225,9 @@ export const api = {
   deleteWidget: (widgetId: string) => request<void>(`/api/dashboards/widgets/${widgetId}`, { method: "DELETE" }),
   hostMetrics: (hostId: string, limit = 30, since?: string) =>
     request<HostMetric[]>(`/api/hosts/${hostId}/metrics?limit=${limit}${since ? `&since=${encodeURIComponent(since)}` : ""}`),
-  alertEvents: (params?: { siteId?: string; since?: string; limit?: number }) => {
+  alertEvents: (params?: { endpointId?: string; since?: string; limit?: number }) => {
     const query = new URLSearchParams();
-    if (params?.siteId) query.set("siteId", params.siteId);
+    if (params?.endpointId) query.set("endpointId", params.endpointId);
     if (params?.since) query.set("since", params.since);
     if (params?.limit) query.set("limit", String(params.limit));
     const qs = query.toString();

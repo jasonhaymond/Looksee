@@ -18,7 +18,7 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(ms / 86_400_000)}d ago`;
 }
 
-export function AllHostsWidget({ hosts, siteNameById }: { hosts: Host[]; siteNameById: Map<string, string> }) {
+export function AllHostsWidget({ hosts, endpointNameById }: { hosts: Host[]; endpointNameById: Map<string, string> }) {
   return (
     <div className="h-full overflow-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
       <h3 className="mb-2 font-medium">All hosts</h3>
@@ -32,7 +32,7 @@ export function AllHostsWidget({ hosts, siteNameById }: { hosts: Host[]; siteNam
               <li key={h.id} className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: online ? "var(--up)" : "var(--down)" }} />
                 <span className="truncate">{h.name}</span>
-                <span className="text-[var(--muted)]">{siteNameById.get(h.siteId) ?? ""}</span>
+                <span className="text-[var(--muted)]">{endpointNameById.get(h.endpointId) ?? ""}</span>
                 <span className="ml-auto shrink-0 text-[var(--muted)]">{timeAgo(h.lastSeenAt)}</span>
               </li>
             );

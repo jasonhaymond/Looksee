@@ -9,9 +9,9 @@ export const hostsRouter = Router();
 hostsRouter.use(requireAuth);
 
 hostsRouter.get("/", async (req, res) => {
-  const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
+  const endpointId = typeof req.query.endpointId === "string" ? req.query.endpointId : undefined;
   const rows = await db.query.hosts.findMany({
-    where: siteId ? eq(hosts.siteId, siteId) : undefined,
+    where: endpointId ? eq(hosts.endpointId, endpointId) : undefined,
     orderBy: (h, { asc }) => asc(h.name),
   });
   // agentApiKey is a credential — never returned in a list/read response,
@@ -21,14 +21,14 @@ hostsRouter.get("/", async (req, res) => {
 
 hostsRouter.post("/", async (req, res) => {
   const name = String(req.body?.name ?? "").trim();
-  const siteId = String(req.body?.siteId ?? "");
-  if (!name || !siteId) {
-    res.status(400).json({ error: "name and siteId are required" });
+  const endpointId = String(req.body?.endpointId ?? "");
+  if (!name || !endpointId) {
+    res.status(400).json({ error: "name and endpointId are required" });
     return;
   }
   const hostname = req.body?.hostname ? String(req.body.hostname) : null;
   const os = req.body?.os ? String(req.body.os) : null;
-  const [host] = await db.insert(hosts).values({ name, siteId, hostname, os }).returning();
+  const [host] = await db.insert(hosts).values({ name, endpointId, hostname, os }).returning();
   const { agentApiKey, ...rest } = host;
   res.status(201).json(rest);
 });

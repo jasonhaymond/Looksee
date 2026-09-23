@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, type Site, type Check, type CheckResult, type Host } from "../lib/api";
+import { api, ApiError, type Endpoint, type Check, type CheckResult, type Host } from "../lib/api";
 import { StatusTile } from "../components/StatusTile";
 import { GroupSummary } from "../components/GroupSummary";
 import { AddCheckForm } from "../components/AddCheckForm";
@@ -14,21 +14,21 @@ import { PageHelp } from "../components/PageHelp";
 // control how often the engine itself re-probes each check.
 const REFRESH_MS = 15_000;
 
-function SiteHeader({ site, onChanged }: { site: Site; onChanged: () => void }) {
+function EndpointHeader({ endpoint, onChanged }: { endpoint: Endpoint; onChanged: () => void }) {
   const [renaming, setRenaming] = useState(false);
-  const [name, setName] = useState(site.name);
+  const [name, setName] = useState(endpoint.name);
 
   async function handleRename(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
-    await api.updateSite(site.id, { name: name.trim() });
+    await api.updateEndpoint(endpoint.id, { name: name.trim() });
     setRenaming(false);
     onChanged();
   }
 
   async function handleDelete() {
-    if (!confirm(`Delete site "${site.name}"? This also deletes its hosts and checks.`)) return;
-    await api.deleteSite(site.id);
+    if (!confirm(`Delete endpoint "${endpoint.name}"? This also deletes its hosts and checks.`)) return;
+    await api.deleteEndpoint(endpoint.id);
     onChanged();
   }
 
@@ -53,7 +53,7 @@ function SiteHeader({ site, onChanged }: { site: Site; onChanged: () => void }) 
 
   return (
     <>
-      <h2 className="font-medium">{site.name}</h2>
+      <h2 className="font-medium">{endpoint.name}</h2>
       <button onClick={() => setRenaming(true)} className="text-xs text-[var(--muted)] underline hover:text-[var(--text)]">
         rename
       </button>
@@ -67,29 +67,29 @@ function SiteHeader({ site, onChanged }: { site: Site; onChanged: () => void }) 
 export default function ManagePage() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
-  const [sites, setSites] = useState<Site[]>([]);
-  const [checksBySite, setChecksBySite] = useState<Map<string, Check[]>>(new Map());
-  // Not scoped per-site: a check's hostId has no constraint tying it to the
-  // check's own site (see engine/src/routes/checks.ts), and in practice
-  // hosts often live under a different "site" than the checks that
-  // reference them (e.g. one site per monitored service, hosts registered
-  // under a separate "infrastructure" site) — so the selector offers every
-  // host, not just the current site's.
+  const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
+  const [checksByEndpoint, setChecksByEndpoint] = useState<Map<string, Check[]>>(new Map());
+  // Not scoped per-endpoint: a check's hostId has no constraint tying it to
+  // the check's own endpoint (see engine/src/routes/checks.ts), and in
+  // practice hosts often live under a different endpoint than the checks
+  // that reference them (e.g. one endpoint per monitored service, hosts
+  // registered under a separate "infrastructure" endpoint) — so the
+  // selector offers every host, not just the current endpoint's.
   const [allHosts, setAllHosts] = useState<Host[]>([]);
   const [latestByCheck, setLatestByCheck] = useState<Map<string, CheckResult>>(new Map());
-  const [newSiteName, setNewSiteName] = useState("");
+  const [newEndpointName, setNewEndpointName] = useState("");
 
   const loadAll = useCallback(async () => {
-    const siteList = await api.sites();
-    setSites(siteList);
+    const endpointList = await api.endpoints();
+    setEndpoints(endpointList);
 
-    const perSiteChecks = await Promise.all(siteList.map((s) => api.checks(s.id)));
-    const byId = new Map(siteList.map((s, i) => [s.id, perSiteChecks[i]]));
-    setChecksBySite(byId);
+    const perEndpointChecks = await Promise.all(endpointList.map((e) => api.checks(e.id)));
+    const byId = new Map(endpointList.map((e, i) => [e.id, perEndpointChecks[i]]));
+    setChecksByEndpoint(byId);
 
     setAllHosts(await api.hosts());
 
-    const allChecks = perSiteChecks.flat();
+    const allChecks = perEndpointChecks.flat();
     const latestPairs = await Promise.all(
       allChecks.map(async (c) => {
         const results = await api.checkResults(c.id, 1);
@@ -115,55 +115,55 @@ export default function ManagePage() {
     return () => clearInterval(timer);
   }, [authChecked, loadAll]);
 
-  async function handleAddSite(e: React.FormEvent) {
+  async function handleAddEndpoint(e: React.FormEvent) {
     e.preventDefault();
-    if (!newSiteName.trim()) return;
-    await api.createSite(newSiteName.trim());
-    setNewSiteName("");
+    if (!newEndpointName.trim()) return;
+    await api.createEndpoint(newEndpointName.trim());
+    setNewEndpointName("");
     loadAll();
   }
 
-  const siteNameById = new Map(sites.map((s) => [s.id, s.name]));
+  const endpointNameById = new Map(endpoints.map((e) => [e.id, e.name]));
 
   if (!authChecked) return null;
 
   return (
     <main className="mx-auto max-w-3xl p-6">
       <TopNav active="/manage" />
-      <PageHelp anchor="sites-hosts-and-checks">
-        Sites group your checks by location or network. Add checks here, or click a site to manage its hosts and settings.
+      <PageHelp anchor="endpoints-hosts-and-checks">
+        Endpoints group your checks by location or network. Add checks here, or click an endpoint to manage its hosts and settings.
       </PageHelp>
 
       <div className="space-y-6">
-        {sites.map((site) => {
-          const checks = checksBySite.get(site.id) ?? [];
+        {endpoints.map((endpoint) => {
+          const checks = checksByEndpoint.get(endpoint.id) ?? [];
           return (
-            <section key={site.id} className="rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
+            <section key={endpoint.id} className="rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
               <div className="mb-3 flex items-center gap-2">
-                <SiteHeader site={site} onChanged={loadAll} />
+                <EndpointHeader endpoint={endpoint} onChanged={loadAll} />
                 <GroupSummary checks={checks} latestByCheck={latestByCheck} />
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {checks.map((check) => (
-                  <StatusTile key={check.id} check={check} latest={latestByCheck.get(check.id)} hosts={allHosts} siteNameById={siteNameById} onChanged={loadAll} />
+                  <StatusTile key={check.id} check={check} latest={latestByCheck.get(check.id)} hosts={allHosts} endpointNameById={endpointNameById} onChanged={loadAll} />
                 ))}
               </div>
               <div className="mt-3">
-                <AddCheckForm siteId={site.id} hosts={allHosts} siteNameById={siteNameById} onCreated={loadAll} />
+                <AddCheckForm endpointId={endpoint.id} hosts={allHosts} endpointNameById={endpointNameById} onCreated={loadAll} />
               </div>
             </section>
           );
         })}
 
-        <form onSubmit={handleAddSite} className="flex gap-2">
+        <form onSubmit={handleAddEndpoint} className="flex gap-2">
           <input
-            placeholder="New site name"
-            value={newSiteName}
-            onChange={(e) => setNewSiteName(e.target.value)}
+            placeholder="New endpoint name"
+            value={newEndpointName}
+            onChange={(e) => setNewEndpointName(e.target.value)}
             className="flex-1 rounded-md border border-[var(--border)] bg-transparent px-3 py-2 text-sm outline-none"
           />
           <button type="submit" className="rounded-md border border-[var(--border)] px-3 py-2 text-sm">
-            Add site
+            Add endpoint
           </button>
         </form>
       </div>

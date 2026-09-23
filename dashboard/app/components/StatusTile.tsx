@@ -36,13 +36,13 @@ export function StatusTile({
   check,
   latest,
   hosts,
-  siteNameById,
+  endpointNameById,
   onChanged,
 }: {
   check: Check;
   latest: CheckResult | undefined;
   hosts: Host[];
-  siteNameById?: Map<string, string>;
+  endpointNameById?: Map<string, string>;
   onChanged?: () => void;
 }) {
   const status = latest?.status ?? "unknown";
@@ -92,7 +92,7 @@ export function StatusTile({
         <EditCheckForm
           check={check}
           hosts={hosts}
-          siteNameById={siteNameById}
+          endpointNameById={endpointNameById}
           onSaved={() => {
             setExpanded(null);
             onChanged?.();

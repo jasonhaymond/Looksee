@@ -5,12 +5,12 @@ import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { app } from "../src/app.js";
 import { db } from "../src/db/index.js";
-import { users, sites, hosts } from "../src/db/schema.js";
+import { users, endpoints, hosts } from "../src/db/schema.js";
 
 const email = `test-checks-${crypto.randomUUID()}@example.com`;
 const password = "TestPass123";
 let cookie: string;
-let siteId: string;
+let endpointId: string;
 let hostId: string;
 
 beforeAll(async () => {
@@ -19,15 +19,15 @@ beforeAll(async () => {
   const loginRes = await request(app).post("/api/auth/login").send({ email, password });
   cookie = loginRes.headers["set-cookie"]![0];
 
-  const [site] = await db.insert(sites).values({ name: `test-checks-site-${crypto.randomUUID()}` }).returning();
-  siteId = site.id;
-  const [host] = await db.insert(hosts).values({ siteId, name: "test-host" }).returning();
+  const [endpoint] = await db.insert(endpoints).values({ name: `test-checks-endpoint-${crypto.randomUUID()}` }).returning();
+  endpointId = endpoint.id;
+  const [host] = await db.insert(hosts).values({ endpointId, name: "test-host" }).returning();
   hostId = host.id;
 });
 
 afterAll(async () => {
   await db.delete(users).where(eq(users.email, email));
-  await db.delete(sites).where(eq(sites.id, siteId));
+  await db.delete(endpoints).where(eq(endpoints.id, endpointId));
 });
 
 describe("checks", () => {
@@ -35,7 +35,7 @@ describe("checks", () => {
     const res = await request(app)
       .post("/api/checks")
       .set("Cookie", cookie)
-      .send({ siteId, name: "svc", type: "agent_service", config: { serviceName: "nginx" } });
+      .send({ endpointId, name: "svc", type: "agent_service", config: { serviceName: "nginx" } });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/hostId/);
   });
@@ -44,12 +44,12 @@ describe("checks", () => {
     const createRes = await request(app)
       .post("/api/checks")
       .set("Cookie", cookie)
-      .send({ siteId, hostId, name: "svc", type: "agent_service", config: { serviceName: "nginx" } });
+      .send({ endpointId, hostId, name: "svc", type: "agent_service", config: { serviceName: "nginx" } });
     expect(createRes.status).toBe(201);
     expect(createRes.body.hostId).toBe(hostId);
     const checkId = createRes.body.id;
 
-    const [otherHost] = await db.insert(hosts).values({ siteId, name: "other-host" }).returning();
+    const [otherHost] = await db.insert(hosts).values({ endpointId, name: "other-host" }).returning();
     const patchRes = await request(app).patch(`/api/checks/${checkId}`).set("Cookie", cookie).send({ hostId: otherHost.id });
     expect(patchRes.status).toBe(200);
     expect(patchRes.body.hostId).toBe(otherHost.id);
@@ -67,7 +67,7 @@ describe("checks", () => {
     const res = await request(app)
       .post("/api/checks")
       .set("Cookie", cookie)
-      .send({ siteId, name: "ping-check", type: "ping", config: { host: "1.1.1.1" } });
+      .send({ endpointId, name: "ping-check", type: "ping", config: { host: "1.1.1.1" } });
     expect(res.status).toBe(201);
     expect(res.body.hostId).toBeNull();
     await request(app).delete(`/api/checks/${res.body.id}`).set("Cookie", cookie);
