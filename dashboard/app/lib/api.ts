@@ -24,7 +24,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export type Status = "up" | "down" | "warn" | "unknown";
 
-export type Endpoint = { id: string; name: string; description: string | null };
+export type Endpoint = {
+  id: string;
+  name: string;
+  description: string | null;
+  // The agent host that runs this site's network checks/receivers/discovery
+  // (a remote site); null = the Looksee server does it.
+  collectorHostId: string | null;
+  // For devices pushing syslog/traps/flows straight to the server.
+  publicIps: string[];
+};
+export type EndpointInput = { name?: string; description?: string | null; collectorHostId?: string | null; publicIps?: string[] };
 export type Host = {
   id: string;
   endpointId: string;
@@ -45,6 +55,10 @@ export type Host = {
   hasAgentKey: boolean;
   hasSnapshot: boolean;
   updateRequested: boolean;
+  // Reported by the site collector this host's agent runs, when it is one.
+  collectorVersion: string | null;
+  collectorLastSeenAt: string | null;
+  collectorError: string | null;
 };
 export type HostSnapshot = {
   cpu?: { percent?: number; iowait?: number; steal?: number; perCore?: number[] };
@@ -73,6 +87,8 @@ export type Check = {
   endpointId: string;
   hostId: string | null;
   probeHostId: string | null;
+  // Set when the endpoint's site collector runs this check.
+  collectorHostId?: string | null;
   name: string;
   type: string;
   config: Record<string, unknown>;
@@ -261,7 +277,7 @@ export type SlaRow = {
   avgLatencyMs: number | null;
   results: number;
 };
-export type EventRow = { id: string; source: "snmp_trap" | "syslog"; sourceIp: string; severity: number | null; facility: number | null; message: string; data: Record<string, unknown> | null; receivedAt: string };
+export type EventRow = { id: string; source: "snmp_trap" | "syslog"; endpointId: string | null; sourceIp: string; severity: number | null; facility: number | null; message: string; data: Record<string, unknown> | null; receivedAt: string };
 export type FlowRow = { label: string; bytes: number; packets: number; avgMbps: number };
 export type SuggestedCheck = { type: string; name: string; config: Record<string, unknown> };
 export type DiscoveredDevice = {
@@ -274,7 +290,7 @@ export type DiscoveredDevice = {
   knownHostId: string | null;
   suggestedChecks: SuggestedCheck[];
 };
-export type DiscoveryScan = { id: string; cidr: string; status: "running" | "done" | "error"; results: DiscoveredDevice[]; error: string | null; startedAt: string; finishedAt: string | null };
+export type DiscoveryScan = { id: string; cidr: string; endpointId: string | null; status: "queued" | "running" | "done" | "error"; results: DiscoveredDevice[]; error: string | null; startedAt: string; finishedAt: string | null };
 
 const json = (body: unknown) => ({ method: "POST", body: JSON.stringify(body) });
 const patch = (body: unknown) => ({ method: "PATCH", body: JSON.stringify(body) });
@@ -293,8 +309,8 @@ export const api = {
   health: () => request<{ status: string; db: string; version: string; agentVersion: string | null }>("/api/health"),
 
   endpoints: () => request<Endpoint[]>("/api/endpoints"),
-  createEndpoint: (name: string, description?: string) => request<Endpoint>("/api/endpoints", json({ name, description })),
-  updateEndpoint: (id: string, input: { name?: string; description?: string | null }) => request<Endpoint>(`/api/endpoints/${id}`, patch(input)),
+  createEndpoint: (input: EndpointInput & { name: string }) => request<Endpoint>("/api/endpoints", json(input)),
+  updateEndpoint: (id: string, input: EndpointInput) => request<Endpoint>(`/api/endpoints/${id}`, patch(input)),
   deleteEndpoint: (id: string) => request<void>(`/api/endpoints/${id}`, del),
   bulkEndpoints: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/endpoints/bulk", json({ ids, action, ...params })),
 
@@ -309,7 +325,7 @@ export const api = {
   hostMetricCatalog: () => request<MetricDef[]>("/api/hosts/metric-catalog"),
   hostSuggestions: (id: string) => request<Suggestion[]>(`/api/hosts/${id}/suggestions`),
   applySuggestions: (id: string, keys: string[]) => request<{ created: number }>(`/api/hosts/${id}/suggestions/apply`, json({ keys })),
-  wakeHost: (id: string) => request<{ sent: boolean }>(`/api/hosts/${id}/wake`, { method: "POST" }),
+  wakeHost: (id: string) => request<{ sent: boolean; viaCollector?: boolean }>(`/api/hosts/${id}/wake`, { method: "POST" }),
   bulkHosts: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/hosts/bulk", json({ ids, action, ...params })),
   hostMetrics: (hostId: string, limit = 30, since?: string) => request<HostMetric[]>(`/api/hosts/${hostId}/metrics${qs({ limit, since })}`),
 
@@ -317,7 +333,8 @@ export const api = {
   createCheck: (input: Partial<CheckInput> & { endpointId: string; type: string; name: string }) => request<Check>("/api/checks", json(input)),
   updateCheck: (id: string, input: Partial<CheckInput>) => request<Check>(`/api/checks/${id}`, patch(input)),
   deleteCheck: (id: string) => request<void>(`/api/checks/${id}`, del),
-  runCheck: (id: string) => request<CheckResult>(`/api/checks/${id}/run`, { method: "POST" }),
+  // A check run by a site collector comes back { queued, message } instead.
+  runCheck: (id: string) => request<CheckResult | { queued: true; message: string }>(`/api/checks/${id}/run`, { method: "POST" }),
   regeneratePushToken: (id: string) => request<Check>(`/api/checks/${id}/regenerate-token`, { method: "POST" }),
   bulkChecks: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/checks/bulk", json({ ids, action, ...params })),
   checkResults: (checkId: string, limit = 50, since?: string) => request<CheckResult[]>(`/api/checks/${checkId}/results${qs({ limit, since })}`),
@@ -382,12 +399,12 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, "CSV export failed");
     return res.blob();
   },
-  events: (params: { source?: string; sourceIp?: string; q?: string; maxSeverity?: string; limit?: number }) => request<EventRow[]>(`/api/insights/events${qs(params)}`),
-  topFlows: (params: { minutes: number; by: string; exporter?: string; limit?: number }) => request<FlowRow[]>(`/api/insights/flows/top${qs(params)}`),
+  events: (params: { source?: string; sourceIp?: string; q?: string; maxSeverity?: string; site?: string; limit?: number }) => request<EventRow[]>(`/api/insights/events${qs(params)}`),
+  topFlows: (params: { minutes: number; by: string; exporter?: string; site?: string; limit?: number }) => request<FlowRow[]>(`/api/insights/flows/top${qs(params)}`),
   flowExporters: () => request<{ exporter: string; last: string }[]>("/api/insights/flows/exporters"),
   discoveryScans: () => request<DiscoveryScan[]>("/api/insights/discovery/scans"),
   discoveryScan: (id: string) => request<DiscoveryScan>(`/api/insights/discovery/scans/${id}`),
-  startDiscovery: (cidr: string, community?: string) => request<DiscoveryScan>("/api/insights/discovery/scans", json({ cidr, community })),
+  startDiscovery: (cidr: string, community?: string, endpointId?: string) => request<DiscoveryScan>("/api/insights/discovery/scans", json({ cidr, community, endpointId })),
   addDiscovered: (scanId: string, input: { endpointId: string; devices: { ip: string; name?: string; mac?: string | null; createHost: boolean; checks: SuggestedCheck[] }[] }) =>
     request<{ hostsCreated: number; checksCreated: number }>(`/api/insights/discovery/scans/${scanId}/add`, json(input)),
 };

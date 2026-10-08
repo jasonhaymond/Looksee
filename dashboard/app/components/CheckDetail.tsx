@@ -98,6 +98,7 @@ export function CheckDetail({
 
   const host = hosts.find((h) => h.id === check.hostId);
   const probeHost = hosts.find((h) => h.id === check.probeHostId);
+  const collectorHost = check.collectorHostId ? hosts.find((h) => h.id === check.collectorHostId) : undefined;
   const latestDetails = results?.find((r) => r.details != null)?.details;
   const upCount = results?.filter((r) => r.status === "up").length ?? 0;
 
@@ -139,6 +140,7 @@ export function CheckDetail({
             {typeLabel(check.type)} · every {check.intervalSeconds}s{check.retryIntervalSeconds ? ` (retry ${check.retryIntervalSeconds}s)` : ""}
             {host ? ` · host ${host.name}` : ""}
             {probeHost ? ` · runs from agent on ${probeHost.name}` : ""}
+            {collectorHost ? ` · runs on the site collector on ${collectorHost.name}` : ""}
           </p>
           {check.pushUrl && (
             <div className="space-y-1.5 rounded-md border border-[var(--border)] p-2">
@@ -165,7 +167,8 @@ export function CheckDetail({
               onClick={async () => {
                 setRunning(true);
                 try {
-                  await api.runCheck(check.id);
+                  const res = await api.runCheck(check.id);
+                  if ("queued" in res) alert(res.message);
                 } catch (err) {
                   alert(err instanceof Error ? err.message : "Run failed");
                 } finally {

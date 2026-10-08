@@ -1,9 +1,18 @@
 import { Router } from "express";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { discoveryScans, events, endpoints, hosts, checks } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { MAX_SCAN_ADDRESSES, expandCidr, runDiscoveryScan } from "../services/discovery.js";
+
+// ?site= on events/flows: "local" = received on the engine's own network,
+// an endpoint id = that remote site (its collector or direct push).
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+function siteFilter(site: unknown) {
+  if (site === "local") return sql`endpoint_id IS NULL`;
+  if (typeof site === "string" && UUID_RE.test(site)) return sql`endpoint_id = ${site}`;
+  return null;
+}
 
 // Read-mostly views over collected data: SLA reports (L7), received
 // traps/syslog (H3/H5), flow top talkers (H6), and network discovery (H7).
@@ -87,6 +96,8 @@ insightsRouter.get("/events", async (req, res) => {
   if (typeof req.query.sourceIp === "string" && req.query.sourceIp) conds.push(eq(events.sourceIp, req.query.sourceIp));
   if (typeof req.query.q === "string" && req.query.q) conds.push(sql`${events.message} ILIKE ${`%${req.query.q}%`}`);
   if (req.query.maxSeverity !== undefined && req.query.maxSeverity !== "") conds.push(sql`${events.severity} <= ${Number(req.query.maxSeverity)}`);
+  const site = siteFilter(req.query.site);
+  if (site) conds.push(site);
   const rows = await db.select().from(events).where(conds.length ? and(...conds) : undefined).orderBy(desc(events.receivedAt)).limit(limit);
   res.json(rows);
 });
@@ -96,13 +107,14 @@ insightsRouter.get("/flows/top", async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 20, 200);
   const by = String(req.query.by ?? "pair");
   const exporter = typeof req.query.exporter === "string" && req.query.exporter ? req.query.exporter : null;
+  const site = siteFilter(req.query.site);
   const group =
     by === "src" ? sql`src_addr AS label` : by === "dst" ? sql`dst_addr AS label` : by === "port" ? sql`(CASE protocol WHEN 6 THEN 'tcp/' WHEN 17 THEN 'udp/' ELSE protocol::text || '/' END) || dst_port AS label` : sql`src_addr || ' → ' || dst_addr AS label`;
   const rows = (
     await db.execute<{ label: string; bytes: number; packets: number }>(sql`
       SELECT ${group}, sum(bytes)::float AS bytes, sum(packets)::float AS packets
       FROM flow_records
-      WHERE bucket > now() - (${minutes} || ' minutes')::interval ${exporter ? sql`AND exporter = ${exporter}` : sql``}
+      WHERE bucket > now() - (${minutes} || ' minutes')::interval ${exporter ? sql`AND exporter = ${exporter}` : sql``} ${site ? sql`AND ${site}` : sql``}
       GROUP BY 1 ORDER BY bytes DESC LIMIT ${limit}`)
   ).rows;
   const seconds = minutes * 60;
@@ -135,13 +147,25 @@ insightsRouter.post("/discovery/scans", async (req, res) => {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
     return;
   }
-  const running = await db.query.discoveryScans.findFirst({ where: and(eq(discoveryScans.status, "running"), gte(discoveryScans.startedAt, new Date(Date.now() - 30 * 60_000))) });
+  const community = String(req.body?.community || "public");
+  // A scan for an endpoint with a site collector runs on that site's LAN.
+  const endpointId = typeof req.body?.endpointId === "string" && req.body.endpointId ? req.body.endpointId : null;
+  const site = endpointId ? await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) }) : null;
+  if (endpointId && !site) {
+    res.status(400).json({ error: "endpointId not found" });
+    return;
+  }
+  const viaCollector = Boolean(site?.collectorHostId);
+  // One scan at a time per network: the engine's own LAN, or each collector site.
+  const active = await db.query.discoveryScans.findMany({ where: and(inArray(discoveryScans.status, ["running", "queued"]), gte(discoveryScans.startedAt, new Date(Date.now() - 30 * 60_000))) });
+  const collectorSites = new Set((await db.query.endpoints.findMany()).filter((e) => e.collectorHostId).map((e) => e.id));
+  const running = active.find((s) => (viaCollector ? s.endpointId === endpointId : !s.endpointId || !collectorSites.has(s.endpointId)));
   if (running) {
     res.status(409).json({ error: `A scan of ${running.cidr} is already running` });
     return;
   }
-  const [scan] = await db.insert(discoveryScans).values({ cidr }).returning();
-  void runDiscoveryScan(scan.id, cidr, String(req.body?.community || "public"));
+  const [scan] = await db.insert(discoveryScans).values({ cidr, endpointId, community, status: viaCollector ? "queued" : "running" }).returning();
+  if (!viaCollector) void runDiscoveryScan(scan.id, cidr, community);
   res.status(202).json(scan);
 });
 

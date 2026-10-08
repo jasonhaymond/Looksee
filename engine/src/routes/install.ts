@@ -2,6 +2,7 @@ import { Router } from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { collectorDistDir, collectorManifest } from "../services/sites.js";
 
 // Deliberately unauthenticated — same reasoning as the bare health endpoint:
 // a host bootstrapping the agent for the first time has no session cookie
@@ -175,4 +176,28 @@ installRouter.get("/agent/:platform", (req, res) => {
     return;
   }
   res.download(filePath, fileName);
+});
+
+// GET /install/collector/manifest.json and /install/collector/files/:file —
+// the site collector bundle and Node runtimes an agent downloads when its
+// host is made a site collector (built by scripts/build-collector.sh). Only
+// files the manifest lists are served; the agent verifies each SHA-256.
+installRouter.get("/collector/manifest.json", (_req, res) => {
+  const manifest = collectorManifest();
+  if (!manifest) {
+    res.status(404).send("The site collector hasn't been built on this engine yet — run scripts/update.sh (or scripts/build-collector.sh) on the server.");
+    return;
+  }
+  res.json(manifest);
+});
+
+installRouter.get("/collector/files/:file", (req, res) => {
+  const manifest = collectorManifest();
+  const listed = manifest && [manifest.bundle.file, ...Object.values(manifest.runtimes).map((r) => r.file)].includes(req.params.file);
+  const filePath = path.join(collectorDistDir, req.params.file);
+  if (!listed || !fs.existsSync(filePath)) {
+    res.status(404).send("Not a published collector file.");
+    return;
+  }
+  res.download(filePath, req.params.file);
 });

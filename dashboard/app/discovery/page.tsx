@@ -19,6 +19,9 @@ export default function DiscoveryPage() {
   const [history, setHistory] = useState<DiscoveryScan[]>([]);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [endpointId, setEndpointId] = useState("");
+  // "" = scan from the Looksee server; otherwise an endpoint whose site
+  // collector runs the scan on its own network.
+  const [scanFrom, setScanFrom] = useState("");
   const [picks, setPicks] = useState<Record<string, Pick>>({});
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
@@ -37,7 +40,7 @@ export default function DiscoveryPage() {
 
   // Poll while the scan runs; results stream in as devices are found.
   useEffect(() => {
-    if (!scan || scan.status !== "running") return;
+    if (!scan || (scan.status !== "running" && scan.status !== "queued")) return;
     const t = setInterval(async () => setScan(await api.discoveryScan(scan.id)), 1500);
     return () => clearInterval(t);
   }, [scan]);
@@ -68,7 +71,7 @@ export default function DiscoveryPage() {
     <main className="mx-auto max-w-6xl p-4 sm:p-6">
       <TopNav active="/discovery" />
       <h2 className="mb-3 text-lg font-medium">Network discovery</h2>
-      <PageHelp anchor="discovery">Sweeps a subnet (ping plus a few common ports — many devices ignore ping), then looks up names, MAC addresses and SNMP info. Tick what you want and add it in one go. Scans run from the engine, so it only sees networks the engine can reach.</PageHelp>
+      <PageHelp anchor="discovery">Sweeps a subnet (ping plus a few common ports — many devices ignore ping), then looks up names, MAC addresses and SNMP info. Tick what you want and add it in one go. A scan sees only the network it runs from: pick a remote site&apos;s collector under “Scan from” to scan that site.</PageHelp>
 
       <form
         className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-3"
@@ -76,7 +79,8 @@ export default function DiscoveryPage() {
           e.preventDefault();
           setError(null);
           try {
-            const s = await api.startDiscovery(cidr, community);
+            const s = await api.startDiscovery(cidr, community, scanFrom || undefined);
+            if (scanFrom) setEndpointId(scanFrom);
             setScan(s);
             setPicks({});
             setHistory((h) => [s, ...h]);
@@ -85,14 +89,26 @@ export default function DiscoveryPage() {
           }
         }}
       >
+        <Label label="Scan from" help="The Looksee server scans networks it can reach itself. An endpoint with a site collector scans from that site's collector host instead.">
+          <select value={scanFrom} onChange={(e) => setScanFrom(e.target.value)} className={`${inputClass} w-56`}>
+            <option value="">Looksee server</option>
+            {endpoints
+              .filter((e) => e.collectorHostId)
+              .map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name} (site collector)
+                </option>
+              ))}
+          </select>
+        </Label>
         <Label label="Subnet (up to /22)">
           <input value={cidr} onChange={(e) => setCidr(e.target.value)} className={`${inputClass} w-48`} />
         </Label>
         <Label label="SNMP community" help="Used to read device names/descriptions. Leave as 'public' if unsure.">
           <input value={community} onChange={(e) => setCommunity(e.target.value)} className={`${inputClass} w-32`} />
         </Label>
-        <Button variant="primary" type="submit" disabled={scan?.status === "running"}>
-          {scan?.status === "running" ? "Scanning…" : "Scan"}
+        <Button variant="primary" type="submit" disabled={scan?.status === "running" || scan?.status === "queued"}>
+          {scan?.status === "running" || scan?.status === "queued" ? "Scanning…" : "Scan"}
         </Button>
         {history.length > 1 && (
           <select value={scan?.id ?? ""} onChange={(e) => api.discoveryScan(e.target.value).then(setScan)} className={`${inputClass} w-auto`} aria-label="Previous scans">
@@ -111,7 +127,7 @@ export default function DiscoveryPage() {
       ) : (
         <>
           <p className="mb-2 text-sm text-[var(--muted)]">
-            {scan.status === "running" ? `Scanning ${scan.cidr}… ${devices.length} found so far.` : scan.status === "error" ? `Scan failed: ${scan.error}` : `${devices.length} device(s) found in ${scan.cidr}.`}
+            {scan.status === "queued" ? `Waiting for the site collector to pick up the scan of ${scan.cidr} (it checks in every 15 seconds)…` : scan.status === "running" ? `Scanning ${scan.cidr}… ${devices.length} found so far.` : scan.status === "error" ? `Scan failed: ${scan.error}` : `${devices.length} device(s) found in ${scan.cidr}.`}
           </p>
           {devices.length > 0 && (
             <div className="space-y-2">

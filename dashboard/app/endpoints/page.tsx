@@ -8,6 +8,7 @@ import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, Label, Modal, PromptDialog, StatusBadge, inputClass, useSelection, useToast } from "../components/ui";
 import { displayStatus } from "../components/CheckDetail";
+import { collectorState } from "../components/collector";
 
 export default function EndpointsPage() {
   const router = useRouter();
@@ -74,7 +75,9 @@ export default function EndpointsPage() {
           + Add endpoint
         </Button>
       </div>
-      <PageHelp anchor="endpoints">Endpoints group hosts and checks by location or network (home lab, office, a client site). Merge, pause, or remove several at once.</PageHelp>
+      <PageHelp anchor="endpoints">
+        Endpoints group hosts and checks by location or network (home lab, office, a client site). For a site the Looksee server can&apos;t reach, pick one of its agent hosts as the <strong>site collector</strong> — it runs that site&apos;s network checks and posts results back over HTTPS, so no port forwarding is needed. Merge, pause, or remove several at once.
+      </PageHelp>
 
       {loaded && endpoints.length === 0 ? (
         <EmptyState>No endpoints yet — add one to start grouping hosts and checks.</EmptyState>
@@ -92,6 +95,7 @@ export default function EndpointsPage() {
                 <div className="min-w-40 flex-1">
                   <div className="font-medium">{e.name}</div>
                   {e.description && <div className="text-xs text-[var(--muted)]">{e.description}</div>}
+                  <SiteLine endpoint={e} hosts={hosts} />
                 </div>
                 <div className="text-xs text-[var(--muted)]">
                   <Link className="underline" href="/hosts">
@@ -136,6 +140,7 @@ export default function EndpointsPage() {
       {editing && (
         <EndpointDialog
           endpoint={editing === "new" ? null : editing}
+          hosts={hosts}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -170,18 +175,48 @@ export default function EndpointsPage() {
   );
 }
 
-function EndpointDialog({ endpoint, onClose, onSaved }: { endpoint: Endpoint | null; onClose: () => void; onSaved: () => void }) {
+function SiteLine({ endpoint, hosts }: { endpoint: Endpoint; hosts: Host[] }) {
+  const collector = hosts.find((h) => h.id === endpoint.collectorHostId);
+  if (!endpoint.collectorHostId && !endpoint.publicIps.length) return null;
+  const state = collector ? collectorState(collector) : null;
+  return (
+    <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs">
+      {endpoint.collectorHostId && (
+        <span className={state?.tone === "bad" ? "text-[var(--down)]" : state?.tone === "warn" ? "text-[var(--warn)]" : "text-[var(--muted)]"} title={collector?.collectorError ?? undefined}>
+          Site collector: {collector?.name ?? "removed host"} — {state?.label ?? "unknown"}
+        </span>
+      )}
+      {endpoint.publicIps.length > 0 && <span className="text-[var(--muted)]">Direct push from {endpoint.publicIps.join(", ")}</span>}
+    </div>
+  );
+}
+
+function EndpointDialog({ endpoint, hosts, onClose, onSaved }: { endpoint: Endpoint | null; hosts: Host[]; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(endpoint?.name ?? "");
   const [description, setDescription] = useState(endpoint?.description ?? "");
+  const [collectorHostId, setCollectorHostId] = useState(endpoint?.collectorHostId ?? "");
+  const [publicIps, setPublicIps] = useState((endpoint?.publicIps ?? []).join(", "));
+  const [error, setError] = useState<string | null>(null);
+  // Agent hosts only — the collector runs under the agent. Hosts already in
+  // this endpoint first, since the collector has to be at the site.
+  const agentHosts = hosts.filter((h) => h.hasAgentKey).sort((a, b) => Number(b.endpointId === endpoint?.id) - Number(a.endpointId === endpoint?.id) || a.name.localeCompare(b.name));
+  const chosen = hosts.find((h) => h.id === collectorHostId);
+  const tooOld = chosen && !agentAtLeast(chosen.agentVersion, "3.2.0");
   return (
     <Modal title={endpoint ? `Edit ${endpoint.name}` : "Add endpoint"} onClose={onClose}>
       <form
         className="space-y-3"
         onSubmit={async (e) => {
           e.preventDefault();
-          if (endpoint) await api.updateEndpoint(endpoint.id, { name, description: description || null });
-          else await api.createEndpoint(name, description || undefined);
-          onSaved();
+          setError(null);
+          const site = { collectorHostId: collectorHostId || null, publicIps: publicIps.split(/[\s,]+/).filter(Boolean) };
+          try {
+            if (endpoint) await api.updateEndpoint(endpoint.id, { name, description: description || null, ...site });
+            else await api.createEndpoint({ name, description: description || null, ...site });
+            onSaved();
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Couldn't save");
+          }
         }}
       >
         <Label label="Name *">
@@ -190,6 +225,33 @@ function EndpointDialog({ endpoint, onClose, onSaved }: { endpoint: Endpoint | n
         <Label label="Description">
           <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="pfSense VLANs at home" className={inputClass} />
         </Label>
+        <Label
+          label="Site collector"
+          help="For a site the Looksee server can't reach directly. The chosen host's agent runs this endpoint's network checks (ping, SNMP, HTTP…), receives its syslog/traps/flows, and runs its discovery scans and Wake-on-LAN — all sent back over HTTPS, no port forwarding. Leave on 'Looksee server' for the server's own network."
+        >
+          <select value={collectorHostId} onChange={(e) => setCollectorHostId(e.target.value)} className={inputClass}>
+            <option value="">Looksee server (its own network)</option>
+            {agentHosts.map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.name}
+                {h.endpointId !== endpoint?.id ? " (in another endpoint)" : ""}
+                {h.agentVersion ? ` — agent v${h.agentVersion}` : " — agent not reporting yet"}
+              </option>
+            ))}
+          </select>
+        </Label>
+        {tooOld && (
+          <p className="rounded-md border border-[var(--warn)]/40 bg-[var(--warn)]/10 p-2 text-xs">
+            {chosen!.name} runs agent {chosen!.agentVersion ? `v${chosen!.agentVersion}` : "(not reporting yet)"}. Site collectors need agent 3.2.0 or newer — use “Update agent” on the Hosts page first, or this site&apos;s checks will show “waiting for the site collector”.
+          </p>
+        )}
+        <Label
+          label="Public IPs (direct push)"
+          help="This site's public/WAN addresses. Devices there can send syslog, SNMP traps and NetFlow straight to the Looksee server's public address instead of to a collector; events from these IPs are accepted and filed under this endpoint. Needs those ports forwarded to the Looksee server at its own site (see the user guide)."
+        >
+          <input value={publicIps} onChange={(e) => setPublicIps(e.target.value)} placeholder="203.0.113.10, 2001:db8::1" className={inputClass} />
+        </Label>
+        {error && <p className="text-sm text-[var(--down)]">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -201,4 +263,13 @@ function EndpointDialog({ endpoint, onClose, onSaved }: { endpoint: Endpoint | n
       </form>
     </Modal>
   );
+}
+
+function agentAtLeast(actual: string | null, required: string) {
+  if (!actual) return false;
+  if (actual === "dev") return true;
+  const a = actual.split(".").map((n) => parseInt(n, 10) || 0);
+  const r = required.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) if ((a[i] ?? 0) !== (r[i] ?? 0)) return (a[i] ?? 0) > (r[i] ?? 0);
+  return true;
 }

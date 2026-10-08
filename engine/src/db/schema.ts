@@ -11,6 +11,7 @@ import {
   jsonb,
   timestamp,
   index,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 import { CHECK_TYPES, ENGINE_CHECK_TYPES } from "./checkTypes.js";
@@ -69,6 +70,16 @@ export const endpoints = pgTable("endpoints", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   description: text("description"),
+  // The agent host that collects for this site: it runs the site's network
+  // checks (SNMP, ping, …), receives its syslog/traps/flows, and runs its
+  // discovery and Wake-on-LAN — all posted back over outbound HTTPS, so a
+  // remote site needs no inbound ports. Null = the engine itself does it
+  // (the engine's own LAN).
+  collectorHostId: uuid("collector_host_id").references((): AnyPgColumn => hosts.id, { onDelete: "set null" }),
+  // The site's public IPs, for devices that push syslog/traps/flows straight
+  // to the engine over the internet instead of via a collector: accepted by
+  // the receivers and attributed to this endpoint.
+  publicIps: jsonb("public_ips").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -104,6 +115,10 @@ export const hosts = pgTable("hosts", {
   // changing on a later report is the real confirmation signal.
   agentVersion: text("agent_version"),
   updateRequested: boolean("update_requested").notNull().default(false),
+  // Set by the site collector this host's agent runs, when it is one.
+  collectorVersion: text("collector_version"),
+  collectorLastSeenAt: timestamp("collector_last_seen_at", { withTimezone: true }),
+  collectorError: text("collector_error"),
   // For Wake-on-LAN (POST /api/hosts/:id/wake) and ARP presence checks.
   macAddress: text("mac_address"),
   // Hardware/OS inventory the 3.x agent sends when it changes (OS, kernel,
@@ -308,6 +323,9 @@ export const eventSource = pgEnum("event_source", ["snmp_trap", "syslog"]);
 export const events = pgTable("events", {
   id: uuid("id").primaryKey().defaultRandom(),
   source: eventSource("source").notNull(),
+  // The site the event came from: via its collector, or matched by public
+  // IP for direct push. Null = received on the engine's own LAN.
+  endpointId: uuid("endpoint_id").references(() => endpoints.id, { onDelete: "cascade" }),
   sourceIp: text("source_ip").notNull(),
   // Syslog severity 0 (emergency) .. 7 (debug); traps are stored as 4.
   severity: integer("severity"),
@@ -322,6 +340,7 @@ export const events = pgTable("events", {
 export const flowRecords = pgTable("flow_records", {
   id: uuid("id").primaryKey().defaultRandom(),
   bucket: timestamp("bucket", { withTimezone: true }).notNull(),
+  endpointId: uuid("endpoint_id").references(() => endpoints.id, { onDelete: "cascade" }),
   exporter: text("exporter").notNull(),
   srcAddr: text("src_addr").notNull(),
   dstAddr: text("dst_addr").notNull(),
@@ -333,11 +352,31 @@ export const flowRecords = pgTable("flow_records", {
 
 export const discoveryScans = pgTable("discovery_scans", {
   id: uuid("id").primaryKey().defaultRandom(),
+  // Scans in an endpoint with a collector run there (status "queued" until
+  // the collector picks them up); otherwise the engine runs them.
+  endpointId: uuid("endpoint_id").references(() => endpoints.id, { onDelete: "cascade" }),
   cidr: text("cidr").notNull(),
+  community: text("community"),
   status: text("status").notNull().default("running"),
   results: jsonb("results").notNull().default([]),
   error: text("error"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+// One-off work for a site collector that isn't a recurring check: Wake-on-
+// LAN packets (must be sent from the target's own LAN). Picked up on the
+// collector's next config poll and marked done when it reports back.
+export const collectorJobs = pgTable("collector_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  endpointId: uuid("endpoint_id")
+    .notNull()
+    .references(() => endpoints.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  payload: jsonb("payload").notNull().default({}),
+  status: text("status").notNull().default("queued"),
+  result: text("result"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
 

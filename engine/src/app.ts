@@ -23,6 +23,7 @@ import { maintenanceRouter } from "./routes/maintenance.js";
 import { statusPagesRouter } from "./routes/statusPages.js";
 import { publicRouter } from "./routes/public.js";
 import { insightsRouter } from "./routes/insights.js";
+import { collectorRouter } from "./routes/collector.js";
 
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
   .split(",")
@@ -56,6 +57,7 @@ app.use("/api/smtp", smtpRouter);
 app.use("/api/maintenance", maintenanceRouter);
 app.use("/api/status-pages", statusPagesRouter);
 app.use("/api/insights", insightsRouter);
+app.use("/api/collector", collectorRouter);
 // Unauthenticated: /api/hb/<token> (heartbeat/push URLs) and
 // /api/public/status/<slug> (public status pages).
 app.use("/api", publicRouter);

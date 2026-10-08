@@ -19,7 +19,7 @@ adjust package manager commands for another distro.
 5. [Firewall](#5-firewall)
 6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
 7. [Backups](#7-backups)
-8. [Updating](#8-updating) — including [Upgrading to 3.0](#upgrading-to-30)
+8. [Updating](#8-updating) — including [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
 9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Security notes](#11-security-notes)
@@ -161,6 +161,22 @@ sudo ufw allow from 10.0.0.0/8 to any port 6343 proto udp   # sFlow
 sudo ufw status numbered
 ```
 
+**Direct push from remote sites (optional).** If a remote site's devices send straight
+to this server instead of to a site collector (user guide → *Multiple sites*), forward
+those ports from your router to this server and allow them **only from that site's
+public IP** (also enter the IP on the endpoint, or the engine drops the traffic):
+
+```bash
+SITE_IP=203.0.113.10   # the remote site's public IP
+sudo ufw allow from $SITE_IP to any port 1514               # syslog (UDP + TCP)
+sudo ufw allow from $SITE_IP to any port 1162 proto udp     # SNMP traps
+sudo ufw allow from $SITE_IP to any port 2055 proto udp     # NetFlow v5/v9, IPFIX
+sudo ufw allow from $SITE_IP to any port 6343 proto udp     # sFlow
+```
+
+A site collector needs none of this — it only makes outbound HTTPS requests to the
+dashboard's public URL.
+
 Most devices let you choose the destination port. If one insists on the standard 162 or
 514, redirect it on this server instead of running the engine as root — add to
 `/etc/ufw/before.rules` above the `*filter` line, then `sudo ufw reload`:
@@ -276,6 +292,31 @@ protect against this server failing.
 ~/Looksee/scripts/update.sh
 ```
 
+### Upgrading to 3.2
+
+3.2 adds site collectors and direct push for monitoring other locations (user guide →
+*Multiple sites*). The upgrade is the normal `update.sh` run; its migration only adds
+columns and a table. What's new on the server side:
+
+1. `update.sh` now also builds the site collector and downloads the official Node.js
+   runtimes agents fetch when they become a collector, verified against nodejs.org's
+   published SHA-256 sums. The first run downloads about 250 MB from nodejs.org and keeps
+   about 200 MB in `agent/bin/collector/`; later runs only re-download when the pinned
+   Node version (`engine/src/collector/NODE_VERSION`) changes. To keep fewer platforms,
+   set `COLLECTOR_PLATFORMS` in the repo's root `.env` (see `.env.example`), e.g.:
+
+   ```bash
+   echo 'COLLECTOR_PLATFORMS="linux-amd64 windows-amd64"' >> ~/Looksee/.env
+   ```
+
+   **Check:** `curl -s localhost:4100/install/collector/manifest.json` lists `"version":
+   "3.2.0"` and a runtime for each platform you kept.
+2. Update agents to 3.2.0 (**Hosts → select → Update agents**) — at least on hosts you
+   want as site collectors.
+3. Optional collector settings live in `engine/.env` (`COLLECTOR_*_PORT`,
+   `COLLECTOR_ALLOWED_SOURCES`; see `engine/.env.example`), then `pm2 restart
+   looksee-engine`.
+
 ### Upgrading to 3.0
 
 3.0 is a large release (many new check types, management pages, agent features). The
@@ -297,8 +338,10 @@ checks, history and dashboards carry over unchanged. Afterwards:
 
 Takes a pre-update snapshot (to `~/looksee-backups/` by default, override with
 `LOOKSEE_BACKUP_DIR`, named after the version it was taken from — see below), pulls,
-reinstalls dependencies, migrates, rebuilds both engine and dashboard, restarts both pm2
-processes, and polls `/api/health` for up to 60s before declaring success. Refuses to run
+reinstalls dependencies, migrates, rebuilds both engine and dashboard, rebuilds the agent
+binaries when `agent/VERSION` changed, rebuilds the site collector (fetching Node.js
+runtimes only when their pinned version changed), restarts both pm2 processes, and polls
+`/api/health` for up to 60s before declaring success. Refuses to run
 if there are uncommitted changes in the checkout.
 
 ### Rolling back
@@ -394,6 +437,17 @@ looksee-engine`/`looksee-dashboard` remain the fallback for anything that happen
 the database is reachable, or for the dashboard process specifically (which doesn't write
 to this table).
 
+- **A site collector shows "not running" or "offline"** — the reason is on the
+  Endpoints and Hosts pages (hover it for the full text). Common ones: *"hasn't been
+  built on the Looksee server yet"* — run `scripts/update.sh` (or
+  `bash scripts/build-collector.sh`) on the server; *"no Node runtime for linux-arm64"* —
+  add that platform to `COLLECTOR_PLATFORMS` and re-run it; *"failed verification"* — a
+  download was corrupted or altered, and the agent refused it (it retries every cycle);
+  a receiver port error — something else on the collector host already uses that port.
+  On the collector host, the agent's own log has every collector line prefixed
+  `[collector]`: `journalctl -u looksee-agent -f` on Linux, the agent's log file on
+  Windows/macOS. A line like "Cannot open directory /etc/ssl/certs" on a minimal Linux
+  install is harmless (install `ca-certificates` to silence it).
 - **Postgres port already in use** — something else already owns 5432 on this box. Set
   `POSTGRES_HOST_PORT` in a root `.env` (see `.env.example`) rather than hand-editing
   `docker-compose.yml`.

@@ -8,6 +8,7 @@ import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, Label, Modal, PromptDialog, StatusBadge, Tags, formatBytes, inputClass, relativeTime, useSelection, useToast } from "../components/ui";
 import { displayStatus } from "../components/CheckDetail";
+import { collectorState } from "../components/collector";
 
 // An agent that hasn't reported for 3 report intervals (90s by default) is
 // considered offline here; the agent_heartbeat check is the alerting version.
@@ -361,8 +362,8 @@ function HostPanel({ host, endpoints, checks, latestAgentVersion, onChanged }: {
             className="!py-0.5 text-xs"
             onClick={async () => {
               try {
-                await api.wakeHost(host.id);
-                toast.show(`Wake-on-LAN packet sent to ${host.macAddress}.`);
+                const res = await api.wakeHost(host.id);
+                toast.show(res.viaCollector ? `Wake-on-LAN queued on this site's collector for ${host.macAddress}.` : `Wake-on-LAN packet sent to ${host.macAddress}.`);
               } catch (err) {
                 toast.show(err instanceof Error ? err.message : "Wake failed", "error");
               }
@@ -435,6 +436,11 @@ export default function HostsPage() {
   }, [authChecked, load]);
 
   const endpointName = useMemo(() => new Map(endpoints.map((e) => [e.id, e.name])), [endpoints]);
+  const collectorSites = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const e of endpoints) if (e.collectorHostId) m.set(e.collectorHostId, [...(m.get(e.collectorHostId) ?? []), e.name]);
+    return m;
+  }, [endpoints]);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return hosts.filter((h) => (!endpointFilter || h.endpointId === endpointFilter) && (!q || `${h.name} ${h.hostname ?? ""} ${h.os ?? ""} ${(h.tags ?? []).join(" ")} ${h.agentVersion ?? ""}`.toLowerCase().includes(q)));
@@ -510,6 +516,7 @@ export default function HostsPage() {
                   </span>
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{h.name}</span>
+                    {collectorSites.has(h.id) && <CollectorLine host={h} sites={collectorSites.get(h.id)!} />}
                     <Tags tags={h.tags} />
                   </span>
                   <span className="min-w-0 truncate text-xs text-[var(--muted)]">
@@ -573,6 +580,15 @@ export default function HostsPage() {
       )}
       {toast.node}
     </main>
+  );
+}
+
+function CollectorLine({ host, sites }: { host: Host; sites: string[] }) {
+  const state = collectorState(host);
+  return (
+    <span className={`block text-xs ${state.tone === "bad" ? "text-[var(--down)]" : state.tone === "warn" ? "text-[var(--warn)]" : "text-[var(--muted)]"}`} title={host.collectorError ?? undefined}>
+      Site collector for {sites.join(", ")} — {state.label}
+    </span>
   );
 }
 

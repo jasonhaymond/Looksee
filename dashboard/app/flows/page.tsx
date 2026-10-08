@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, type FlowRow } from "../lib/api";
 import { TopNav } from "../components/TopNav";
+import { SiteSelect } from "../components/SiteSelect";
 import { PageHelp } from "../components/PageHelp";
 import { EmptyState, formatBytes, inputClass, relativeTime } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
@@ -20,6 +21,7 @@ export default function FlowsPage() {
   const [minutes, setMinutes] = useState(60);
   const [by, setBy] = useState("pair");
   const [exporter, setExporter] = useState("");
+  const [site, setSite] = useState("");
   const [exporters, setExporters] = useState<{ exporter: string; last: string }[]>([]);
   const [rows, setRows] = useState<FlowRow[] | null>(null);
 
@@ -28,11 +30,11 @@ export default function FlowsPage() {
   }, [authed]);
   useEffect(() => {
     if (!authed) return;
-    const load = () => api.topFlows({ minutes, by, exporter: exporter || undefined, limit: 50 }).then(setRows);
+    const load = () => api.topFlows({ minutes, by, exporter: exporter || undefined, site: site || undefined, limit: 50 }).then(setRows);
     load();
     const t = setInterval(load, 60_000);
     return () => clearInterval(t);
-  }, [authed, minutes, by, exporter]);
+  }, [authed, minutes, by, exporter, site]);
 
   const max = Math.max(1, ...(rows ?? []).map((r) => r.bytes));
   if (!authed) return null;
@@ -41,7 +43,7 @@ export default function FlowsPage() {
       <TopNav active="/flows" />
       <h2 className="mb-3 text-lg font-medium">Top talkers</h2>
       <PageHelp anchor="top-talkers">
-        Who is using the network, from NetFlow v5/v9, IPFIX (UDP 2055) or sFlow (UDP 6343) sent to the engine — e.g. pfSense&apos;s softflowd package or a managed switch. Totals are summed per minute; the busiest 1,000 conversations per exporter per minute are kept for 7 days.
+        Who is using the network, from NetFlow v5/v9, IPFIX (UDP 2055) or sFlow (UDP 6343) sent to the engine or to a site collector — e.g. pfSense&apos;s softflowd package or a managed switch. Totals are summed per minute; the busiest 1,000 conversations per exporter per minute are kept for 7 days.
       </PageHelp>
       <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
         <select value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className={inputClass} aria-label="Range">
@@ -57,6 +59,7 @@ export default function FlowsPage() {
           <option value="dst">Destinations</option>
           <option value="port">Services (protocol/port)</option>
         </select>
+        <SiteSelect value={site} onChange={setSite} />
         <select value={exporter} onChange={(e) => setExporter(e.target.value)} className={inputClass} aria-label="Exporter">
           <option value="">All exporters</option>
           {exporters.map((x) => (

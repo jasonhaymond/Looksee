@@ -2,7 +2,7 @@
 
 A single static binary that reports host metrics and runs the host-side checks a
 Looksee engine assigns to it. No runtime dependency — Go compiles to one self-contained
-executable per platform. Version 3.0.0 (versioned in lockstep with the engine and
+executable per platform. Version 3.2.0 (versioned in lockstep with the engine and
 dashboard; see [CHANGELOG.md](../CHANGELOG.md)).
 
 ## Contents
@@ -16,6 +16,7 @@ dashboard; see [CHANGELOG.md](../CHANGELOG.md)).
 7. [Run](#run)
 8. [Running as a service](#running-as-a-service)
 9. [Updating](#updating)
+10. [Site collector](#site-collector)
 
 Related: [user guide](../docs/user-guide.md) · [deployment guide](../docs/deployment-guide.md) · [README](../README.md)
 
@@ -309,3 +310,26 @@ with an older binary if you ever need to.
 **Manually**: re-run the platform's install script (`install.sh`/`install-macos.sh`/
 `install-windows.ps1`) with a newer binary — all three are idempotent and overwrite the
 running installation.
+
+## Site collector
+
+When a host is chosen as an endpoint's **site collector** (Endpoints page — see the user
+guide's *Multiple sites*), the engine says so in the agent's config response and the
+agent (3.2.0+):
+
+1. downloads `manifest.json`, then a Node.js runtime for its platform and the collector
+   bundle from `<engine>/install/collector/…`, checking each file's SHA-256 against the
+   manifest — a mismatch is refused and reported;
+2. keeps them in a `collector` folder next to its own binary
+   (`/var/lib/looksee-agent/collector` on Linux, so the hardened unit can write it);
+3. runs `node --use-system-ca collector.cjs` as a child process with the engine URL and
+   this host's agent key, logging its output with a `[collector]` prefix;
+4. restarts it if it exits (5 s, backing off to 60 s), replaces it when the engine
+   publishes a new bundle or Node version, and stops it when the host is no longer a
+   collector. Closing the collector's stdin is the stop signal on every OS, so it can't
+   outlive the agent and hold the receiver ports.
+
+The collector runs with the agent's privileges: SYSTEM on Windows, root on macOS, the
+unprivileged `looksee-agent` user on Linux — where binding ports below 1024 or running
+DHCP checks needs the drop-in shown in the user guide.
+

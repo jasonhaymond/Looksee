@@ -3,16 +3,18 @@ import crypto from "node:crypto";
 import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { checks, checkResults, checkDependencies, alertRules, alertRuleChannels, maintenanceWindows, hosts, endpoints } from "../db/schema.js";
-import { CHECK_TYPE_META, isCheckType, HOST_SCOPED_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/checkTypes.js";
+import { CHECK_TYPE_META, COLLECTOR_CHECK_TYPES, isCheckType, HOST_SCOPED_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/checkTypes.js";
 import { requireAuth } from "../middleware/auth.js";
 import { maskCheck, mergeSecrets } from "../lib/secrets.js";
 import { runOneCheck } from "../services/scheduler.js";
+import { runsOnCollector } from "../services/sites.js";
 import { invalidateMaintenanceCache, windowAppliesTo, windowIsActive } from "../services/maintenance.js";
 
 export const checksRouter = Router();
 checksRouter.use(requireAuth);
 
 const PUSH_TYPES = new Set(["heartbeat", "push_value"]);
+const COLLECTOR_TYPES = new Set<string>(COLLECTOR_CHECK_TYPES);
 const newPushToken = () => crypto.randomBytes(18).toString("base64url");
 
 const asTags = (v: unknown): string[] =>
@@ -47,6 +49,7 @@ checksRouter.get("/", async (req, res) => {
   // Parent status needs every check, not just this page's filter.
   const statusById = new Map((await db.select({ id: checks.id, lastStatus: checks.lastStatus, name: checks.name }).from(checks)).map((c) => [c.id, c]));
   const windows = (await db.query.maintenanceWindows.findMany()).filter((w) => windowIsActive(w));
+  const collectorOf = new Map((await db.query.endpoints.findMany()).filter((e) => e.collectorHostId).map((e) => [e.id, e.collectorHostId!]));
   res.json(
     rows.map((c) => {
       const dependsOn = depMap.get(c.id) ?? [];
@@ -57,6 +60,8 @@ checksRouter.get("/", async (req, res) => {
         dependsOn,
         inMaintenance: windows.some((w) => windowAppliesTo(w, c)),
         blockedBy: downParent?.name ?? null,
+        // The agent host whose site collector runs this check, if any.
+        collectorHostId: COLLECTOR_TYPES.has(c.type) && !c.probeHostId ? (collectorOf.get(c.endpointId) ?? null) : null,
         pushUrl: c.pushToken ? `${process.env.PUBLIC_URL ?? ""}/api/hb/${c.pushToken}` : null,
       };
     })
@@ -161,6 +166,12 @@ checksRouter.post("/:id/run", async (req, res) => {
     res.status(409).json({ error: "This check runs on an agent — it'll update on the agent's next report." });
     return;
   }
+  if (await runsOnCollector(check)) {
+    // Clearing lastRunAt is the collector's cue to run it on its next poll.
+    await db.update(checks).set({ lastRunAt: null }).where(eq(checks.id, check.id));
+    res.status(202).json({ queued: true, message: "Queued on the site collector — the result appears within about 15 seconds." });
+    return;
+  }
   const result = await runOneCheck(check);
   res.json(result);
 });
@@ -263,6 +274,11 @@ checksRouter.post("/bulk", async (req, res) => {
       for (const c of rows) {
         if (CHECK_TYPE_META[c.type].executor !== "engine" || c.probeHostId) {
           errors.push({ id: c.id, error: `${c.name}: runs on an agent` });
+          continue;
+        }
+        if (await runsOnCollector(c)) {
+          await db.update(checks).set({ lastRunAt: null }).where(eq(checks.id, c.id));
+          affected++;
           continue;
         }
         await runOneCheck(c).catch((e) => errors.push({ id: c.id, error: `${c.name}: ${e instanceof Error ? e.message : String(e)}` }));

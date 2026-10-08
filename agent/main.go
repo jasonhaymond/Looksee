@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"looksee-agent/internal/checks"
+	"looksee-agent/internal/collector"
 	"looksee-agent/internal/config"
 	"looksee-agent/internal/metrics"
 	"looksee-agent/internal/report"
@@ -60,6 +61,7 @@ func main() {
 		slow:      slow,
 		runner:    checks.NewRunner(checks.Options{ScriptDir: cfg.ScriptDir, DockerSocket: cfg.DockerSocket}),
 		inFlight:  map[string]bool{},
+		site:      collector.New(cfg.EngineURL, cfg.AgentKey, collector.DefaultDir()),
 	}
 	interval := time.Duration(cfg.IntervalSeconds) * time.Second
 	log.Printf("looksee-agent %s starting, reporting to %s every %s", version, cfg.EngineURL, interval)
@@ -82,6 +84,7 @@ type agent struct {
 	collector *metrics.Collector
 	slow      *metrics.SlowCollector
 	runner    *checks.Runner
+	site      *collector.Supervisor
 
 	mu        sync.Mutex
 	inFlight  map[string]bool
@@ -135,7 +138,7 @@ func (a *agent) runOnce(cycle int) {
 		log.Printf("update requested — downloading and installing looksee-agent for %s", selfupdate.Platform())
 		if err := selfupdate.Apply(a.cfg.EngineURL); err != nil {
 			log.Printf("self-update failed, continuing on the current version: %v", err)
-		} else if selfupdate.Supervised() {
+		} else if a.site.Shutdown(); selfupdate.Supervised() {
 			log.Printf("update installed, exiting so the service manager restarts the new version")
 			os.Exit(selfupdate.RestartExitCode)
 		} else if err := selfupdate.Relaunch(); err != nil {
@@ -144,6 +147,12 @@ func (a *agent) runOnce(cycle int) {
 			log.Printf("update installed, relaunching")
 			os.Exit(0)
 		}
+	}
+
+	// Only act on a successful poll: an engine outage must not stop a running
+	// collector (it buffers and keeps monitoring its site meanwhile).
+	if err == nil {
+		a.site.Apply(cfgResp.Collector)
 	}
 
 	now := time.Now()
@@ -200,7 +209,7 @@ func (a *agent) runOnce(cycle int) {
 	}
 
 	results := a.drain()
-	if err := a.client.SendReport(snap, results, discovery, inventory, version); err != nil {
+	if err := a.client.SendReport(snap, results, discovery, inventory, version, a.site.LastError()); err != nil {
 		log.Printf("sending report: %v", err)
 		// Keep results for the next attempt rather than dropping them.
 		a.mu.Lock()

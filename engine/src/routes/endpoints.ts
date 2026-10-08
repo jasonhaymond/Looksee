@@ -3,6 +3,7 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { endpoints, hosts, checks, maintenanceWindows } from "../db/schema.js";
 import { invalidateMaintenanceCache } from "../services/maintenance.js";
+import { invalidateSiteIpCache } from "../services/receivers/index.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const endpointsRouter = Router();
@@ -19,14 +20,49 @@ endpointsRouter.post("/", async (req, res) => {
     return;
   }
   const description = req.body?.description ? String(req.body.description) : null;
-  const [endpoint] = await db.insert(endpoints).values({ name, description }).returning();
+  const site = await siteFields(req.body);
+  if ("error" in site) {
+    res.status(400).json(site);
+    return;
+  }
+  invalidateSiteIpCache();
+  const [endpoint] = await db.insert(endpoints).values({ name, description, ...site }).returning();
   res.status(201).json(endpoint);
 });
 
+const IP_RE = /^(\d{1,3}(\.\d{1,3}){3}|[0-9a-f:]+)$/i;
+
+// Shared by create and update: the site collector and the site's public IPs.
+async function siteFields(body: Record<string, unknown> | undefined): Promise<{ error: string } | Partial<typeof endpoints.$inferInsert>> {
+  const out: Partial<typeof endpoints.$inferInsert> = {};
+  if (body?.collectorHostId !== undefined) {
+    const hostId = body.collectorHostId ? String(body.collectorHostId) : null;
+    if (hostId) {
+      const host = await db.query.hosts.findFirst({ where: eq(hosts.id, hostId) });
+      if (!host?.agentApiKey) return { error: "The site collector must be a host with an agent installed" };
+    }
+    out.collectorHostId = hostId;
+  }
+  if (body?.publicIps !== undefined) {
+    const raw = Array.isArray(body.publicIps) ? body.publicIps : String(body.publicIps ?? "").split(/[\s,]+/);
+    const ips = [...new Set(raw.map((v) => String(v).trim()).filter(Boolean))];
+    const bad = ips.find((ip) => !IP_RE.test(ip));
+    if (bad) return { error: `"${bad}" isn't an IP address` };
+    out.publicIps = ips;
+  }
+  return out;
+}
+
 endpointsRouter.patch("/:id", async (req, res) => {
-  const updates: Partial<typeof endpoints.$inferInsert> = {};
+  const site = await siteFields(req.body);
+  if ("error" in site) {
+    res.status(400).json(site);
+    return;
+  }
+  const updates: Partial<typeof endpoints.$inferInsert> = { ...site };
   if (req.body?.name !== undefined) updates.name = String(req.body.name).trim();
   if (req.body?.description !== undefined) updates.description = req.body.description ? String(req.body.description) : null;
+  invalidateSiteIpCache();
   const [endpoint] = await db.update(endpoints).set(updates).where(eq(endpoints.id, req.params.id)).returning();
   if (!endpoint) {
     res.status(404).json({ error: "Endpoint not found" });

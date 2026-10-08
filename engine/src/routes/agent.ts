@@ -1,13 +1,14 @@
 import { Router } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { hosts, hostMetrics, checks, AGENT_CHECK_TYPES, REPORT_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/schema.js";
+import { endpoints, hosts, hostMetrics, checks, AGENT_CHECK_TYPES, REPORT_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/schema.js";
 import { minAgentVersionFor, versionAtLeast } from "../db/checkTypes.js";
 import { requireAgentAuth } from "../middleware/auth.js";
 import { recordCheckResult } from "../services/alerting.js";
 import { applyThresholds, type Status } from "../services/thresholds.js";
 import { evaluateChange, evaluateHostMetric, evaluateReboot, type Snapshot } from "../services/hostMetrics.js";
 import { logger } from "../lib/logger.js";
+import { collectorManifest } from "../services/sites.js";
 
 export const agentRouter = Router();
 agentRouter.use(requireAgentAuth);
@@ -51,7 +52,16 @@ agentRouter.get("/config", async (req, res) => {
   }
 
   logger.debug("agent", `Host ${hostId} polled /config, returned ${sendable.length} check(s)`, { hostId, checkIds: sendable.map((c) => c.id) });
-  res.json({ checks: sendable.map((c) => ({ id: c.id, type: c.type, config: c.config, intervalSeconds: c.intervalSeconds })), updateAvailable });
+  // Site collector: the agent downloads and supervises it while this host is
+  // some endpoint's collector, and stops it otherwise.
+  let collector: { version: string; node: string; bundleSha256: string } | null = null;
+  if (await db.query.endpoints.findFirst({ where: eq(endpoints.collectorHostId, hostId) })) {
+    const manifest = collectorManifest();
+    if (manifest) collector = { version: manifest.version, node: manifest.node, bundleSha256: manifest.bundle.sha256 };
+    else await db.update(hosts).set({ collectorError: "The site collector hasn't been built on the Looksee server yet — run scripts/update.sh there" }).where(eq(hosts.id, hostId));
+  }
+
+  res.json({ checks: sendable.map((c) => ({ id: c.id, type: c.type, config: c.config, intervalSeconds: c.intervalSeconds })), updateAvailable, collector });
 });
 
 function numberOrNull(value: unknown): number | null {
@@ -76,6 +86,9 @@ agentRouter.post("/report", async (req, res) => {
   if (Array.isArray(body.availableServices)) hostUpdate.availableServices = body.availableServices.map(String);
   if (typeof body.version === "string" && body.version) hostUpdate.agentVersion = body.version;
   if (body.inventory && typeof body.inventory === "object") hostUpdate.inventory = body.inventory;
+  // The agent's side of running a site collector (download/start failures);
+  // the collector clears it once it's up and polling.
+  if (typeof body.collectorError === "string" && body.collectorError) hostUpdate.collectorError = body.collectorError.slice(0, 1000);
 
   const metrics = body.metrics;
   const extended: Snapshot | null = metrics?.extended && typeof metrics.extended === "object" ? metrics.extended : null;

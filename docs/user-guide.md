@@ -20,16 +20,21 @@ itself, [agent/README.md](../agent/README.md); for local development, the
    - [Check type reference](#check-type-reference)
 4. [Hosts](#hosts)
 5. [Endpoints](#endpoints)
-6. [Discovery](#discovery)
-7. [Heartbeats and pushed values](#heartbeats-and-pushed-values)
-8. [Alerts, escalation, and dependencies](#alerts-escalation-and-dependencies)
-9. [Maintenance](#maintenance)
-10. [SLA reports](#sla-reports)
-11. [Traps and syslog](#traps-and-syslog)
-12. [Top talkers](#top-talkers)
-13. [Status pages](#status-pages)
-14. [Dashboards and widgets](#dashboards-and-widgets)
-15. [Backups and logs](#backups-and-logs)
+6. [Multiple sites](#multiple-sites)
+   - [Set up a site collector](#set-up-a-site-collector)
+   - [What runs where](#what-runs-where)
+   - [When a collector goes offline](#when-a-collector-goes-offline)
+   - [Direct push without a collector](#direct-push-without-a-collector)
+7. [Discovery](#discovery)
+8. [Heartbeats and pushed values](#heartbeats-and-pushed-values)
+9. [Alerts, escalation, and dependencies](#alerts-escalation-and-dependencies)
+10. [Maintenance](#maintenance)
+11. [SLA reports](#sla-reports)
+12. [Traps and syslog](#traps-and-syslog)
+13. [Top talkers](#top-talkers)
+14. [Status pages](#status-pages)
+15. [Dashboards and widgets](#dashboards-and-widgets)
+16. [Backups and logs](#backups-and-logs)
 
 ## How Looksee is organized
 
@@ -291,13 +296,146 @@ every host and check into another endpoint, then removes the emptied ones), and
 **Delete…** (deletes their hosts and checks too — type `delete` to confirm; use Merge
 if you want to keep them).
 
+An endpoint at another location can have a **site collector** and **public IPs** — see
+the next section. Its row then shows the collector's state ("online", "offline",
+"waiting to start") and the IPs it accepts direct pushes from.
+
+## Multiple sites
+
+Network checks (ping, SNMP, HTTP, …) run from wherever Looksee runs them, so on their own
+they only reach the Looksee server's network. For another location — a branch office, a
+client site, a relative's house — you have two options, and you can use both:
+
+- **A site collector (recommended).** Pick one always-on machine at the site that runs
+  the Looksee agent. Its agent also runs a *site collector*: it runs that endpoint's
+  network checks from inside the site, receives the site's syslog, SNMP traps and flows,
+  and runs its discovery scans and Wake-on-LAN. Everything goes back to your Looksee
+  server as outbound HTTPS — **no port forwarding or VPN at the site**.
+- **Direct push.** Devices at the site send syslog/traps/flows straight to your Looksee
+  server over the internet. Needs ports forwarded at the *Looksee server's* location and
+  only covers received events, not checks.
+
+### Set up a site collector
+
+1. **Install the agent (3.2.0 or newer) on a machine at the site** that stays on — a
+   small Linux box, a NAS that runs containers, a Windows PC. Use the normal install
+   command from **Monitoring → Hosts** (see [agent/README.md](../agent/README.md)); put
+   the host in the site's endpoint. The machine only needs outbound HTTPS to your Looksee
+   server. **Check:** the host shows **online** on the Hosts page with agent v3.2.0+.
+2. Open **Monitoring → Endpoints**, click **Edit** on the site's endpoint, choose the
+   host under **Site collector**, and **Save**.
+3. Within about 30 seconds the agent downloads the collector — a Node.js runtime (about
+   45 MB, once) and the collector itself (13 MB) — from *your* Looksee server, checks
+   each file's SHA-256, and starts it. **Check:** the endpoint row reads
+   `Site collector: <host> — online (v3.2.0)`, and the host's row on the Hosts page reads
+   `Site collector for <endpoint> — online`. "Waiting to start" means the agent is older
+   than 3.2.0 or hasn't polled yet; "not running — …" shows the reason (e.g. the
+   collector hasn't been built on the server — see the deployment guide).
+4. **Add checks to that endpoint as usual.** Ping, TCP, HTTP, SNMP, DNS, certificates and
+   every other network type now run from the site. In **Monitoring → Checks** they read
+   `via site collector <host>`. **Run now** queues the run on the collector; the result
+   appears within about 15 seconds.
+5. **Point the site's devices at the collector host's LAN address** for anything they
+   push: syslog to UDP/TCP **1514**, SNMP traps to UDP **1162**, NetFlow/IPFIX to UDP
+   **2055**, sFlow to UDP **6343**. Allow those from the LAN in the collector host's
+   firewall, e.g. on Linux with ufw (replace the range with the site's LAN):
+
+   ```bash
+   sudo ufw allow from 192.168.10.0/24 to any port 1514
+   sudo ufw allow from 192.168.10.0/24 to any port 1162 proto udp
+   sudo ufw allow from 192.168.10.0/24 to any port 2055 proto udp
+   sudo ufw allow from 192.168.10.0/24 to any port 6343 proto udp
+   ```
+
+   or on Windows (elevated PowerShell):
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Looksee collector (UDP)" -Direction Inbound -Protocol UDP -LocalPort 1514,1162,2055,6343 -RemoteAddress LocalSubnet -Action Allow
+   New-NetFirewallRule -DisplayName "Looksee collector (TCP)" -Direction Inbound -Protocol TCP -LocalPort 1514 -RemoteAddress LocalSubnet -Action Allow
+   ```
+
+   **Check:** send a test message and look for it under **Insights → Traps & syslog**
+   with the site's name under the sender's IP. From a Linux machine at the site:
+   `logger -n <collector-ip> -P 1514 -d "looksee test"`.
+6. **Discovery and Wake-on-LAN** follow automatically: on **Monitoring → Discovery**,
+   choose the site under **Scan from**; **Wake (WoL)** on a host in that endpoint sends
+   the magic packet from the collector.
+
+To stop using a collector, set **Site collector** back to **Looksee server**; the agent
+stops the collector within about 15 seconds and the endpoint's checks run from the
+server again. A collector host can serve several endpoints at the same physical site.
+
+**Standard ports 514/162 on a Linux collector.** The Linux agent runs as an unprivileged
+user, so by default the collector listens on 1514/1162. Most devices let you set the
+port. If one can't, set `COLLECTOR_SYSLOG_PORT=514` and/or `COLLECTOR_TRAP_PORT=162` in
+`engine/.env` on the Looksee server (applies to every collector) and, on each Linux
+collector host, allow binding low ports:
+
+```bash
+sudo mkdir -p /etc/systemd/system/looksee-agent.service.d
+printf '[Service]\nAmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW\n' \
+  | sudo tee /etc/systemd/system/looksee-agent.service.d/collector-ports.conf
+sudo systemctl daemon-reload && sudo systemctl restart looksee-agent
+```
+
+The same drop-in is what DHCP server checks need on a Linux collector. Windows and macOS
+collectors run as SYSTEM/root and need nothing extra.
+
+### What runs where
+
+| Runs on the site collector | Stays on the Looksee server |
+|---|---|
+| Every network check type: ping, TCP, HTTP, DNS, certificates, SNMP, interfaces, UDP, protocols, email round-trip, databases, traceroute, real browser, NTP, DHCP, gRPC, MQTT, WebSocket, registries, ARP presence, domain expiry, public IP, IPMI/Redfish, Proxmox, VMware, Prometheus, web-server status, app integrations | **Trap/Syslog received** checks (they match the events the collector forwards), heartbeats and pushed values, anomaly, agent heartbeat, disk forecast |
+| Receiving syslog, traps, NetFlow/IPFIX/sFlow | Alerting, history, dashboards, reports |
+| Discovery scans and Wake-on-LAN for that endpoint | |
+
+Agent checks (services, files, logs, …) always run on their own host's agent, wherever
+it is. **Real browser** checks on a collector need Chrome/Chromium on the collector host;
+**traceroute** needs `traceroute`/`tracert` there.
+
+Trap/Syslog received checks in a remote endpoint count only that site's events; checks
+in an endpoint without a collector or public IPs count events received by the Looksee
+server itself.
+
+### When a collector goes offline
+
+- If the Looksee server is unreachable, the collector keeps running from its last
+  configuration (it survives a restart too) and buffers up to 5,000 results and 20,000
+  events, sending them when the connection returns.
+- If the server hears nothing from a collector for 3 minutes (or 3 check intervals,
+  whichever is longer), that endpoint's collector-run checks turn **Unknown** with
+  "Site collector on … is offline since …" — so a dead site doesn't look healthy. Add an
+  **Agent heartbeat** check on the collector host to be alerted when that happens.
+- If the collector process crashes, the agent restarts it after 5 seconds (backing off
+  to a minute if it keeps failing); the reason shows on the Endpoints and Hosts pages.
+
+### Direct push without a collector
+
+For a site where you can't (or don't want to) run an agent, its devices can send
+syslog/traps/flows straight to your Looksee server:
+
+1. **Monitoring → Endpoints → Edit** the site's endpoint and enter its public (WAN)
+   IP address(es) under **Public IPs**, comma-separated. Save.
+2. At the **Looksee server's** location, forward UDP 1514, 1162, 2055, 6343 and TCP 1514
+   from your router to the Looksee server, and allow them in the server's firewall *from
+   those public IPs only* — see [deployment guide §5](deployment-guide.md#5-firewall).
+3. Point the site's devices at your Looksee server's public address on those ports.
+
+**Check:** messages appear under **Insights → Traps & syslog** with the endpoint's name
+under the sender's IP. Know the trade-offs: the traffic crosses the internet
+unencrypted, and devices behind the site's NAT all appear as the site's public IP (the
+syslog hostname still tells them apart). A site collector avoids both.
+
 ## Discovery
 
 **Monitoring → Discovery** finds devices on a subnet so you don't have to add them one by
 one.
 
-1. Enter a subnet (up to a /22, e.g. `192.168.1.0/24`) and, if your devices use a
-   different one, the SNMP community. Click **Scan**.
+1. Under **Scan from**, keep **Looksee server**, or pick a remote site that has a site
+   collector (see [Multiple sites](#multiple-sites)) to scan from inside that site. Enter
+   a subnet (up to a /22, e.g. `192.168.1.0/24`) and, if your devices use a different
+   one, the SNMP community. Click **Scan**. A collector picks the scan up within about
+   15 seconds.
 2. Devices appear as they're found. Looksee pings every address *and* tries a short list
    of ports (SSH, HTTP(S), SMB, RDP, printers, Proxmox, databases), because many devices
    ignore ping. It then looks up names, MAC addresses and SNMP descriptions.
@@ -306,8 +444,8 @@ one.
    already in Looksee are labelled and start unticked.
 4. Choose the endpoint at the bottom and click **Add selected**.
 
-The scan runs from the engine, so it only sees networks the engine can reach. MAC
-addresses are only available for devices on the engine's own LAN segment.
+A scan only sees networks reachable from where it runs. MAC addresses are only available
+for devices on the scanning machine's own LAN segment.
 
 ## Heartbeats and pushed values
 
@@ -397,14 +535,17 @@ ports or allowed sources).
 1. Point your devices at the engine: trap destination `<engine-ip>:1162` (v1/v2c), and
    remote syslog `<engine-ip>:1514`. On pfSense: *Status → System Logs → Settings →
    Remote Logging*.
-2. Open **Insights → Traps & syslog** — received messages appear (filter by type, source
-   IP, severity, or text; **Live** refreshes every 10 seconds).
+2. Open **Insights → Traps & syslog** — received messages appear (filter by site, type,
+   source IP, severity, or text; **Live** refreshes every 10 seconds). Messages from a
+   remote site show the site's name under the sender's IP; the site filter appears once
+   an endpoint has a site collector or public IPs.
 3. To be alerted, add an **SNMP trap received** or **Syslog message received** check with
    a pattern (e.g. `link down|failed`) and, for syslog, a minimum severity. With no
    thresholds, any match in the window is a failure; set thresholds to alert only above
    a count.
 
-Received events are kept for 30 days.
+Devices at a remote site send to that site's collector instead — see
+[Multiple sites](#multiple-sites). Received events are kept for 30 days.
 
 ## Top talkers
 
@@ -412,7 +553,9 @@ Received events are kept for 30 days.
 (UDP **2055**) and sFlow (UDP **6343**) sent to the engine — e.g. pfSense's *softflowd*
 package or a managed switch.
 
-Choose a time range, then view by conversation (source → destination), source,
+Remote sites send flows to their site collector (see [Multiple sites](#multiple-sites));
+pick the site in the filter to see just its traffic. Choose a time range, then view by
+conversation (source → destination), source,
 destination, or service (protocol/port). The **Top talkers** dashboard widget shows the
 same thing in a tile. Flow totals are kept per minute for 7 days.
 

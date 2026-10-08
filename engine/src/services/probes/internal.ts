@@ -1,15 +1,30 @@
-import { and, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { checkResults, events, hosts } from "../../db/schema.js";
+import { checkResults, endpoints, events, hosts } from "../../db/schema.js";
 import { readValueThresholds, hasThresholds } from "../thresholds.js";
 import { type Config, type ProbeContext, type ProbeOutcome, down, errMsg, numOr, str, up, warn } from "./types.js";
 
 // H3/H5: counts received traps/syslog lines matching the filter over the
 // window. With no thresholds configured, any match at all is a failure.
-export async function probeEventMatch(source: "snmp_trap" | "syslog", config: Config): Promise<ProbeOutcome> {
+export async function probeEventMatch(source: "snmp_trap" | "syslog", config: Config, ctx?: ProbeContext): Promise<ProbeOutcome> {
   const windowMinutes = numOr(config, "windowMinutes", 5);
   const since = new Date(Date.now() - windowMinutes * 60_000);
   const conds = [eq(events.source, source), gte(events.receivedAt, since)];
+  // Multi-site: a remote site's check (one with a collector or public IPs)
+  // counts only its own events; a check for the engine's own site also counts
+  // events received directly on the engine's LAN (endpointId null). Endpoints
+  // sharing a collector or a public IP are one physical site, and events are
+  // stored against just one of them, so the whole group is matched.
+  if (ctx?.endpointId) {
+    const all = await db.query.endpoints.findMany();
+    const ep = all.find((e) => e.id === ctx.endpointId);
+    const remote = Boolean(ep?.collectorHostId || ep?.publicIps?.length);
+    if (ep && remote) {
+      const ips = new Set(ep.publicIps ?? []);
+      const site = all.filter((e) => e.id === ep.id || (ep.collectorHostId && e.collectorHostId === ep.collectorHostId) || (e.publicIps ?? []).some((ip) => ips.has(ip)));
+      conds.push(inArray(events.endpointId, site.map((e) => e.id)));
+    } else conds.push(or(isNull(events.endpointId), eq(events.endpointId, ctx.endpointId))!);
+  }
   const ip = str(config, "sourceIp");
   if (ip) conds.push(eq(events.sourceIp, ip));
   const pattern = str(config, "pattern");

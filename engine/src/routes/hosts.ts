@@ -2,6 +2,7 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import { and, desc, eq, gte, inArray, or } from "drizzle-orm";
 import { db } from "../db/index.js";
+import { queueCollectorJob, siteCollectorFor } from "../services/sites.js";
 import { hosts, hostMetrics, checks, endpoints, maintenanceWindows } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { sendWakeOnLan } from "../services/probes/protocols.js";
@@ -143,7 +144,15 @@ hostsRouter.post("/:id/wake", async (req, res) => {
     return;
   }
   try {
-    await sendWakeOnLan(host.macAddress, req.body?.broadcast ? String(req.body.broadcast) : undefined);
+    const broadcast = req.body?.broadcast ? String(req.body.broadcast) : undefined;
+    // A magic packet only works on the target's own LAN, so a remote site's
+    // host is woken by that site's collector.
+    if (await siteCollectorFor(host.endpointId)) {
+      await queueCollectorJob(host.endpointId, "wake", { mac: host.macAddress, broadcast });
+      res.json({ sent: true, viaCollector: true });
+      return;
+    }
+    await sendWakeOnLan(host.macAddress, broadcast);
     res.json({ sent: true });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
@@ -238,6 +247,11 @@ hostsRouter.post("/bulk", async (req, res) => {
       for (const h of rows) {
         if (!h.macAddress) {
           errors.push({ id: h.id, error: `${h.name}: no MAC address` });
+          continue;
+        }
+        if (await siteCollectorFor(h.endpointId)) {
+          await queueCollectorJob(h.endpointId, "wake", { mac: h.macAddress });
+          affected++;
           continue;
         }
         await sendWakeOnLan(h.macAddress)

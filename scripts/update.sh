@@ -90,6 +90,16 @@ else
   echo "$AGENT_VERSION" > "$AGENT_STAMP"
 fi
 
+# The site collector bundle is rebuilt every time (a second or two); the Node
+# runtimes agents download for it are cached and only fetched when
+# engine/src/collector/NODE_VERSION changes. COLLECTOR_PLATFORMS in the root
+# .env limits which runtimes are kept.
+if [ -f .env ]; then
+  COLLECTOR_PLATFORMS="$(grep -E '^COLLECTOR_PLATFORMS=' .env | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+  [ -n "$COLLECTOR_PLATFORMS" ] && export COLLECTOR_PLATFORMS
+fi
+bash scripts/build-collector.sh
+
 echo "==> Restarting processes"
 # startOrReload (not restart) so the update also works when pm2 has no
 # record of the apps — after a reboot without `pm2 save`/`pm2 startup`, or

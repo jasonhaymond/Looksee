@@ -15,7 +15,10 @@
 // minAgentVersion: agents older than this never receive the check; the
 //   engine records a warn result explaining why instead of sending it.
 export type CheckExecutor = "engine" | "agent" | "report";
-export type CheckTypeMeta = { executor: CheckExecutor; hostRequired?: boolean; remoteProbe?: boolean; minAgentVersion?: string };
+// local: an engine-run type that reads the engine's own database (event
+// matching, anomaly baselines, heartbeat staleness, forecasts) — always run by
+// the engine, never handed to a site collector.
+export type CheckTypeMeta = { executor: CheckExecutor; hostRequired?: boolean; remoteProbe?: boolean; minAgentVersion?: string; local?: boolean };
 
 export const CHECK_TYPE_META = {
   ping: { executor: "engine", remoteProbe: true },
@@ -40,19 +43,19 @@ export const CHECK_TYPE_META = {
   domain_expiry: { executor: "engine" },
   public_ip: { executor: "engine" },
   snmp_interfaces: { executor: "engine" },
-  trap_match: { executor: "engine" },
-  syslog_match: { executor: "engine" },
+  trap_match: { executor: "engine", local: true },
+  syslog_match: { executor: "engine", local: true },
   bmc: { executor: "engine" },
   proxmox: { executor: "engine" },
   vmware: { executor: "engine" },
   prometheus: { executor: "engine" },
   webserver_status: { executor: "engine" },
   app_integration: { executor: "engine" },
-  anomaly: { executor: "engine" },
-  heartbeat: { executor: "engine" },
-  push_value: { executor: "engine" },
-  agent_heartbeat: { executor: "engine", hostRequired: true },
-  disk_forecast: { executor: "engine", hostRequired: true },
+  anomaly: { executor: "engine", local: true },
+  heartbeat: { executor: "engine", local: true },
+  push_value: { executor: "engine", local: true },
+  agent_heartbeat: { executor: "engine", hostRequired: true, local: true },
+  disk_forecast: { executor: "engine", hostRequired: true, local: true },
 
   agent_service: { executor: "agent", hostRequired: true },
   agent_process: { executor: "agent", hostRequired: true },
@@ -90,6 +93,8 @@ export const AGENT_CHECK_TYPES = typesWhere((m) => m.executor === "agent");
 export const REPORT_CHECK_TYPES = typesWhere((m) => m.executor === "report");
 export const HOST_SCOPED_CHECK_TYPES = typesWhere((m) => Boolean(m.hostRequired));
 export const REMOTE_PROBE_CHECK_TYPES = typesWhere((m) => Boolean(m.remoteProbe));
+// Engine-run types a site collector runs for its endpoint.
+export const COLLECTOR_CHECK_TYPES = typesWhere((m) => m.executor === "engine" && !m.local);
 export const minAgentVersionFor = (t: string) => meta(t)?.minAgentVersion;
 
 // Numeric dotted-version compare; "dev" builds count as newest so a locally

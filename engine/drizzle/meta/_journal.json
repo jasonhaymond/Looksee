@@ -92,6 +92,13 @@
       "when": 1791422931150,
       "tag": "0012_v3_monitoring_expansion",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791498435647,
+      "tag": "0013_multi_site_collectors",
+      "breakpoints": true
     }
   ]
 }

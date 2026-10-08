@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"looksee-agent/internal/checks"
+	"looksee-agent/internal/collector"
 	"looksee-agent/internal/metrics"
 )
 
@@ -36,6 +37,8 @@ func NewClient(baseURL, agentKey string) *Client {
 type Config struct {
 	Checks          []checks.Check `json:"checks"`
 	UpdateAvailable bool           `json:"updateAvailable"`
+	// Non-nil while this host is a site collector (engine 3.2.0+).
+	Collector *collector.Spec `json:"collector"`
 }
 
 func (c *Client) FetchConfig() (Config, error) {
@@ -78,9 +81,10 @@ type reportBody struct {
 	AvailableContainers []string         `json:"availableContainers,omitempty"`
 	Inventory           map[string]any   `json:"inventory,omitempty"`
 	Version             string           `json:"version,omitempty"`
+	CollectorError      string           `json:"collectorError,omitempty"`
 }
 
-func (c *Client) SendReport(snap metrics.Snapshot, results []checks.Result, discovery Discovery, inventory map[string]any, version string) error {
+func (c *Client) SendReport(snap metrics.Snapshot, results []checks.Result, discovery Discovery, inventory map[string]any, version, collectorError string) error {
 	body, err := json.Marshal(reportBody{
 		Metrics:             snap,
 		Results:             results,
@@ -89,6 +93,7 @@ func (c *Client) SendReport(snap metrics.Snapshot, results []checks.Result, disc
 		AvailableContainers: discovery.Containers,
 		Inventory:           inventory,
 		Version:             version,
+		CollectorError:      collectorError,
 	})
 	if err != nil {
 		return err

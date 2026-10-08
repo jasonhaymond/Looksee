@@ -328,7 +328,7 @@ export default function ChecksPage() {
                     </div>
                     {group.items.map((c) => {
                       const open = expanded === c.id;
-                      const where = [c.hostId ? hostName.get(c.hostId) : null, c.probeHostId ? `via ${hostName.get(c.probeHostId) ?? "agent"}` : null, groupBy !== "endpoint" ? endpointName.get(c.endpointId) : null].filter(Boolean).join(" · ");
+                      const where = [c.hostId ? hostName.get(c.hostId) : null, c.probeHostId ? `via ${hostName.get(c.probeHostId) ?? "agent"}` : c.collectorHostId ? `via site collector ${hostName.get(c.collectorHostId) ?? ""}`.trim() : null, groupBy !== "endpoint" ? endpointName.get(c.endpointId) : null].filter(Boolean).join(" · ");
                       return (
                         <Fragment key={c.id}>
                           <div

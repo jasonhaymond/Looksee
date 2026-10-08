@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-10-08
+
+### Added
+
+- **Site collectors: monitor other locations with no port forwarding.** On the Endpoints
+  page, pick an agent host at a remote site as that endpoint's *site collector*. Its
+  agent (3.2.0+) downloads and runs a collector that does, from inside the site, what
+  the engine does on its own network — runs the endpoint's network checks (every
+  engine-run type except the ones that read the engine's database), receives the site's
+  syslog/SNMP traps/NetFlow/IPFIX/sFlow, and runs its discovery scans and Wake-on-LAN —
+  and posts everything back over outbound HTTPS with the host's agent key
+  (`/api/collector/*`). The collector is the engine's own probe, receiver and discovery
+  code, bundled into one file and run on an official Node.js 24 LTS runtime that the
+  Looksee server downloads from nodejs.org (SHA-256-verified) and serves to agents (the
+  agent verifies each file again against the server's manifest). It keeps working from
+  its last configuration and buffers results while the server is unreachable; if the
+  server hears nothing for 3 minutes, that endpoint's checks turn Unknown ("Site
+  collector on … is offline") instead of looking healthy. **Run now** queues the run on
+  the collector.
+- **Direct push by public IP.** An endpoint's *Public IPs* field lets devices at a site
+  without a collector send syslog/traps/flows straight to the server (with those ports
+  forwarded at the server's location); events from those IPs are accepted and filed
+  under that endpoint.
+- Received events and flows are tagged with their site: a site filter on **Traps &
+  syslog** and **Top talkers**, the site's name under each event's sender, and
+  Trap/Syslog-received checks in a remote endpoint match only that site's events.
+- Discovery **Scan from** picker; hosts and endpoints show each collector's state
+  (online / offline / waiting / error); checks show "via site collector".
+- `scripts/build-collector.sh` (run by `update.sh` on every update) bundles the
+  collector and fetches the Node runtimes; `COLLECTOR_PLATFORMS` in the root `.env`
+  limits which platforms are kept. New `engine/.env` settings `COLLECTOR_*_PORT` and
+  `COLLECTOR_ALLOWED_SOURCES`.
+- User guide *Multiple sites*, deployment guide *Upgrading to 3.2*, direct-push firewall
+  rules and collector troubleshooting, agent README *Site collector*.
+
+### Changed
+
+- The syslog/trap/flow receivers and discovery scan are split into database-free cores
+  (shared with the collector) and the engine's storage layer; behavior on the engine's
+  own network is unchanged.
+
+### Verified
+
+- Engine suite 150 tests (12 new for the collector API, scheduler hand-off and offline
+  marking, site-scoped event matching, direct-push attribution, collector discovery and
+  Wake-on-LAN); new Go tests for the collector supervisor (install, hash rejection,
+  bundle replacement, graceful stop) under the race detector.
+- End to end with a real Windows agent: downloaded and verified Node v24.21.0 plus the
+  bundle, ran ping/TCP checks and a discovery scan from the collector, received a UDP
+  syslog message and matched it with a site-scoped check, sent a Wake-on-LAN job, picked
+  up a rebuilt bundle live, exited when the agent was killed, stopped when unassigned.
+- Linux agent under the real hardened systemd unit (unprivileged user,
+  `ProtectSystem=strict`): collector installed to `/var/lib/looksee-agent/collector`,
+  ran checks, stopped cleanly with the service; the documented low-port drop-in gives
+  the collector `CAP_NET_BIND_SERVICE`/`CAP_NET_RAW`.
+- Dashboard pages (Endpoints and its dialog, Hosts, Checks, Discovery, Traps & syslog)
+  screenshotted at desktop and mobile widths.
+
 ## [3.1.0] - 2026-10-08
 
 ### Added

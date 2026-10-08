@@ -3,6 +3,7 @@ import type { MeasuredResult } from "../thresholds.js";
 export type ProbeContext = {
   checkId: string;
   hostId: string | null;
+  endpointId?: string | null;
   intervalSeconds: number;
   // The check's persisted state from its previous run (checks.state).
   state: Record<string, unknown>;
