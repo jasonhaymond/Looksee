@@ -93,6 +93,7 @@ Backups section for exactly what's been proven vs. still needs a first real run.
 - [`spec.md`](spec.md) — full project spec: architecture, data model, v1 scope, decisions
 - [`CLAUDE.md`](CLAUDE.md) — locked project-specific decisions
 - [`docs/deployment-guide.md`](docs/deployment-guide.md) — first deployment and updating
+- [`docs/migration-guide.md`](docs/migration-guide.md) — moving an existing deployment to a new server
 - [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: every check type, bulk actions, hosts, discovery, heartbeats, alerting/escalation, maintenance, SLA reports, traps/syslog, top talkers, status pages, dashboards
 - [`CHANGELOG.md`](CHANGELOG.md) — version history
 - [`agent/README.md`](agent/README.md) — building and running the Go agent

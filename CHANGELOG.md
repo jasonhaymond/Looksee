@@ -113,6 +113,12 @@ Netdata, Prometheus exporters, Datadog and Uptime Kuma. Upgrading is the normal
 - Daily **data retention** for check results (400 days), host metrics (30), events (30)
   and flows (7), all configurable.
 
+### Added — documentation
+
+- **Migration guide** (`docs/migration-guide.md`): moving an existing deployment, data
+  and secrets included, to a different server — backup, restore, cut-over, re-pointing
+  agents, the Borg repository, and rollback. Linked from the README and deployment guide.
+
 ### Changed
 
 - **Management UI rebuilt.** The Checks page is a filterable, groupable table (status

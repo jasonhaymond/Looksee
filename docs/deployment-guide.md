@@ -2,7 +2,9 @@
 
 A walkthrough for putting Looksee on a real server in your homelab — not just running it on
 a dev machine. If you only need local development, see the [README](../README.md) instead;
-this is for a first real deployment and for updating one you already have running.
+this is for a first real deployment and for updating one you already have running. Moving
+an existing deployment to a *different* server is a separate walkthrough — see
+[migration-guide.md](migration-guide.md).
 
 This is a **single-environment deployment** — no staging environment, by design (see
 `CLAUDE.md`: solo personal tool, low blast-radius). Everything here assumes Ubuntu/Debian;
