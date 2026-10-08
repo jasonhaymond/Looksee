@@ -41,4 +41,11 @@ global doc governs.
 - **Event/flow receivers stay on unprivileged ports with a private-source allowlist** by
   default, so the engine never needs root and isn't an open ingestion endpoint.
 
+- **Lockfiles must satisfy the server's npm (npm 10, Node 20).** `scripts/update.sh` uses
+  `npm ci`, which refuses a lockfile it considers out of sync — and npm 11 (the dev
+  machine) writes lockfiles npm 10 rejects (3.0.4: vitest's nested `esbuild` peer was
+  left out). After any dependency change, regenerate with
+  `npx npm@10 install --package-lock-only` in `engine/` and `dashboard/`, and confirm
+  `npx npm@10 ci --dry-run --ignore-scripts` passes in both before committing.
+
 See [`spec.md`](spec.md) for the full architecture, data model, and v1 scope.
