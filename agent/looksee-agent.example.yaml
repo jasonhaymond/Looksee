@@ -1,6 +1,17 @@
 # Copy to looksee-agent.yaml (gitignored, holds a real credential) and fill
-# in the values from the engine's Hosts page (create the host, then click
-# "Generate agent key" — it's shown once and can't be retrieved again).
+# in the values from the engine's Hosts page (create the host, then use its
+# Agent tab — the key is shown once and can't be retrieved again).
 engine_url: "https://looksee.example.com"
 agent_key: "REPLACE_WITH_HOST_AGENT_KEY"
 interval_seconds: 30
+
+# Optional. Folder of approved scripts that "Custom script" checks may run,
+# by file name only. Leave unset to disable script checks on this host.
+# script_dir: /etc/looksee-agent/scripts
+
+# Optional. NTP server the clock-offset metric compares against.
+# ntp_server: pool.ntp.org
+
+# Optional. Docker Engine API socket (default /var/run/docker.sock, or
+# npipe:////./pipe/docker_engine on Windows).
+# docker_socket: /var/run/docker.sock

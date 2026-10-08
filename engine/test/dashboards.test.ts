@@ -98,6 +98,8 @@ describe("dashboards", () => {
       backup_status: {},
       clock: {},
       section_header: { text: "Network" },
+      top_talkers: { rangeMinutes: 60, groupBy: "pair" },
+      status_summary: { endpointId: crypto.randomUUID() },
     };
 
     for (const type of widgetType.enumValues) {

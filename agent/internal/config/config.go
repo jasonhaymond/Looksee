@@ -17,10 +17,19 @@ type Config struct {
 	AgentKey string `yaml:"agent_key"`
 	// How often to collect metrics and report in.
 	IntervalSeconds int `yaml:"interval_seconds"`
+	// Folder of scripts that "Custom script" checks may run, by file name.
+	// Empty (the default) disables script checks on this host entirely —
+	// the engine can pick which approved script runs, never what it does.
+	ScriptDir string `yaml:"script_dir"`
+	// NTP server the clock-offset metric compares against.
+	NTPServer string `yaml:"ntp_server"`
+	// Docker Engine socket; defaults to /var/run/docker.sock or the
+	// Windows named pipe.
+	DockerSocket string `yaml:"docker_socket"`
 }
 
 func defaults() Config {
-	return Config{IntervalSeconds: 30}
+	return Config{IntervalSeconds: 30, NTPServer: "pool.ntp.org"}
 }
 
 func Load(path string) (Config, error) {

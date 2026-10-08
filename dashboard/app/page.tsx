@@ -20,6 +20,7 @@ import { NetworkBandwidthWidget } from "./components/NetworkBandwidthWidget";
 import { AllHostsWidget } from "./components/AllHostsWidget";
 import { BackupStatusWidget } from "./components/BackupStatusWidget";
 import { ClockWidget } from "./components/ClockWidget";
+import { StatusSummaryWidget, TopTalkersWidget } from "./components/InsightWidgets";
 
 const Grid = WidthProvider(GridLayout);
 const LAST_DASHBOARD_KEY = "looksee.lastDashboardId";
@@ -82,20 +83,21 @@ export default function DashboardsPage() {
     setWidgets(await api.widgets(dashboardId));
   }, []);
 
+  // Every check already carries its newest result (lastStatus/lastCheckedAt
+  // ...), so the whole dashboard refresh is three requests, not one per
+  // check.
   const loadStatusData = useCallback(async () => {
-    const endpointList = await api.endpoints();
+    const [endpointList, allChecks, hostList] = await Promise.all([api.endpoints(), api.checks(), api.hosts()]);
     setEndpoints(endpointList);
-    const perEndpointChecks = await Promise.all(endpointList.map((e) => api.checks(e.id)));
-    const allChecks = perEndpointChecks.flat();
     setChecks(allChecks);
-    setHosts(await api.hosts());
-    const latestPairs = await Promise.all(
-      allChecks.map(async (c) => {
-        const results = await api.checkResults(c.id, 1);
-        return [c.id, results[0]] as const;
-      })
+    setHosts(hostList);
+    setLatestByCheck(
+      new Map(
+        allChecks
+          .filter((c) => c.lastCheckedAt)
+          .map((c) => [c.id, { id: c.id, status: c.inMaintenance ? "unknown" : (c.lastStatus ?? "unknown"), latencyMs: c.lastLatencyMs, message: c.lastMessage, value: c.lastValue, checkedAt: c.lastCheckedAt! }] as const)
+      )
     );
-    setLatestByCheck(new Map(latestPairs.filter(([, r]) => r)));
   }, []);
 
   useEffect(() => {
@@ -165,9 +167,11 @@ export default function DashboardsPage() {
             ? { text: target }
             : type === "group_summary"
               ? { endpointId: target }
-              : type === "alert_history"
+              : type === "alert_history" || type === "status_summary"
                 ? (target ? { endpointId: target } : {})
-                : {}; // all_hosts, backup_status, clock — no target needed
+                : type === "top_talkers"
+                  ? { rangeMinutes: 60, groupBy: "pair" }
+                  : {}; // all_hosts, backup_status, clock — no target needed
     // Drop the new widget below whatever's already there rather than at
     // (0,0) — compaction (default RGL behavior) then settles it into the
     // first real gap.
@@ -281,6 +285,13 @@ export default function DashboardsPage() {
     }
     if (widget.type === "clock") {
       return <ClockWidget />;
+    }
+    if (widget.type === "top_talkers") {
+      return <TopTalkersWidget widget={widget} onChanged={onChanged} />;
+    }
+    if (widget.type === "status_summary") {
+      const endpoint = widget.config.endpointId ? endpointById.get(widget.config.endpointId) : undefined;
+      return <StatusSummaryWidget endpoint={endpoint} checks={checks.filter((c) => c.enabled && (!widget.config.endpointId || c.endpointId === widget.config.endpointId))} />;
     }
     const endpoint = widget.config.endpointId ? endpointById.get(widget.config.endpointId) : undefined;
     return (

@@ -7,6 +7,178 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-08
+
+A major expansion of what Looksee can monitor, plus a rebuilt management interface.
+The scope came from a survey of Zabbix, Nagios/Icinga, PRTG, Checkmk, LibreNMS,
+Netdata, Prometheus exporters, Datadog and Uptime Kuma. Upgrading is the normal
+`scripts/update.sh` run; see the deployment guide's "Upgrading to 3.0".
+
+### Added — engine probes (no agent needed)
+
+- **Ping** now reports packet loss %, jitter and min/avg/max round-trip time, with loss
+  and jitter thresholds (3 pings per check by default).
+- **HTTP(S)**: body must *not* contain, regex match, JSON-path checks (equals, contains,
+  greater/less than, exists — numeric values feed thresholds), status lists and ranges
+  (`200-299,301`, `2xx`), redirect-chain tracking with "must end at URL" and "warn above
+  N redirects", request bodies, and a configurable timeout.
+- **Response-time thresholds** (warn/critical ms) on every check that measures latency,
+  and **warn/critical above/below value thresholds** on every check that produces a value.
+- **DNS**: any record type, a chosen DNS server, expected-answer matching, and DNSSEC
+  validation (via the resolver's AD flag; SERVFAIL is reported as a validation failure).
+- **TLS certificate**: chain trust, hostname match, critical-days threshold, and a warning
+  when the server still accepts TLS 1.0/1.1. Existing checks keep their old behaviour —
+  the new checks are off unless set; new checks default them on.
+- New engine check types: **UDP port**, **mail/SSH/FTP/LDAP/RDP protocol checks**
+  (SMTP with STARTTLS requirement, IMAP, POP3, FTP, SSH banner, LDAP bind, RDP connection
+  confirm), **email round-trip** (SMTP send → IMAP receive), **real browser** (headless
+  Chrome via puppeteer-core and a system Chrome/Chromium), **domain registration expiry**
+  (RDAP), **WebSocket**, **NTP server**, **DHCP server** (with rogue-server detection),
+  **gRPC health**, **MQTT broker**, **container registry** (incl. image tag via the
+  bearer-token flow), **traceroute / path change**, **public IP change**, **device present
+  (ARP)**, **database** (PostgreSQL, MySQL/MariaDB, SQL Server, Redis, MongoDB: connect +
+  query, connections %, replication lag, size, long-running queries, memory),
+  **Prometheus metric** (any exporter, label filters, aggregation, counter rates), **web
+  server status** (nginx, Apache, Caddy), **app integrations** (Nextcloud, Home Assistant,
+  Plex, Jellyfin, Pi-hole, any JSON API), **SNMP templates** (printer toner, UPS battery/
+  runtime/on-battery, CPU, memory, fullest disk, hottest sensor, reboot detection) plus
+  walk aggregation and counter rates, **SNMP interface tables** (down ports, utilization,
+  errors), **SNMP trap** and **syslog** matching, **server hardware** (Redfish, or IPMI via
+  ipmitool), **Proxmox VE** (node, cluster quorum, guest, storage, last vzdump backup),
+  **VMware ESXi/vCenter** (VM power, datastores, host health over the vSphere SOAP API),
+  **anomaly** (a check's value vs its own same-hour baseline), **disk-full forecast**,
+  **agent online**, **heartbeat** and **push a value** (unique URLs for cron jobs and
+  scripts — `/api/hb/<token>`).
+- **Receivers**: SNMP traps (UDP 1162), syslog (UDP/TCP 1514, RFC 3164 and 5424),
+  NetFlow v5/v9 and IPFIX (UDP 2055) and sFlow v5 (UDP 6343). Unprivileged ports,
+  private-network senders only by default, rate-limited per source.
+
+### Added — agent (3.0.0)
+
+- **Extended snapshot** every report: CPU user/system/iowait/steal and per-core, load
+  average, memory/swap/major page faults, uptime and boot time, process/thread/zombie
+  counts, open file handles, context switches and interrupts, every filesystem (incl.
+  network mounts, with hung `statfs` reported as *stale* instead of blocking), inodes,
+  read-only state, per-disk I/O (throughput, IOPS, latency, busy %), per-interface
+  throughput/errors/drops/link state/speed, TCP states, listening ports.
+- **Background collectors**: sessions, temperatures, fans, battery, failed logins, pending
+  reboot, firewall, disk encryption, Defender, clock sync and offset, RAID/ZFS/Storage
+  Spaces/storcli, SMART (smartctl, or Windows reliability counters), pending OS updates
+  (apt, dnf/yum, pacman, Windows Update, softwareupdate), and hardware/OS inventory.
+- **New agent check types**: files and folders (exists, age of newest file, size, count,
+  folder size, checksum drift, **folder watchdog** for created/modified/deleted files),
+  log file patterns (rotation- and glob-aware), systemd journal, Windows Event Log,
+  custom scripts (Nagios exit codes and perfdata; only from the agent's own `script_dir`),
+  scheduled tasks / systemd timers, failed systemd units / stopped automatic Windows
+  services, Docker containers (state, health, restarts, CPU/memory — over the Docker
+  socket or Windows named pipe), Hyper-V VMs, Windows performance counters, VPN tunnels
+  (WireGuard handshake age, any tunnel interface), UPS (NUT, apcupsd), and backup jobs
+  (Borg, restic, Veeam).
+- **OS service** checks report systemd restart counts (alert on restarts per hour);
+  **process** checks report instance count, CPU % and memory, with min/max counts.
+- **Remote probes**: ping/TCP/HTTP/DNS/TLS checks can run *from* a host's agent ("Run
+  from"), for targets only reachable inside that host's network.
+- Checks run in the background and honour their own interval; slow ones never delay a
+  report, and results are kept for the next report if one fails to send.
+- New optional config keys `script_dir`, `ntp_server`, `docker_socket`; an optional
+  systemd drop-in (`agent/looksee-agent-privileged.conf`, served at
+  `/install/looksee-agent-privileged.conf`) for SMART and `/home` access.
+
+### Added — host-level checks from agent reports
+
+- **Host metric**: one check type over a catalog of 62 metrics (any of the above), with
+  per-mount/interface/device/sensor/port instance selection and boolean "healthy when"
+  metrics (firewall on, SMART passed, interface up, port listening, …).
+- **Reboot detection** and **change detection** (new login sessions, listening ports,
+  inventory, interfaces, mounts), held as a warning for a configurable time.
+
+### Added — alerting and operations
+
+- **Maintenance windows** (one-time or weekly; everything, endpoints, hosts, or checks):
+  results still recorded but flagged, no alerts, excluded from SLA reports.
+- **Dependencies**: a check's alerts are held while a parent it depends on is down.
+- **Flap detection** with hysteresis holds alerts for checks changing state rapidly.
+- Alert rules can **trigger on warn**, **re-notify** every N minutes, and **escalate** to
+  extra channels after N minutes still failing.
+- **Retry interval** per check: re-check sooner while failing.
+- **SLA reports** (time-weighted uptime, downtime, degraded and maintenance time,
+  incidents, average response; CSV export).
+- **Public status pages** at `/status/<slug>` with 90-day daily uptime bars.
+- **Network discovery**: scan a subnet (ping + common ports, reverse DNS, ARP MAC, SNMP
+  sysName/sysDescr) and add hosts and suggested checks in one step.
+- **Suggested checks** per host, built from what its agent found.
+- **Wake-on-LAN** for hosts with a MAC address.
+- **Top talkers** from flow data, as a page and a dashboard widget; a **status summary**
+  widget.
+- Daily **data retention** for check results (400 days), host metrics (30), events (30)
+  and flows (7), all configurable.
+
+### Changed
+
+- **Management UI rebuilt.** The Checks page is a filterable, groupable table (status
+  chips with counts, search across names/types/hosts/messages/tags/config, endpoint/host/
+  kind/tag filters, group by endpoint/host/kind/status) with **multi-select and a bulk
+  action bar**: enable, disable, run now, maintenance, add/remove tags, move, set host,
+  run from, interval, retry interval, add/remove alert rules, dependencies, duplicate,
+  delete (typed confirmation). New **Hosts** (live overview, suggested checks, agent,
+  edit, WoL, bulk actions) and **Endpoints** (merge, maintenance, bulk enable/disable,
+  delete) pages. Navigation is grouped into Monitoring / Alerting / Insights / System with
+  a phone menu.
+- **One add/edit form for every check type**, driven by a type registry, with a
+  searchable type picker, agent-discovered name suggestions, a thresholds section, and an
+  optional alert rule at creation.
+- Checks now carry their latest result, so the dashboard and lists load in a few requests
+  instead of one per check; indexes added on result and metric history.
+- **Check credentials are write-only**: passwords, tokens, SNMPv3 keys and passphrases
+  are masked in every API response and kept when an edit sends the mask back.
+- Alerts name the check and the reason (e.g. "[Looksee] NAS disk is WARN: 92% is above
+  warn threshold 90"), and email subjects say what happened.
+- **Versioning**: the agent now shares the app's version number (1.2.0 → 3.0.0), per the
+  lockstep standard. Agents older than 3.0 keep working for existing check types; newer
+  types report "Needs agent 3.0.0+" until the host is updated.
+
+### Fixed
+
+- **SNMPv3 SHA-224/256/384/512 and AES-256 were silently ignored**: the form offered them
+  but the engine only knew MD5/SHA-1/DES/AES, falling back to SHA-1/AES without a word
+  (so authentication just failed). All are now supported, and an unknown protocol is a
+  clear error.
+- Webhook alerts with a newline or backslash in the message produced invalid JSON (only
+  quotes were escaped).
+- Alert notifications didn't say which check they were about.
+
+### Verification
+
+- **Engine**: 137 automated tests (vitest + supertest against the real local Postgres).
+  Every network probe is tested against a real in-process server speaking that protocol
+  (SMTP, IMAP, POP3, FTP, SSH, LDAP, RDP, UDP, NTP, DHCP, MQTT, WebSocket, gRPC, container
+  registry with bearer tokens, a DNS resolver with/without the AD flag, Prometheus, nginx/
+  Apache status, Nextcloud, Home Assistant, Pi-hole, Redfish, Proxmox, RDAP), SNMP against
+  net-snmp's own in-process agent (presets, walks, interface table, reboot detection),
+  NetFlow v5/v9/IPFIX/sFlow from crafted packets, and the alerting pipeline end-to-end
+  through real webhook deliveries (warn triggers, recovery, escalation, re-notify,
+  dependencies, flapping, maintenance). A test also keeps the dashboard and engine type
+  registries in sync.
+- **Live services**: MySQL 8, Redis 7, MongoDB 7, SQL Server 2022, a GreenMail SMTP/IMAP
+  server (full round-trip delivered) and VMware's vcsim simulator, all in Docker; real
+  internet targets for ping, HTTP, DNSSEC, TLS, RDAP, NTP, traceroute, public IP and the
+  headless browser.
+- **Agent**: Go unit tests on Linux and natively on Windows; the real Windows build ran
+  against a local engine (CPU, disks, interfaces, firewall, Defender, Windows Update,
+  pending reboot, sessions, battery, event log, perf counters, stopped services, folder
+  watchdog, remote HTTP probe), and the real Linux build ran in a Debian container
+  (kernel counters, inodes, scripts, log tailing, Docker via the socket, path-traversal
+  refusal). This found and fixed three bugs before release: single-item PowerShell
+  results not parsing as lists, stopped-cleanly Windows services being reported as
+  failures, and mount `/` matching every mount.
+- **UI**: production build, then desktop (1400 px) and mobile (390 px) screenshots of
+  every new page and of selection, bulk actions, the type picker, and the form.
+- **Not exercised for real** (code paths tested against fakes only): BitLocker and the
+  Windows SMART fallback as SYSTEM (the local run was as a normal user), the Linux
+  privileged drop-in on a real systemd host, `smartctl`/mdadm/ZFS/storcli on real
+  hardware, Hyper-V, NUT/apcupsd, Borg/restic/Veeam, IPMI, real Proxmox and Redfish
+  hardware, macOS, and a NetFlow/sFlow exporter on a real network.
+
 ## [2.1.0] - 2026-09-23
 
 ### Changed

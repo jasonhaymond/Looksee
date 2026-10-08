@@ -101,7 +101,7 @@ export default function BackupsPage() {
     <main className="mx-auto max-w-3xl p-6">
       <TopNav active="/backups" />
       <h2 className="mb-4 text-lg font-medium">Backups</h2>
-      <PageHelp anchor="backups">
+      <PageHelp anchor="backups-and-logs">
         Encrypted, deduplicated backups of the database and secrets, via Borg. Restoring discards data created after the backup you restore — read the confirmation prompt carefully.
       </PageHelp>
 

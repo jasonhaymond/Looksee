@@ -40,11 +40,11 @@ async function getTransporter() {
   return cached;
 }
 
-export async function sendEmail(config: unknown, message: string) {
+export async function sendEmail(config: unknown, message: string, subject = "Looksee alert") {
   const to = typeof config === "object" && config && "to" in config ? String((config as { to: unknown }).to) : undefined;
   if (!to) throw new Error("Email channel config is missing 'to'");
   const { transporter, from } = await getTransporter();
-  await transporter.sendMail({ from, to, subject: "Looksee alert", text: message });
+  await transporter.sendMail({ from, to, subject: `Looksee: ${subject}`, text: message });
 }
 
 // Used by the "Send test email" button on the Channels page — lets someone

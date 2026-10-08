@@ -25,7 +25,20 @@ global doc governs.
 - **Alerting channels are opt-in per rule.** A check with no channel configured just shows
   on the dashboard silently. Email is the only always-on default; Web Push, webhook
   (Discord/Slack/ntfy/Telegram), and SMS are configured as needed.
-- **No network auto-discovery in v1.** Checks are added explicitly. Don't build a subnet
-  scanner as part of the core v1 loop — it's an explicit v2+ idea.
+- **Network discovery is on-demand only.** Added in 3.0 at Jason's request (originally
+  deferred to "v2+"): a scan runs only when started from the Discovery page, results are
+  suggestions, and nothing is added without ticking it. Don't turn it into a scheduled
+  background scanner that auto-creates checks without asking.
+- **One check-type registry per side.** `engine/src/db/checkTypes.ts` decides who runs
+  each type; `dashboard/app/lib/checkTypes.ts` describes how to configure it;
+  `engine/test/check-types.test.ts` fails if they disagree. Add a type to both.
+- **Thresholds are applied by the engine**, never the agent — the agent measures and
+  reports a value; `services/thresholds.ts` judges it, so warn/critical mean the same
+  thing for every check type.
+- **Agent script checks only run files in the agent's own `script_dir`.** The engine may
+  choose which approved script runs, never send code to run. Don't add a "run this
+  command" check type.
+- **Event/flow receivers stay on unprivileged ports with a private-source allowlist** by
+  default, so the engine never needs root and isn't an open ingestion endpoint.
 
 See [`spec.md`](spec.md) for the full architecture, data model, and v1 scope.

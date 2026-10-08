@@ -6,8 +6,10 @@ full-time sysadmin knowledge just to add a basic check). Closer in spirit to Upt
 Beszel: an opinionated, fixed set of check and widget types instead of a generic templating
 engine.
 
-Status: **scoping complete, no code written yet.** This doc is the source of truth for
-what v1 is; update it as decisions change rather than letting it drift from reality.
+Status: **v3.0.0 built.** This doc started as the v1 scoping spec; the sections below
+marked "v1" describe that original scope. 3.0 (see "v3.0 scope" at the end and
+`CHANGELOG.md`) greatly widened the check catalog and management features. Update this
+doc as decisions change rather than letting it drift from reality.
 
 ## Goals
 
@@ -24,7 +26,7 @@ what v1 is; update it as decisions change rather than letting it drift from real
 
 - Multi-tenant / role-based access — single admin user only.
 - A generic metric query language or custom dashboard-per-widget scripting.
-- Network auto-discovery/scanning — checks are added explicitly. (May revisit in v2.)
+- Network auto-discovery/scanning — checks are added explicitly. (Added as an on-demand Discovery page in 3.0.)
 - A native mobile app — the web dashboard is installable as a PWA instead.
 
 ## Architecture
@@ -146,10 +148,40 @@ if a real use case shows up.
 - Staging environment: skipped for v1 (solo tool, low blast-radius) — revisit if this
   ever grows beyond personal use.
 
-## Deferred / v2+ ideas
+## Deferred / future ideas
 
-- Network auto-discovery (scan a subnet, suggest hosts to add).
-- Multi-site support beyond the personal homelab (e.g. the separate church/AV network).
 - Native mobile app (if PWA + Web Push proves insufficient).
-- Dependency/topology mapping between checks (e.g. "don't alert on downstream services
-  if the router itself is down").
+- SMS alert channel (needs a provider choice).
+- SNMPv3 traps (v1/v2c traps are received today).
+- Kubernetes monitoring (explicitly out of scope for 3.0).
+- Multi-step HTTP transactions / login flows (explicitly out of scope for 3.0).
+
+## v3.0 scope (built)
+
+Chosen from a survey of Zabbix, Nagios/Icinga, PRTG, Checkmk, LibreNMS, Netdata,
+Prometheus exporters, Datadog and Uptime Kuma. Every check type is listed in
+`docs/user-guide.md` → Check type reference.
+
+- **Engine probes**: ping with loss/jitter, TCP, UDP, HTTP(S) with body/regex/JSON/
+  redirect/latency checks, headless-browser, DNS (any record, chosen resolver, DNSSEC),
+  TLS (chain, hostname, weak protocols), domain expiry (RDAP), WebSocket, SMTP/IMAP/POP3/
+  FTP/SSH/LDAP/RDP, email round-trip, NTP, DHCP (rogue detection), gRPC, MQTT, container
+  registry, traceroute path change, public IP change, ARP presence, databases (Postgres,
+  MySQL, SQL Server, Redis, MongoDB — connect plus internals), Prometheus scrape, web
+  server status pages, app integrations (Nextcloud, Home Assistant, Plex, Jellyfin,
+  Pi-hole, JSON), SNMP templates/walks/rates, SNMP interface tables, trap/syslog
+  matching, Redfish/IPMI hardware, Proxmox, VMware.
+- **Agent**: extended host snapshot (62 metrics incl. per-core CPU, all mounts, inodes,
+  disk I/O, interfaces, TCP, temps, battery, SMART, RAID/ZFS, updates, Defender,
+  firewall, encryption, clock, failed logins), and checks for services (restarts),
+  processes (resources), failed/stopped services, scheduled tasks, scripts, files and a
+  folder watchdog, logs, journal, Windows Event Log, perf counters, Docker, Hyper-V, VPN,
+  UPS, backups; plus ping/TCP/HTTP/DNS/TLS as a remote probe.
+- **Engine features**: warn/critical thresholds everywhere, retry intervals,
+  dependencies, flap detection, re-notify and escalation, maintenance windows, SLA
+  reports, public status pages, heartbeats/pushed values, anomaly baselines, disk-full
+  forecasts, reboot and change detection, suggested checks per host, on-demand network
+  discovery, SNMP trap/syslog/NetFlow/IPFIX/sFlow receivers, data retention.
+- **Management UI**: filterable/groupable check table, a searchable type picker with one
+  schema-driven form for every type, and multi-select bulk actions on checks, hosts and
+  endpoints.

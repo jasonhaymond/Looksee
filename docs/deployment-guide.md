@@ -8,6 +8,22 @@ This is a **single-environment deployment** — no staging environment, by desig
 `CLAUDE.md`: solo personal tool, low blast-radius). Everything here assumes Ubuntu/Debian;
 adjust package manager commands for another distro.
 
+## Contents
+
+1. [What you'll need](#1-what-youll-need)
+2. [Install prerequisites](#2-install-prerequisites)
+3. [Get the code and configure](#3-get-the-code-and-configure)
+4. [Build and run under pm2](#4-build-and-run-under-pm2)
+5. [Firewall](#5-firewall)
+6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
+7. [Backups](#7-backups)
+8. [Updating](#8-updating) — including [Upgrading to 3.0](#upgrading-to-30)
+9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
+10. [Troubleshooting](#10-troubleshooting)
+11. [Security notes](#11-security-notes)
+
+Related: [user guide](user-guide.md) · [agent README](../agent/README.md) · [README](../README.md) · [CHANGELOG](../CHANGELOG.md)
+
 ## 1. What you'll need
 
 - A Linux server on your homelab network (one of your pfSense-managed VLANs) that can
@@ -38,6 +54,21 @@ sudo npm install -g pm2
 # curl -fsSL https://go.dev/dl/go1.22.linux-amd64.tar.gz | sudo tar -C /usr/local -xz
 # echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 ```
+
+**Optional tools** — each enables one engine-side check type and nothing else breaks
+without them (the check just reports "X isn't installed on the engine host"):
+
+```bash
+# Traceroute / path-change checks
+sudo apt install -y traceroute
+# Real-browser checks (headless Chrome). The engine finds /usr/bin/chromium
+# automatically; set CHROME_PATH in engine/.env for anything else.
+sudo apt install -y chromium
+# Server hardware checks over IPMI (Redfish needs nothing extra)
+sudo apt install -y ipmitool
+```
+
+Check with `traceroute --version`, `chromium --version`, `ipmitool -V`.
 
 ## 3. Get the code and configure
 
@@ -108,6 +139,47 @@ sudo ufw enable
 
 Don't open 5432 (Postgres, already bound to `127.0.0.1` by `docker-compose.yml`), 4100
 (engine), or 3100 (dashboard) — only Caddy needs to be internet/LAN-reachable.
+
+**Event and flow receivers (optional).** The engine also listens for SNMP traps, syslog
+and NetFlow/IPFIX/sFlow on unprivileged ports (`SNMP_TRAP_PORT`, `SYSLOG_PORT`,
+`FLOW_PORT`, `SFLOW_PORT` in `engine/.env`; set one to `off` to disable it). They accept
+data without authentication, so the engine itself ignores anything not from a private
+address (`RECEIVER_ALLOWED_SOURCES`). Open them to your LAN only — never to the
+internet. Replace `10.0.0.0/8` with your LAN range:
+
+```bash
+sudo ufw allow from 10.0.0.0/8 to any port 1162 proto udp   # SNMP traps
+sudo ufw allow from 10.0.0.0/8 to any port 1514             # syslog (UDP + TCP)
+sudo ufw allow from 10.0.0.0/8 to any port 2055 proto udp   # NetFlow v5/v9, IPFIX
+sudo ufw allow from 10.0.0.0/8 to any port 6343 proto udp   # sFlow
+sudo ufw status numbered
+```
+
+Most devices let you choose the destination port. If one insists on the standard 162 or
+514, redirect it on this server instead of running the engine as root — add to
+`/etc/ufw/before.rules` above the `*filter` line, then `sudo ufw reload`:
+
+```
+*nat
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -p udp --dport 514 -j REDIRECT --to-ports 1514
+-A PREROUTING -p udp --dport 162 -j REDIRECT --to-ports 1162
+COMMIT
+```
+
+**DHCP server checks (optional).** Probing a DHCP server means listening on UDP port 68,
+which needs a privilege the engine doesn't have as a normal user. If you want DHCP
+checks, grant just that one capability to the Node binary:
+
+```bash
+sudo setcap 'cap_net_bind_service=+ep' "$(readlink -f "$(which node)")"
+getcap "$(readlink -f "$(which node)")"   # should print cap_net_bind_service=ep
+```
+
+This lets *any* Node program on the server bind low ports — acceptable on a dedicated
+monitoring box, worth knowing on a shared one. A Node upgrade replaces the binary, so
+re-run it afterwards. Without it, DHCP checks report a clear "needs cap_net_bind_service"
+error and everything else is unaffected.
 
 ## 6. Reverse proxy + HTTPS
 
@@ -197,6 +269,25 @@ protect against this server failing.
 ```bash
 ~/Looksee/scripts/update.sh
 ```
+
+### Upgrading to 3.0
+
+3.0 is a large release (many new check types, management pages, agent features). The
+upgrade itself is the normal `update.sh` run above — its database migration only *adds*
+tables, columns and check types, and back-fills each check's latest status, so existing
+checks, history and dashboards carry over unchanged. Afterwards:
+
+1. Rebuild the agent binaries on the server (section 9) so the engine can serve 3.0
+   agents — `curl -s localhost:4100/api/health` should show `"agentVersion":"3.0.0"`.
+2. On the Hosts page, select all hosts and use **Update agents**. Pre-3.0 agents keep
+   reporting CPU/memory/disk and running service/process checks; checks that need 3.0
+   say "Needs agent 3.0.0+" until the host updates.
+3. Optional: install the tools in section 2 and open the receiver ports in section 5 for
+   the features you want.
+4. The agent's version number now moves in lockstep with the engine and dashboard (it
+   jumps from 1.2.0 to 3.0.0) — one version for the whole app.
+
+### What `update.sh` does
 
 Takes a pre-update snapshot (to `~/looksee-backups/` by default, override with
 `LOOKSEE_BACKUP_DIR`, named after the version it was taken from — see below), pulls,
@@ -313,3 +404,13 @@ scoped per-host. Still on you as the operator:
 - Keep `engine/.env`/`dashboard/.env` out of version control (already gitignored) and out
   of chat/tickets/logs.
 - Use a strong, unique admin password (`npm run db:create-admin`).
+- **Public endpoints, by design**: `/api/health`, `/install/*`, published status pages
+  (`/status/<slug>` — only the names, status and uptime of the checks you put on them),
+  and heartbeat/push URLs (`/api/hb/<token>` — the token is the credential; regenerate
+  it on the check if it leaks). Everything else needs a signed-in session.
+- **Check credentials** (database passwords, API tokens, SNMPv3 keys, backup
+  passphrases) are write-only in the dashboard but are stored in the database and sent
+  to the agent that runs the check, so treat database backups as sensitive.
+- **Agent script checks** only run files in the agent's own `script_dir` (disabled when
+  unset) — the dashboard can't push new code to a host.
+- **Receivers** (traps/syslog/flows) are unauthenticated; keep them LAN-only (section 5).

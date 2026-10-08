@@ -1,8 +1,23 @@
 # Looksee Agent
 
-A single static binary that reports host metrics (CPU/RAM/disk) and named-service status
-to a Looksee engine on an interval. No runtime dependency — Go compiles to one
-self-contained executable per platform.
+A single static binary that reports host metrics and runs the host-side checks a
+Looksee engine assigns to it. No runtime dependency — Go compiles to one self-contained
+executable per platform. Version 3.0.0 (versioned in lockstep with the engine and
+dashboard; see [CHANGELOG.md](../CHANGELOG.md)).
+
+## Contents
+
+1. [The fast path: one command on the target host](#the-fast-path-one-command-on-the-target-host)
+2. [Configure manually](#configure-manually)
+3. [What the agent collects and checks](#what-the-agent-collects-and-checks)
+4. [Privileges](#privileges)
+5. [Custom scripts](#custom-scripts)
+6. [Build](#build)
+7. [Run](#run)
+8. [Running as a service](#running-as-a-service)
+9. [Updating](#updating)
+
+Related: [user guide](../docs/user-guide.md) · [deployment guide](../docs/deployment-guide.md) · [README](../README.md)
 
 ## The fast path: one command on the target host
 
@@ -32,23 +47,119 @@ engine, or just follow the manual steps below.
 
 ## Configure manually
 
-1. Generate a host's agent key in the dashboard as above.
+1. Generate a host's agent key in the dashboard (Hosts → the host → Agent tab).
 2. Copy `looksee-agent.example.yaml` to `looksee-agent.yaml` next to the binary and fill
-   in `engine_url` and `agent_key`.
-3. To monitor a service or process, add a check on that host in the dashboard — the
-   agent picks it up automatically on its next `/api/agent/config` poll, no agent
-   restart needed. Two types, both taking `config: { "serviceName": "nginx" }`:
-   - **"Service (via agent)"** (`agent_service`) queries the real OS service manager —
-     `systemctl is-active` on Linux, the Windows service manager via PowerShell on
-     Windows. Not yet implemented on macOS (returns a clear error, not a silent no-op).
-   - **"Process (via agent)"** (`agent_process`) matches by substring against the
-     running process list instead — `nginx` matches both `nginx` on Linux and
-     `nginx.exe` on Windows — for anything that isn't a registered OS service.
+   in `engine_url` and `agent_key`. The other settings are optional:
 
-   Either type's config field also accepts real names the agent has actually
-   discovered on that host — every report cycle includes every running process name
-   and every registered service name, which the check form offers as suggestions once
-   a host is selected (`hosts.availableProcesses`/`availableServices`).
+   | Key | Default | Purpose |
+   |---|---|---|
+   | `interval_seconds` | `30` | How often metrics are collected and reported |
+   | `script_dir` | *(empty — scripts disabled)* | Folder whose scripts "Custom script" checks may run (see [Custom scripts](#custom-scripts)) |
+   | `ntp_server` | `pool.ntp.org` | Server the clock-offset metric compares against |
+   | `docker_socket` | `/var/run/docker.sock` or `\\.\pipe\docker_engine` | Docker Engine API socket for container checks |
+
+3. Add checks for the host in the dashboard. The agent picks them up on its next
+   `/api/agent/config` poll — no restart needed — and runs each no more often than its
+   own interval. A slow check (a large folder walk, a remote backup repository listing)
+   runs in the background; its result goes out with whichever report follows it, so it
+   never delays metrics.
+
+## What the agent collects and checks
+
+**Every report** (default 30 s): CPU (total, user/system, iowait and steal on Linux,
+per-core), load average, memory/swap and major page faults, uptime and boot time, process
+and thread counts and zombies, open file handles, context switches and interrupts,
+every real filesystem (including NFS/SMB mounts — a mount whose `statfs` hangs is
+reported as **stale** instead of blocking the agent) with free space, inodes and
+read-only state, per-disk I/O (throughput, IOPS, latency, % busy), per-interface
+throughput/errors/drops/link state/speed, TCP connection states and listening ports.
+
+**In the background**, on their own schedules so they never slow a report:
+
+| Every | What | Linux | Windows | macOS |
+|---|---|---|---|---|
+| 1 min | Login sessions | utmp | `quser` | utmp |
+| 1 min | Temperatures, fans, battery | hwmon, power_supply | WMI | `pmset` |
+| 1 min | Failed logins (last 5 min) | sshd in the journal | Security event 4625 | — |
+| 10 min | Pending reboot | `/var/run/reboot-required`, `needs-restarting` | registry flags | — |
+| 10 min | Firewall | ufw / firewalld / nftables | all firewall profiles | application firewall |
+| 10 min | Disk encryption (system volume) | LUKS via `lsblk` | BitLocker | FileVault |
+| 10 min | Antivirus | — | Defender status + signature age | — |
+| 10 min | Clock sync + offset | `timedatectl` + SNTP | `w32tm` + SNTP | SNTP |
+| 10 min | RAID / pools | mdadm, ZFS, storcli | Storage Spaces | — |
+| 30 min | Drive health | `smartctl` (smartmontools 7+) | `smartctl`, else Storage reliability counters | `smartctl` |
+| 6 h | Pending updates | apt, dnf/yum, pacman | Windows Update | `softwareupdate` |
+| 6 h | Inventory (model, serial, CPU, RAM, OS) | DMI | WMI | `sysctl` |
+
+**Checks it runs on request**: OS service (with systemd restart count), process (count,
+CPU, memory), failed systemd units / stopped automatic Windows services, scheduled task
+or systemd timer result, custom scripts, files and folders (exists, age, size, count,
+folder size, checksum, folder watchdog), log file patterns (rotation-aware), the systemd
+journal, the Windows Event Log, Windows performance counters, Docker containers, Hyper-V
+VMs, WireGuard/tunnel interfaces, UPS via NUT or apcupsd, Borg/restic/Veeam backup age —
+plus ping/TCP/HTTP/DNS/TLS probes when a check is set to **Run from** this agent.
+
+Agents older than 3.0.0 keep working: they still report CPU/memory/disk and run service
+and process checks. Checks that need 3.0 show "Needs agent 3.0.0+" until the host is
+updated (Hosts → the host → Agent → Update agent).
+
+## Privileges
+
+On **Windows** the agent runs as SYSTEM and on **macOS** as root, so everything above
+works out of the box.
+
+On **Linux** the installer deliberately runs it as an unprivileged `looksee-agent` user
+under a hardened systemd unit (`ProtectSystem=strict`, `ProtectHome=yes`,
+`NoNewPrivileges=yes`). Most checks work as-is. A few need access you grant explicitly —
+the agent reports "permission denied — see agent README → Privileges" rather than
+failing silently:
+
+| Feature | What it needs | How to grant it |
+|---|---|---|
+| journal checks, failed-login count | read the journal | `sudo usermod -aG systemd-journal looksee-agent` |
+| log files under `/var/log` | read them | `sudo usermod -aG adm looksee-agent` (Debian/Ubuntu) |
+| Docker containers | the Docker socket | `sudo usermod -aG docker looksee-agent` — note this is effectively root access |
+| SMART drive health | raw disk access | the drop-in below |
+| files or folders under `/home` | see `/home` | the drop-in below (`ProtectHome=read-only`) |
+| backups (Borg/restic) | read the repository + its key | run with the same user/permissions as the backup, or grant read access to the repo |
+
+`agent/looksee-agent-privileged.conf` is a ready-made systemd drop-in for SMART and
+`/home`. Apply it only if you need those features:
+
+The engine serves it, so on the monitored host:
+
+```sh
+sudo mkdir -p /etc/systemd/system/looksee-agent.service.d
+curl -fsSL https://your-looksee-domain/install/looksee-agent-privileged.conf   | sudo tee /etc/systemd/system/looksee-agent.service.d/privileged.conf >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl restart looksee-agent
+```
+
+Group changes take effect after `sudo systemctl restart looksee-agent`. Check with
+`systemctl show looksee-agent -p SupplementaryGroups -p AmbientCapabilities`.
+
+## Custom scripts
+
+"Custom script" checks run a script on the host and read its result the Nagios way: exit
+`0` = up, `1` = warn, `2` = down, anything else = unknown; the first output line is the
+message; `| label=value` performance data (or the first number in the message) becomes
+the value, so thresholds and graphs work.
+
+For safety the engine can only choose **which approved script** runs, never its
+contents:
+
+1. Pick a folder only an administrator can write to, e.g.
+   `sudo install -d -m 755 -o root -g root /etc/looksee-agent/scripts`.
+2. Put your scripts there and make them executable
+   (`sudo install -m 755 check_queue.sh /etc/looksee-agent/scripts/`).
+   On Windows, `.ps1` scripts run through PowerShell.
+3. Add `script_dir: /etc/looksee-agent/scripts` to `looksee-agent.yaml` and restart the
+   agent.
+4. In the dashboard, add a **Custom script** check with just the file name
+   (`check_queue.sh`) and any arguments.
+
+Without `script_dir` set, script checks are refused on that host. Names containing a
+path (`../`) are always refused.
 
 ## Build
 

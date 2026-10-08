@@ -3,13 +3,19 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: built and verified end-to-end (auth, endpoints/hosts/checks CRUD, agentless
-probing + scheduler incl. SNMP/OID, agent metrics/service ingest with OS threshold
-alerting, email/webhook/Web Push alerting, a fully customizable widget dashboard), and
-running in production on a real homelab server with an agent reporting in. Current
-version: **v2.1.0** — see [`CHANGELOG.md`](CHANGELOG.md) for what changed recently, or
-[Deploying](#deploying) below for a first deployment of your own. Day-to-day usage once
-it's running is covered in [`docs/user-guide.md`](docs/user-guide.md).
+**Status**: v3.0.0 — 56 check types across the engine and agent (reachability, web,
+real-browser, DNS/DNSSEC, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
+app integrations, SNMP templates and interface tables, traps/syslog, Redfish/IPMI,
+Proxmox, VMware, Hyper-V, Docker, 60+ host metrics, files and folder watchdog, logs,
+event log/journal, scripts, backups, heartbeats/pushed values, anomaly detection),
+maintenance windows, dependencies, flap detection, escalation, SLA reports, public status
+pages, network discovery, NetFlow/sFlow top talkers, and a management UI with filters,
+grouping and multi-select bulk actions on checks, hosts and endpoints. Built and verified
+end to end locally (see [`CHANGELOG.md`](CHANGELOG.md) for exactly what was tested how);
+production on the homelab server still runs 2.1 until 3.0 is deployed there. Current
+version: **v3.0.0** — see
+[`CHANGELOG.md`](CHANGELOG.md) for the full history, [Deploying](#deploying) for a first
+deployment, and [`docs/user-guide.md`](docs/user-guide.md) for day-to-day usage.
 
 ## Tech stack
 
@@ -67,7 +73,7 @@ generate its agent key, copy `agent/looksee-agent.example.yaml` to
 ```sh
 cd engine && npm test        # vitest + supertest against a real local Postgres
 cd dashboard && npm run build  # typecheck + production build
-cd agent && go build ./...     # (needs Go, or build via the golang Docker image — see agent/README.md)
+cd agent && go test ./... && go build ./...   # (needs Go, or use the golang Docker image — see agent/README.md)
 ```
 
 ## Deploying
@@ -87,6 +93,6 @@ Backups section for exactly what's been proven vs. still needs a first real run.
 - [`spec.md`](spec.md) — full project spec: architecture, data model, v1 scope, decisions
 - [`CLAUDE.md`](CLAUDE.md) — locked project-specific decisions
 - [`docs/deployment-guide.md`](docs/deployment-guide.md) — first deployment and updating
-- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: endpoints/hosts/checks, dashboards/widgets, channels, backups, logs
+- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: every check type, bulk actions, hosts, discovery, heartbeats, alerting/escalation, maintenance, SLA reports, traps/syslog, top talkers, status pages, dashboards
 - [`CHANGELOG.md`](CHANGELOG.md) — version history
 - [`agent/README.md`](agent/README.md) — building and running the Go agent

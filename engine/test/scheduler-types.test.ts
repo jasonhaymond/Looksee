@@ -1,26 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { checkType, AGENTLESS_CHECK_TYPES, HOST_SCOPED_CHECK_TYPES } from "../src/db/schema.js";
+import { checkType, AGENTLESS_CHECK_TYPES, AGENT_CHECK_TYPES, REPORT_CHECK_TYPES } from "../src/db/schema.js";
+import { CHECK_TYPE_META } from "../src/db/checkTypes.js";
+import { PROBE_TYPES } from "../src/services/prober.js";
 
-// Regression test for a real bug caught during 2.0 testing: adding "snmp" to
-// checkType (and prober.ts) wasn't enough on its own — services/scheduler.ts
-// kept its own hand-written copy of "which types are agentless" and nobody
-// remembered to add snmp there too, so snmp checks got created fine but the
-// scheduler silently never ran them. AGENTLESS_CHECK_TYPES is now derived
-// from checkType's own value list specifically so this can't happen again —
-// this test locks that derivation in.
-describe("AGENTLESS_CHECK_TYPES", () => {
-  it("includes snmp", () => {
+// Regression guard for a real 2.0 bug: snmp was added to the check_type enum
+// but the scheduler kept its own hand-written type list, so snmp checks were
+// created fine and then silently never ran. Every type now comes from one
+// registry (db/checkTypes.ts); these tests lock in that each executor
+// actually has an implementation behind it.
+describe("check type registry", () => {
+  it("the database enum is exactly the registry's types", () => {
+    expect(new Set(checkType.enumValues)).toEqual(new Set(Object.keys(CHECK_TYPE_META)));
+  });
+
+  it("every engine-executed type has a probe, and nothing else does", () => {
+    expect(new Set(AGENTLESS_CHECK_TYPES)).toEqual(new Set(PROBE_TYPES));
     expect(AGENTLESS_CHECK_TYPES).toContain("snmp");
   });
 
-  it("is exactly every checkType value that isn't host-scoped", () => {
-    const expected = checkType.enumValues.filter((t) => !(HOST_SCOPED_CHECK_TYPES as readonly string[]).includes(t));
-    expect(new Set(AGENTLESS_CHECK_TYPES)).toEqual(new Set(expected));
-  });
-
-  it("doesn't include any host-scoped type", () => {
-    for (const type of HOST_SCOPED_CHECK_TYPES) {
-      expect(AGENTLESS_CHECK_TYPES).not.toContain(type);
-    }
+  it("every type has exactly one executor", () => {
+    const all = [...AGENTLESS_CHECK_TYPES, ...AGENT_CHECK_TYPES, ...REPORT_CHECK_TYPES];
+    expect(all.length).toBe(checkType.enumValues.length);
+    expect(new Set(all).size).toBe(all.length);
   });
 });

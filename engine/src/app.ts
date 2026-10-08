@@ -19,6 +19,10 @@ import { dashboardsRouter } from "./routes/dashboards.js";
 import { installRouter } from "./routes/install.js";
 import { logsRouter } from "./routes/logs.js";
 import { smtpRouter } from "./routes/smtp.js";
+import { maintenanceRouter } from "./routes/maintenance.js";
+import { statusPagesRouter } from "./routes/statusPages.js";
+import { publicRouter } from "./routes/public.js";
+import { insightsRouter } from "./routes/insights.js";
 
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
   .split(",")
@@ -32,7 +36,10 @@ app.disable("x-powered-by");
 
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(cookieParser());
-app.use(express.json());
+// Agent reports carry a full metrics snapshot plus process/service lists;
+// the 100 KB default is too small for a busy host.
+app.use(express.json({ limit: "4mb" }));
+app.use(express.urlencoded({ extended: false }));
 
 app.use("/api/auth", authRouter);
 app.use("/api/endpoints", endpointsRouter);
@@ -46,6 +53,12 @@ app.use("/api/backups", backupsRouter);
 app.use("/api/dashboards", dashboardsRouter);
 app.use("/api/logs", logsRouter);
 app.use("/api/smtp", smtpRouter);
+app.use("/api/maintenance", maintenanceRouter);
+app.use("/api/status-pages", statusPagesRouter);
+app.use("/api/insights", insightsRouter);
+// Unauthenticated: /api/hb/<token> (heartbeat/push URLs) and
+// /api/public/status/<slug> (public status pages).
+app.use("/api", publicRouter);
 // Outside /api on purpose — meant for plain curl, not the JSON API, and
 // deliberately unauthenticated (see routes/install.ts for why).
 app.use("/install", installRouter);

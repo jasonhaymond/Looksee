@@ -7,6 +7,9 @@ import { db } from "./db/index.js";
 import { appMeta } from "./db/schema.js";
 import { VERSION } from "./lib/version.js";
 import { logger, pruneLogs } from "./lib/logger.js";
+import { startReceivers } from "./services/receivers/index.js";
+import { processOpenAlerts } from "./services/alerting.js";
+import { pruneData } from "./services/retention.js";
 
 const port = Number(process.env.PORT ?? 4100);
 
@@ -32,7 +35,22 @@ cron.schedule("30 3 * * *", () => {
   });
 });
 
+// Time-series retention (check results, host metrics, events, flows).
+cron.schedule("45 3 * * *", () => {
+  pruneData().catch((err) => {
+    logger.error("engine", `Data retention prune failed: ${err instanceof Error ? err.message : String(err)}`, "Old monitoring data wasn't cleaned up — the database may grow larger than usual until the next attempt.");
+  });
+});
+
 startScheduler();
+startReceivers();
+
+// Re-notify and escalate open incidents even when no new results arrive.
+setInterval(() => {
+  processOpenAlerts().catch((err) => {
+    logger.error("alerting", `Open-alert processing failed: ${err instanceof Error ? err.message : String(err)}`, "Alert reminders/escalations couldn't be processed this minute.");
+  });
+}, 60_000).unref();
 
 initBackupScheduler().catch((err) => {
   logger.error("engine", `Failed to initialize backup scheduler: ${err instanceof Error ? err.message : String(err)}`, "Scheduled backups won't run until this is fixed — check your backup settings.");

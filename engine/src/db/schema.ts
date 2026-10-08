@@ -10,56 +10,30 @@ import {
   bigint,
   jsonb,
   timestamp,
+  index,
 } from "drizzle-orm/pg-core";
 
-// "agent_service" queries the real OS service manager (systemctl/Windows
-// service manager) via the agent; "agent_process" is a raw process-list
-// name match. They used to be one type ("agent_service" doing what
-// "agent_process" does now) — see the 0004 migration pair for the backfill
-// that moved existing rows onto the name that actually describes them.
-export const checkType = pgEnum("check_type", [
-  "ping",
-  "tcp",
-  "http",
-  "dns",
-  "ssl_cert",
-  "agent_service",
-  "agent_process",
-  "host_cpu",
-  "host_memory",
-  "host_disk",
-  "snmp",
-]);
+import { CHECK_TYPES, ENGINE_CHECK_TYPES } from "./checkTypes.js";
 
-// The two types the Go agent actively reports results for (as opposed to
-// the agentless prober) — both require a hostId, and both are what
-// GET /api/agent/config filters on. Shared between routes/checks.ts and
-// routes/agent.ts so the two stay in sync.
-export const AGENT_CHECK_TYPES = ["agent_service", "agent_process"] as const;
-
-// Also require a hostId, but unlike AGENT_CHECK_TYPES these are never sent
-// to the agent to actively check — the engine evaluates them itself
-// against the metrics payload already included in every agent report (see
-// routes/agent.ts's POST /report), since the agent has collected
-// cpu/mem/disk on every cycle since v1.0.0 but nothing alerted on it until
-// now.
-export const HOST_METRIC_CHECK_TYPES = ["host_cpu", "host_memory", "host_disk"] as const;
-
-// Every check type that requires a hostId, for the shared gate in
-// routes/checks.ts — the union of the two sets above.
-export const HOST_SCOPED_CHECK_TYPES = [...AGENT_CHECK_TYPES, ...HOST_METRIC_CHECK_TYPES] as const;
-
-// Everything the engine itself actively probes on a timer (services/scheduler.ts) —
-// derived from checkType's own value list rather than hand-duplicated, so a
-// new agentless check type (like snmp) is picked up automatically instead of
-// silently never running until someone remembers to also update the
-// scheduler's own copy of this list (a real bug caught during 2.0 testing:
-// snmp checks got created fine but the scheduler never ran them).
-export const AGENTLESS_CHECK_TYPES = checkType.enumValues.filter(
-  (t) => !(HOST_SCOPED_CHECK_TYPES as readonly string[]).includes(t)
-) as string[];
+// Who runs each type (engine scheduler, agent, or report-time evaluation)
+// lives in checkTypes.ts — this enum is just its key list, so adding a type
+// there is the one edit needed for the database side too.
+export const checkType = pgEnum("check_type", CHECK_TYPES);
 
 export const checkStatus = pgEnum("check_status", ["up", "down", "warn", "unknown"]);
+
+export {
+  AGENT_CHECK_TYPES,
+  REPORT_CHECK_TYPES,
+  HOST_SCOPED_CHECK_TYPES,
+  REMOTE_PROBE_CHECK_TYPES,
+  ENGINE_CHECK_TYPES,
+} from "./checkTypes.js";
+
+// Kept under its pre-3.0 name: "agentless" here means "the engine's own
+// scheduler runs it", which is exactly ENGINE_CHECK_TYPES.
+export const AGENTLESS_CHECK_TYPES = ENGINE_CHECK_TYPES as string[];
+
 
 export const channelType = pgEnum("channel_type", [
   "email",
@@ -130,6 +104,16 @@ export const hosts = pgTable("hosts", {
   // changing on a later report is the real confirmation signal.
   agentVersion: text("agent_version"),
   updateRequested: boolean("update_requested").notNull().default(false),
+  // For Wake-on-LAN (POST /api/hosts/:id/wake) and ARP presence checks.
+  macAddress: text("mac_address"),
+  // Hardware/OS inventory the 3.x agent sends when it changes (OS, kernel,
+  // model, serial, CPU, RAM) — host_change checks diff against this.
+  inventory: jsonb("inventory"),
+  // The agent's most recent full metrics snapshot, so "what does this host
+  // look like right now" (hosts page detail, suggested checks) is one row
+  // read rather than a scan of host_metrics.
+  lastSnapshot: jsonb("last_snapshot"),
+  tags: jsonb("tags").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -156,7 +140,43 @@ export const checks = pgTable("checks", {
   // agent-reported checks (agent_service) are updated by the ingest route
   // as reports arrive, not polled.
   lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  // While the last result wasn't "up", re-run on this shorter interval
+  // instead (Nagios's retry_interval) so recovery and N-consecutive-failure
+  // alerts land sooner. Null = always use intervalSeconds.
+  retryIntervalSeconds: integer("retry_interval_seconds"),
+  // Pins an engine-executed check (ping/tcp/http/dns/ssl_cert) to this
+  // host's agent instead, so it runs from inside that host's network.
+  probeHostId: uuid("probe_host_id").references(() => hosts.id, { onDelete: "set null" }),
+  // Secret path segment for heartbeat/push_value checks: /api/hb/<token>.
+  pushToken: text("push_token").unique(),
+  // Per-check memory between runs: previous counters for rate math, the
+  // last traceroute path, the last-seen public IP, baseline checksums.
+  state: jsonb("state").notNull().default({}),
+  tags: jsonb("tags").$type<string[]>().notNull().default([]),
+  // Denormalized copy of the newest check_results row, written by
+  // recordCheckResult — lets list views show status for hundreds of checks
+  // without one results query per check.
+  lastStatus: checkStatus("last_status"),
+  lastMessage: text("last_message"),
+  lastValue: doublePrecision("last_value"),
+  lastLatencyMs: integer("last_latency_ms"),
+  lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+  lastStatusChangeAt: timestamp("last_status_change_at", { withTimezone: true }),
+  flapping: boolean("flapping").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// L2 dependencies: while any parent is down, the child's alerts are
+// suppressed (its results are still recorded) — "router down" shouldn't
+// page once per device behind it.
+export const checkDependencies = pgTable("check_dependencies", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  checkId: uuid("check_id")
+    .notNull()
+    .references(() => checks.id, { onDelete: "cascade" }),
+  dependsOnCheckId: uuid("depends_on_check_id")
+    .notNull()
+    .references(() => checks.id, { onDelete: "cascade" }),
 });
 
 // Time-series result for every check, agentless and agent-reported alike —
@@ -170,8 +190,17 @@ export const checkResults = pgTable("check_results", {
   status: checkStatus("status").notNull(),
   latencyMs: integer("latency_ms"),
   message: text("message"),
+  // The check's measured number (loss %, days left, queue depth, ...) —
+  // what thresholds, graphs, and anomaly baselines read.
+  value: doublePrecision("value"),
+  // Structured extras (hop list, interface table, matched lines). Nulled
+  // after a week by the retention job; the row itself is kept for SLA math.
+  details: jsonb("details"),
+  // Recorded during a maintenance window — excluded from SLA reports and
+  // never alerts.
+  inMaintenance: boolean("in_maintenance").notNull().default(false),
   checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [index("check_results_check_time_idx").on(t.checkId, t.checkedAt)]);
 
 // Host-level resource metrics reported by the Go agent on its own interval —
 // separate from check_results because this is always-on telemetry for a
@@ -186,8 +215,12 @@ export const hostMetrics = pgTable("host_metrics", {
   diskPercent: doublePrecision("disk_percent"),
   netRxBytes: bigint("net_rx_bytes", { mode: "number" }),
   netTxBytes: bigint("net_tx_bytes", { mode: "number" }),
+  // Full 3.x agent snapshot (per-core CPU, every mount, interfaces, SMART,
+  // ...). The five columns above stay for pre-3.0 agents and the existing
+  // widgets.
+  extended: jsonb("extended"),
   recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [index("host_metrics_host_time_idx").on(t.hostId, t.recordedAt)]);
 
 // A destination alert rules can notify. `config` shape depends on `type`
 // (e.g. { to } for email, { url } for webhook, { subscription } for
@@ -212,6 +245,12 @@ export const alertRules = pgTable("alert_rules", {
   // Consecutive failing results required before this rule fires, to avoid
   // alerting on a single flaky/blip result.
   consecutiveFailures: integer("consecutive_failures").notNull().default(2),
+  // "down" fires only on down results; "warn" fires on warn or down.
+  triggerOn: text("trigger_on").notNull().default("down"),
+  // Re-send the alert every N minutes while it stays open (L12).
+  renotifyMinutes: integer("renotify_minutes"),
+  // After N minutes still open, also notify the escalation channels.
+  escalateAfterMinutes: integer("escalate_after_minutes"),
   enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -224,6 +263,8 @@ export const alertRuleChannels = pgTable("alert_rule_channels", {
   channelId: uuid("channel_id")
     .notNull()
     .references(() => notificationChannels.id, { onDelete: "cascade" }),
+  // Escalation-only channel: notified once escalateAfterMinutes passes.
+  escalation: boolean("escalation").notNull().default(false),
 });
 
 // One row per triggered incident, closed out with resolvedAt once the check
@@ -237,6 +278,79 @@ export const alertEvents = pgTable("alert_events", {
   status: alertEventStatus("status").notNull().default("triggered"),
   triggeredAt: timestamp("triggered_at", { withTimezone: true }).notNull().defaultNow(),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  severity: text("severity").notNull().default("down"),
+  message: text("message"),
+  lastNotifiedAt: timestamp("last_notified_at", { withTimezone: true }),
+  escalatedAt: timestamp("escalated_at", { withTimezone: true }),
+}, (t) => [index("alert_events_rule_idx").on(t.alertRuleId, t.triggeredAt)]);
+
+// L1. Either a one-off window (startsAt..endsAt) or a weekly recurrence
+// (daysOfWeek + startTime + durationMinutes, in the engine's local time).
+// scope "all" ignores targetIds.
+export const maintenanceWindows = pgTable("maintenance_windows", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  scope: text("scope").notNull().default("all"),
+  targetIds: jsonb("target_ids").$type<string[]>().notNull().default([]),
+  startsAt: timestamp("starts_at", { withTimezone: true }),
+  endsAt: timestamp("ends_at", { withTimezone: true }),
+  daysOfWeek: jsonb("days_of_week").$type<number[]>(),
+  startTime: text("start_time"),
+  durationMinutes: integer("duration_minutes"),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const eventSource = pgEnum("event_source", ["snmp_trap", "syslog"]);
+
+// Inbound SNMP traps and syslog messages (H3/H5). trap_match/syslog_match
+// checks count rows matching their filter over a window.
+export const events = pgTable("events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  source: eventSource("source").notNull(),
+  sourceIp: text("source_ip").notNull(),
+  // Syslog severity 0 (emergency) .. 7 (debug); traps are stored as 4.
+  severity: integer("severity"),
+  facility: integer("facility"),
+  message: text("message").notNull(),
+  data: jsonb("data"),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("events_received_idx").on(t.receivedAt)]);
+
+// NetFlow/IPFIX/sFlow conversations, pre-aggregated per minute per
+// exporter so a busy exporter doesn't mean a row per packet.
+export const flowRecords = pgTable("flow_records", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  bucket: timestamp("bucket", { withTimezone: true }).notNull(),
+  exporter: text("exporter").notNull(),
+  srcAddr: text("src_addr").notNull(),
+  dstAddr: text("dst_addr").notNull(),
+  protocol: integer("protocol"),
+  dstPort: integer("dst_port"),
+  bytes: bigint("bytes", { mode: "number" }).notNull(),
+  packets: bigint("packets", { mode: "number" }).notNull(),
+}, (t) => [index("flow_records_bucket_idx").on(t.bucket)]);
+
+export const discoveryScans = pgTable("discovery_scans", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  cidr: text("cidr").notNull(),
+  status: text("status").notNull().default("running"),
+  results: jsonb("results").notNull().default([]),
+  error: text("error"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+// L8. Public (unauthenticated) page at /status/<slug> showing only the
+// listed checks' names, current status, and uptime bars.
+export const statusPages = pgTable("status_pages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  slug: text("slug").notNull().unique(),
+  title: text("title").notNull(),
+  description: text("description"),
+  checkIds: jsonb("check_ids").$type<string[]>().notNull().default([]),
+  published: boolean("published").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // Singleton row (id always 1) — SMTP server config for the "email" alert
@@ -296,6 +410,8 @@ export const widgetType = pgEnum("widget_type", [
   "backup_status",
   "clock",
   "section_header",
+  "top_talkers",
+  "status_summary",
 ]);
 
 export const dashboards = pgTable("dashboards", {

@@ -12,7 +12,9 @@ export async function sendWebhook(config: unknown, message: string) {
       ? String((config as { bodyTemplate: unknown }).bodyTemplate)
       : '{"content": "{{message}}"}';
 
-  const body = bodyTemplate.replace("{{message}}", message.replace(/"/g, '\\"'));
+  // JSON-string escaping (not just quotes) — a message with a newline or
+  // backslash would otherwise produce an invalid body the receiver rejects.
+  const body = bodyTemplate.replace("{{message}}", JSON.stringify(message).slice(1, -1));
 
   const res = await fetch(url, {
     method: "POST",

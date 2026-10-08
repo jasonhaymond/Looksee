@@ -15,10 +15,12 @@ const WIDGET_TYPE_LABELS: Record<WidgetType, string> = {
   backup_status: "Backup status",
   clock: "Clock / date",
   section_header: "Section header (group widgets visually)",
+  status_summary: "Status summary (problems right now)",
+  top_talkers: "Top talkers (NetFlow / sFlow)",
 };
 
 // Types that need no target picker at all — "Add" is available immediately.
-const NO_TARGET_TYPES = new Set<WidgetType>(["all_hosts", "backup_status", "clock"]);
+const NO_TARGET_TYPES = new Set<WidgetType>(["all_hosts", "backup_status", "clock", "top_talkers"]);
 
 export function AddWidgetForm({
   endpoints,
@@ -58,12 +60,12 @@ export function AddWidgetForm({
     options = endpoints.map((e) => ({ id: e.id, label: e.name }));
   } else if (type === "host_metrics" || type === "network_bandwidth") {
     options = hosts.map((h) => ({ id: h.id, label: `${h.name} — ${endpointNameById.get(h.endpointId) ?? "unknown endpoint"}` }));
-  } else if (type === "alert_history") {
+  } else if (type === "alert_history" || type === "status_summary") {
     options = [{ id: "", label: "All endpoints" }, ...endpoints.map((e) => ({ id: e.id, label: e.name }))];
   }
 
   const isFreeText = type === "note" || type === "section_header";
-  const canAdd = isFreeText || NO_TARGET_TYPES.has(type) || type === "alert_history" || Boolean(targetId);
+  const canAdd = isFreeText || NO_TARGET_TYPES.has(type) || type === "alert_history" || type === "status_summary" || Boolean(targetId);
 
   function handleAdd() {
     if (!canAdd) return;
@@ -105,7 +107,7 @@ export function AddWidgetForm({
         />
       ) : NO_TARGET_TYPES.has(type) ? null : (
         <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className="min-w-40 rounded-md border border-[var(--border)] bg-transparent px-2 py-1">
-          {type !== "alert_history" && <option value="">Choose...</option>}
+          {type !== "alert_history" && type !== "status_summary" && <option value="">Choose...</option>}
           {options.map((o) => (
             <option key={o.id} value={o.id}>
               {o.label}

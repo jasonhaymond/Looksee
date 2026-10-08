@@ -113,6 +113,17 @@ installRouter.get("/looksee-agent.service", (_req, res) => {
   res.type("text/plain").sendFile(filePath);
 });
 
+// Optional Linux drop-in granting SMART/raw-disk access (agent README →
+// Privileges) — served so a host without the repo can fetch it with curl.
+installRouter.get("/looksee-agent-privileged.conf", (_req, res) => {
+  const filePath = path.join(agentDir, "looksee-agent-privileged.conf");
+  if (!fs.existsSync(filePath)) {
+    res.status(404).send("looksee-agent-privileged.conf not found on this engine.");
+    return;
+  }
+  res.type("text/plain").sendFile(filePath);
+});
+
 installRouter.get("/install-macos.sh", (_req, res) => {
   const filePath = path.join(agentDir, "install-macos.sh");
   if (!fs.existsSync(filePath)) {
