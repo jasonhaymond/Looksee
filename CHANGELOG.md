@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.0.3] - 2026-10-08
+
+### Fixed
+
+- **`git pull` and `scripts/update.sh` kept stopping on a modified
+  `package-lock.json`.** The update script ran `npm install`, which rewrites the lockfiles
+  whenever the server's npm version formats them differently from the one that
+  generated them, leaving the checkout dirty after every update. It now uses `npm ci`
+  (installs exactly what the lockfile pins, never modifies it), and resets any lockfile
+  drift left by earlier updates before its uncommitted-changes check. The deployment and
+  migration guides now use `npm ci` on servers too.
+
 ## [3.0.2] - 2026-10-08
 
 ### Fixed

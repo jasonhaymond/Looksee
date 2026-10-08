@@ -105,14 +105,14 @@ cp .env.example .env   # only if 5432 is already taken on this box
 docker compose up -d
 
 cd engine
-npm install
+npm ci
 # don't run db:migrate or db:create-admin yet — db:migrate needs a real DATABASE_URL
 # in engine/.env first (§4), and the database isn't there to migrate until it's
 # restored (§5); db:create-admin is skipped entirely, since the restored database
 # already has your real admin account
 
 cd ../dashboard
-npm install
+npm ci
 ```
 
 Leave `engine/.env` and `dashboard/.env` unwritten for now — you're bringing over the

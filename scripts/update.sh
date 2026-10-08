@@ -23,6 +23,18 @@ BACKUP_DIR="${LOOKSEE_BACKUP_DIR:-$HOME/looksee-backups}"
 ENGINE_URL="${LOOKSEE_ENGINE_URL:-http://localhost:4100}"
 TARGET_REF="${1:-}"
 
+# package-lock.json drift isn't a real local change: before 3.0.3 this script
+# ran `npm install`, which rewrites the lockfiles whenever the server's npm
+# version serializes them differently from the one that generated them. Put
+# them back so that leftover drift can't block the pull. Only these two
+# files — any other local change still stops the update below.
+for lockfile in engine/package-lock.json dashboard/package-lock.json; do
+  if [ -n "$(git status --porcelain -- "$lockfile")" ]; then
+    echo "==> Resetting $lockfile (npm-version formatting drift, not a real change)"
+    git checkout -- "$lockfile"
+  fi
+done
+
 if [ -n "$(git status --porcelain)" ]; then
   echo "Refusing to update: uncommitted local changes in $REPO_ROOT." >&2
   echo "Commit, stash, or discard them first." >&2
@@ -50,8 +62,11 @@ else
 fi
 
 echo "==> Installing dependencies"
-(cd engine && npm install)
-(cd dashboard && npm install)
+# npm ci installs exactly what the committed lockfile pins and never
+# rewrites it, so the checkout stays clean for the next pull (npm install
+# re-serializes the lockfile with the server's npm version).
+(cd engine && npm ci)
+(cd dashboard && npm ci)
 
 echo "==> Running database migrations"
 (cd engine && npm run db:migrate)

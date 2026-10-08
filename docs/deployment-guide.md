@@ -89,7 +89,7 @@ cp .env.example .env
 # used to build the agent install command shown on the Hosts page), SMTP_*
 # if you want email alerts, and VAPID_* for Web Push (see .env.example for
 # the generate command — never regenerate once real subscriptions exist).
-npm install
+npm ci
 npm run db:migrate
 npm run db:create-admin   # interactive — run in a real terminal, not piped
 
@@ -97,7 +97,7 @@ cd ../dashboard
 cp .env.example .env
 # Edit .env: NEXT_PUBLIC_API_URL — see the reverse-proxy section below for
 # why the recommended value is the same public URL as the dashboard itself.
-npm install
+npm ci
 ```
 
 **Recommended `CORS_ALLOWED_ORIGINS` / `NEXT_PUBLIC_API_URL` setup:** if you put the engine
@@ -402,6 +402,11 @@ to this table).
   if nothing holds the ports, `cd ~/Looksee && pm2 start ecosystem.config.cjs && pm2 save`.
   If an old process still holds them, stop it (`pm2 delete <name>` under its owner)
   first. 3.0.1's `update.sh` handles the unregistered case itself.
+- **`git pull` or `update.sh` stops because `package-lock.json` is modified** — a
+  leftover from updates before 3.0.3, which ran `npm install` and let the server's npm
+  version rewrite the lockfiles. Current `update.sh` resets them itself; to clear it by
+  hand: `git checkout -- engine/package-lock.json dashboard/package-lock.json`. Always
+  install on the server with `npm ci`, never `npm install`.
 - **`npm run db:migrate` fails** — confirm `docker compose ps` shows Postgres running and
   `DATABASE_URL` in `engine/.env` matches.
 - **Agent reports "Invalid agent token"** — the host's agent key was reset (regenerating
