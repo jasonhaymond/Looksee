@@ -478,3 +478,13 @@ describe("host metric instance matching", () => {
     expect(evaluateHostMetric(snap, { metric: "disk.used_percent", instance: "resolv" })?.value).toBe(99);
   });
 });
+
+describe("single-host API", () => {
+  it("reports hasSnapshot once a 3.x agent has reported (the check form relies on it)", async () => {
+    const res = await request(app).get(`/api/hosts/${hostId}`).set("Cookie", cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.hasSnapshot).toBe(true);
+    expect(res.body.lastSnapshot).toBeTruthy();
+    expect(res.body.agentApiKey).toBeUndefined();
+  });
+});

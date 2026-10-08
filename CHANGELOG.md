@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.0.5] - 2026-10-08
+
+### Fixed
+
+- **The add/edit check form said "This host hasn't sent a 3.x agent report yet" for
+  every host, even with an up-to-date agent**, and offered no mount/interface/device
+  suggestions for host-metric checks. The form read a `hasSnapshot` flag that only the
+  host-list API returned, not the single-host API it actually calls. The single-host
+  API now returns it, the form checks the snapshot directly, and the message names the
+  agent version the host reports. Host details in the form are now cached for 30
+  seconds instead of the whole page session, so a just-updated agent shows up without
+  a reload. Verified in the real UI with an updated and a pre-3.0 host.
+
 ## [3.0.4] - 2026-10-08
 
 ### Fixed

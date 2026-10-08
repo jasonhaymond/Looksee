@@ -37,7 +37,7 @@ hostsRouter.get("/:id", async (req, res) => {
     return;
   }
   const { agentApiKey, ...rest } = host;
-  res.json({ ...rest, hasAgentKey: Boolean(agentApiKey) });
+  res.json({ ...rest, hasAgentKey: Boolean(agentApiKey), hasSnapshot: Boolean(rest.lastSnapshot) });
 });
 
 hostsRouter.post("/", async (req, res) => {

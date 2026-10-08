@@ -9,10 +9,16 @@ import { Tooltip } from "./Tooltip";
 let catalogPromise: Promise<MetricDef[]> | null = null;
 const loadCatalog = () => (catalogPromise ??= api.hostMetricCatalog());
 
-const hostCache = new Map<string, Promise<HostDetail>>();
+// Short-lived so switching hosts back and forth in one form doesn't refetch,
+// but an agent that was just updated shows its new snapshot on the next form.
+const HOST_CACHE_MS = 30_000;
+const hostCache = new Map<string, { at: number; promise: Promise<HostDetail> }>();
 const loadHost = (id: string) => {
-  if (!hostCache.has(id)) hostCache.set(id, api.host(id));
-  return hostCache.get(id)!;
+  const hit = hostCache.get(id);
+  if (hit && Date.now() - hit.at < HOST_CACHE_MS) return hit.promise;
+  const promise = api.host(id);
+  hostCache.set(id, { at: Date.now(), promise });
+  return promise;
 };
 
 export function TypePicker({ onPick, onCancel }: { onPick: (type: string) => void; onCancel?: () => void }) {
@@ -227,7 +233,7 @@ function MetricFields({ config, set, host }: { config: Record<string, unknown>; 
           </Label>
         </>
       )}
-      {!host?.hasSnapshot && host && <p className="text-xs text-[var(--warn)] sm:col-span-2">This host hasn&apos;t sent a 3.x agent report yet — update its agent to see real names here.</p>}
+      {host && !host.lastSnapshot && <p className="text-xs text-[var(--warn)] sm:col-span-2">This host hasn&apos;t sent a 3.x agent report yet{host.agentVersion ? ` (it reports agent v${host.agentVersion})` : ""} — update its agent on the Hosts page to see real names here.</p>}
     </div>
   );
 }
