@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stops and removes the Looksee agent systemd service. Leaves the binary
-# (/usr/local/bin/looksee-agent), config (/etc/looksee-agent/), and the
+# (/var/lib/looksee-agent/ and its /usr/local/bin symlink), config (/etc/looksee-agent/), and the
 # looksee-agent system user in place by default — pass --purge to remove
 # those too.
 set -euo pipefail
@@ -18,6 +18,7 @@ echo "Service removed."
 
 if [ "${1:-}" = "--purge" ]; then
   rm -f /usr/local/bin/looksee-agent
+  rm -rf /var/lib/looksee-agent
   rm -rf /etc/looksee-agent
   userdel looksee-agent 2>/dev/null || true
   echo "Binary, config, and system user removed."

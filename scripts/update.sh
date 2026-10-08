@@ -75,6 +75,21 @@ echo "==> Building for production"
 (cd engine && npm run build)
 (cd dashboard && npm run build)
 
+# Agent binaries are what the engine serves to "Update agent" and the install
+# command, so they're built here rather than as a separate step — but only
+# when agent/VERSION differs from what the existing binaries were built as
+# (a five-platform build takes a minute or two), or the binaries are missing.
+AGENT_VERSION="$(tr -d '[:space:]' < agent/VERSION)"
+AGENT_STAMP="agent/bin/.built-version"
+BUILT_VERSION="$(tr -d '[:space:]' 2>/dev/null < "$AGENT_STAMP" || true)"
+if [ "$BUILT_VERSION" = "$AGENT_VERSION" ] && [ -f agent/bin/looksee-agent-linux-amd64 ]; then
+  echo "==> Agent binaries are already v$AGENT_VERSION — skipping the agent build"
+else
+  echo "==> Building agent binaries v$AGENT_VERSION (was: ${BUILT_VERSION:-none}) — local Go, or the golang Docker image"
+  bash agent/build-all.sh
+  echo "$AGENT_VERSION" > "$AGENT_STAMP"
+fi
+
 echo "==> Restarting processes"
 # startOrReload (not restart) so the update also works when pm2 has no
 # record of the apps — after a reboot without `pm2 save`/`pm2 startup`, or

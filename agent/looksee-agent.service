@@ -7,8 +7,13 @@ Wants=network-online.target
 Type=simple
 User=looksee-agent
 Group=looksee-agent
-ExecStart=/usr/local/bin/looksee-agent -config /etc/looksee-agent/looksee-agent.yaml
-Restart=on-failure
+# The binary lives in the agent's own state directory (writable by its user
+# even under ProtectSystem=strict) so "Update agent" can replace it.
+StateDirectory=looksee-agent
+ExecStart=/var/lib/looksee-agent/looksee-agent -config /etc/looksee-agent/looksee-agent.yaml
+# always, not on-failure: a self-update ends the process on purpose and it
+# must come back on the new binary.
+Restart=always
 RestartSec=5
 NoNewPrivileges=yes
 ProtectSystem=strict

@@ -31,8 +31,23 @@ $TaskName = "LookseeAgent"
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
+# On a re-install the old agent is still running: Windows locks a running
+# exe, so overwriting it fails, and the old process would otherwise keep
+# its old (possibly revoked) key. Stop it first.
+if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+    Write-Host "==> Stopping the existing agent"
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+}
+Get-Process -Name "looksee-agent" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -eq $BinaryPath } |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+
 Write-Host "==> Downloading looksee-agent for windows-amd64"
-Invoke-WebRequest -Uri "$EngineUrl/install/agent/windows-amd64" -OutFile $BinaryPath -UseBasicParsing
+$TmpPath = "$BinaryPath.download"
+Invoke-WebRequest -Uri "$EngineUrl/install/agent/windows-amd64" -OutFile $TmpPath -UseBasicParsing
+Move-Item -Force -Path $TmpPath -Destination $BinaryPath
+Remove-Item -Force -Path "$BinaryPath.old" -ErrorAction SilentlyContinue
 
 Write-Host "==> Writing config to $ConfigPath"
 @"
@@ -47,7 +62,9 @@ Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Silent
 $action = New-ScheduledTaskAction -Execute $BinaryPath -Argument "-config `"$ConfigPath`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+# -ExecutionTimeLimit 0 = no limit. The default (72 hours) makes Task
+# Scheduler stop the agent three days after each start.
+$settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings | Out-Null
 Start-ScheduledTask -TaskName $TaskName

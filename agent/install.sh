@@ -23,8 +23,14 @@ if ! id looksee-agent >/dev/null 2>&1; then
   useradd --system --no-create-home --shell /usr/sbin/nologin looksee-agent
 fi
 
-echo "==> Installing binary to /usr/local/bin/looksee-agent"
-install -m 755 "$BINARY_SRC" /usr/local/bin/looksee-agent
+# The binary lives in the agent's own state directory, owned by its user, so
+# the dashboard's "Update agent" can swap it in place (the hardened unit makes
+# /usr/local/bin read-only to the agent). /usr/local/bin/looksee-agent stays
+# as a symlink for running it by hand.
+echo "==> Installing binary to /var/lib/looksee-agent/looksee-agent"
+install -d -m 755 -o looksee-agent -g looksee-agent /var/lib/looksee-agent
+install -m 755 -o looksee-agent -g looksee-agent "$BINARY_SRC" /var/lib/looksee-agent/looksee-agent
+ln -sfn /var/lib/looksee-agent/looksee-agent /usr/local/bin/looksee-agent
 
 echo "==> Installing config to /etc/looksee-agent/looksee-agent.yaml"
 install -d -m 750 -o looksee-agent -g looksee-agent /etc/looksee-agent
@@ -34,7 +40,11 @@ echo "==> Installing systemd unit"
 install -m 644 "$SCRIPT_DIR/looksee-agent.service" /etc/systemd/system/looksee-agent.service
 
 systemctl daemon-reload
-systemctl enable --now looksee-agent
+systemctl enable looksee-agent
+# restart, not `enable --now`: on a re-install the agent is usually already
+# running, and `--now` leaves a running service alone — it would keep using
+# the old binary and the old (now revoked) key from memory.
+systemctl restart looksee-agent
 
 echo "==> Done. Check status with: systemctl status looksee-agent"
 echo "    Logs: journalctl -u looksee-agent -f"

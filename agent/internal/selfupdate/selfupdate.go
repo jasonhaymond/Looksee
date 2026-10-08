@@ -146,3 +146,24 @@ func Relaunch() error {
 	cmd.Stderr = os.Stderr
 	return cmd.Start()
 }
+
+// RestartExitCode is what the agent exits with after installing an update
+// under a service manager: a failure code, so systemd's Restart=on-failure
+// (units from before 3.1) and launchd's KeepAlive both start it again on the
+// new binary.
+const RestartExitCode = 75
+
+// Supervised reports whether a service manager runs this process and will
+// restart it on exit — systemd sets INVOCATION_ID, launchd sets
+// XPC_SERVICE_NAME. Under systemd, Relaunch's detached child would be killed
+// along with the exiting service and a clean exit is not restarted, so a
+// supervised agent exits with RestartExitCode instead of relaunching itself.
+func Supervised() bool {
+	if os.Getenv("INVOCATION_ID") != "" {
+		return true
+	}
+	if name := os.Getenv("XPC_SERVICE_NAME"); name != "" && name != "0" {
+		return true
+	}
+	return false
+}

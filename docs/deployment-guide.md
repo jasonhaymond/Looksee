@@ -283,8 +283,8 @@ upgrade itself is the normal `update.sh` run above — its database migration on
 tables, columns and check types, and back-fills each check's latest status, so existing
 checks, history and dashboards carry over unchanged. Afterwards:
 
-1. Rebuild the agent binaries on the server (section 9) so the engine can serve 3.0
-   agents — `curl -s localhost:4100/api/health` should show `"agentVersion":"3.0.0"`.
+1. `update.sh` (3.1+) builds the agent binaries for you; `curl -s localhost:4100/api/health`
+   shows the version they're built as in `"agentVersion"`.
 2. On the Hosts page, select all hosts and use **Update agents**. Pre-3.0 agents keep
    reporting CPU/memory/disk and running service/process checks; checks that need 3.0
    say "Needs agent 3.0.0+" until the host updates.
@@ -330,16 +330,17 @@ confirmation before it touches anything.
 
 ## 9. Distributing and installing agent binaries
 
-**Build once, on this server**, for every supported platform:
+**The binaries are built for you.** `scripts/update.sh` builds the agent for every
+supported platform whenever `agent/VERSION` changes (or the binaries are missing), into
+`agent/bin/`, which the engine serves directly. It uses this server's Go toolchain if
+there is one, otherwise the `golang` Docker image, run as your user with a build cache
+in `~/.cache/looksee-agent-build` (first build a few minutes, later ones seconds). For a
+brand-new server, build once by hand before installing any agents:
 
 ```sh
-cd ~/Looksee/agent
-./build-all.sh
+cd ~/Looksee && bash agent/build-all.sh
+ls agent/bin/   # five looksee-agent-* binaries
 ```
-
-Falls back to a Docker-based build automatically if this server has no Go toolchain.
-Outputs to `agent/bin/` — the engine serves these directly from there, so this only needs
-re-running after pulling agent code changes, not on every host you add.
 
 **Then, on each host you want to monitor**, generate that host's agent key in the
 dashboard (Hosts page) — it shows one command for Linux/macOS and one for Windows
@@ -355,8 +356,9 @@ $env:LOOKSEE_ENGINE_URL='https://looksee.yourdomain.com'; $env:LOOKSEE_AGENT_KEY
 Either one detects the host's OS/arch, downloads the matching binary from this engine
 (`/install/agent/:platform`, unauthenticated by design — the key is the only real
 credential involved, and it's baked into the command itself), writes its config, and
-installs and starts it as a real service in one shot: systemd on Linux (dedicated
-unprivileged user, `Restart=on-failure`), launchd on macOS, a Scheduled Task on Windows
+installs and (re)starts it as a real service in one shot: systemd on Linux (dedicated
+unprivileged user, binary in `/var/lib/looksee-agent/`, `Restart=always`), launchd on
+macOS, a Scheduled Task on Windows
 (no third-party service wrapper) — all using this server's own install scripts, not a
 reimplementation.
 
@@ -370,9 +372,17 @@ and wasn't exercised). macOS is scripted the same way as Linux but hasn't been r
 real Mac — flagged honestly in `agent/README.md` rather than claimed as tested.
 
 **Updating an already-installed agent**: the Hosts page shows each host's running agent
-version and an "Update agent" button — click it and the agent downloads the current
-build and swaps itself in on its next check-in, no re-running the install script by
-hand. Verified for real end-to-end (see `agent/README.md`'s Updating section).
+version and an "Update agent" button (or select several hosts and use **Update agents**) —
+the agent downloads the current build on its next check-in, swaps it in, and its service
+manager restarts it. Re-running the install command on a host also works at any time and
+restarts the agent with the new binary and key.
+
+**Linux hosts installed before 3.1 need the install command run once more** (generate a
+new key on the Hosts page and run the command it shows). Their agent binary sits in
+`/usr/local/bin`, which the hardened systemd unit makes read-only to the agent, so
+"Update agent" can't replace it — the agent logs "read-only file system" and keeps
+running the old version. 3.1's installer moves it to `/var/lib/looksee-agent/` (leaving
+a `/usr/local/bin/looksee-agent` symlink), after which "Update agent" works.
 
 ## 10. Troubleshooting
 
@@ -413,6 +423,12 @@ to this table).
   server to "fix" it; that dirties the checkout. Update to a release with a corrected
   lockfile (`git pull && bash scripts/update.sh` — the script resets lockfile drift
   first). Nothing was changed before `npm ci` failed except the pre-update snapshot.
+- **Hosts go offline right after re-running the install command with a new key** (agents
+  installed before 3.1) — the old installer didn't restart an already-running agent, so
+  it kept the old, now-revoked key (the agent logs `unexpected status 401`). Fix on each
+  Linux host: `sudo systemctl restart looksee-agent`, or re-run the install command from
+  3.1+. On Windows the old installer failed outright while the agent was running; re-run
+  the 3.1+ command in an Administrator PowerShell.
 - **`npm run db:migrate` fails** — confirm `docker compose ps` shows Postgres running and
   `DATABASE_URL` in `engine/.env` matches.
 - **Agent reports "Invalid agent token"** — the host's agent key was reset (regenerating

@@ -32,7 +32,9 @@ build_one() {
   local ext=""
   [ "$goos" = "windows" ] && ext=".exe"
   echo "==> Building $goos/$goarch"
-  GOOS="$goos" GOARCH="$goarch" go build -ldflags "$LDFLAGS" -o "bin/${out}${ext}" .
+  # CGO_ENABLED=0: a native linux/amd64 build otherwise links glibc
+  # dynamically and won't run on musl (Alpine) or old-glibc hosts.
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -ldflags "$LDFLAGS" -o "bin/${out}${ext}" .
 }
 
 if command -v go >/dev/null 2>&1; then
@@ -47,10 +49,17 @@ else
     read -r goos goarch <<< "$target"
     ext=""
     [ "$goos" = "windows" ] && ext=".exe"
-    build_cmd+="GOOS=$goos GOARCH=$goarch go build -ldflags \"$LDFLAGS\" -o bin/looksee-agent-${goos}-${goarch}${ext} . && "
+    build_cmd+="CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -ldflags \"$LDFLAGS\" -o bin/looksee-agent-${goos}-${goarch}${ext} . && "
   done
   build_cmd+="echo done"
-  docker run --rm -v "$SCRIPT_DIR:/agent" -w /agent golang:1.22 sh -c "$build_cmd"
+  # Run as the invoking user (not the container's root) so bin/ stays owned
+  # by whoever runs updates, with a persistent module/build cache so repeat
+  # builds (every update.sh run) don't re-download dependencies.
+  CACHE_DIR="${LOOKSEE_GO_CACHE:-$HOME/.cache/looksee-agent-build}"
+  mkdir -p "$CACHE_DIR"
+  docker run --rm --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp -e GOCACHE=/cache/build -e GOMODCACHE=/cache/mod -e GOFLAGS=-buildvcs=false \
+    -v "$CACHE_DIR:/cache" -v "$SCRIPT_DIR:/agent" -w /agent golang:1.22 sh -c "$build_cmd"
 fi
 
 echo "==> Built:"

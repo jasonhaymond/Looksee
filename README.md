@@ -3,7 +3,7 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v3.0.5 — 56 check types across the engine and agent (reachability, web,
+**Status**: v3.1.0 — 56 check types across the engine and agent (reachability, web,
 real-browser, DNS/DNSSEC, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
 app integrations, SNMP templates and interface tables, traps/syslog, Redfish/IPMI,
 Proxmox, VMware, Hyper-V, Docker, 60+ host metrics, files and folder watchdog, logs,
@@ -13,7 +13,7 @@ pages, network discovery, NetFlow/sFlow top talkers, and a management UI with fi
 grouping and multi-select bulk actions on checks, hosts and endpoints. Built and verified
 end to end locally (see [`CHANGELOG.md`](CHANGELOG.md) for exactly what was tested how);
 production on the homelab server still runs 2.1 until 3.0 is deployed there. Current
-version: **v3.0.5** — see
+version: **v3.1.0** — see
 [`CHANGELOG.md`](CHANGELOG.md) for the full history, [Deploying](#deploying) for a first
 deployment, and [`docs/user-guide.md`](docs/user-guide.md) for day-to-day usage.
 

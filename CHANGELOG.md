@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-08
+
+### Added
+
+- **`scripts/update.sh` builds the agent binaries itself** whenever `agent/VERSION`
+  changes (or the binaries are missing) — no separate build step. It uses the server's
+  Go toolchain or the `golang` Docker image, run as the invoking user (so `agent/bin/`
+  isn't root-owned) with a persistent build cache (first build a few minutes, later
+  ones ~10 s).
+
+### Fixed
+
+- **Re-running the agent install command didn't restart a running agent (Linux)** — it
+  used `systemctl enable --now`, which leaves a running service alone, so after
+  regenerating a host's key the old process kept the revoked key and every report was
+  rejected (401): the host showed offline. The installer now always restarts the agent.
+- **Windows re-install failed while the agent was running** (the running exe is locked)
+  and left the old agent on its old key. The installer now stops the task and process
+  first and downloads to a temp file.
+- **Windows agents stopped after 3 days** — the scheduled task used Task Scheduler's
+  default 72-hour run limit. It now has no limit.
+- **"Update agent" never worked on Linux** — the hardened systemd unit makes
+  `/usr/local/bin` read-only to the agent, so the update failed ("read-only file system")
+  and the agent silently kept its old version. The binary now lives in
+  `/var/lib/looksee-agent/` (the unit's `StateDirectory`, writable by the agent's user),
+  with a `/usr/local/bin` symlink. Hosts installed earlier need the install command run
+  once to move it.
+- **Self-update could leave the agent stopped under systemd or launchd** — it relaunched
+  a copy of itself and exited cleanly, which systemd treats as a stop (killing the copy).
+  Under a service manager the agent now exits with code 75 and is restarted on the new
+  binary (`Restart=always` in the unit).
+- **Linux amd64 agent wasn't actually static** — it linked glibc dynamically, so it
+  wouldn't run on Alpine/musl or old-glibc hosts. All agents are now built with
+  `CGO_ENABLED=0`.
+
+### Verification
+
+- In a real systemd container with the real install scripts and unit: reproduced the
+  offline bug (same PID after re-install, 401s), then with the fix — old layout migrated
+  to `/var/lib/looksee-agent/`, agent restarted on the new key, and "Update agent" took it
+  from 3.1.0 to a newer build (exit 75 → systemd restart → new version reporting).
+- `build-all.sh`'s Docker path and the `update.sh` version gate on a real Linux Docker
+  host as a non-root `docker`-group user (no record → build; same version → skip;
+  bumped → build), binaries owned by that user and statically linked.
+- The Windows installer changes and the macOS path were not run on a real host.
+
 ## [3.0.5] - 2026-10-08
 
 ### Fixed

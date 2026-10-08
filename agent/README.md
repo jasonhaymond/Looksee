@@ -208,10 +208,13 @@ sudo ./install.sh /path/to/looksee-agent-linux-amd64 /path/to/looksee-agent.yaml
 ```
 
 Creates a dedicated unprivileged `looksee-agent` system user, installs the binary to
-`/usr/local/bin/looksee-agent`, the config to `/etc/looksee-agent/looksee-agent.yaml`
-(mode 600, since it holds a real credential), and a `systemd` unit
-(`looksee-agent.service`) with `Restart=on-failure`. Idempotent — re-run after rebuilding
-the binary to update and restart it.
+`/var/lib/looksee-agent/looksee-agent` (owned by that user so "Update agent" can replace
+it — the hardened unit leaves the rest of the system read-only to the agent) with a
+`/usr/local/bin/looksee-agent` symlink, the config to
+`/etc/looksee-agent/looksee-agent.yaml` (mode 600, since it holds a real credential),
+and a `systemd` unit (`looksee-agent.service`) with `Restart=always`. Idempotent — re-run
+it any time (new binary, new key): it always restarts the agent so the new binary and
+config take effect.
 
 This was verified end-to-end in a real systemd container during development, not just
 written and assumed to work: installed, confirmed `active (running)` and `enabled`,

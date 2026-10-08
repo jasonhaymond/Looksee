@@ -135,6 +135,9 @@ func (a *agent) runOnce(cycle int) {
 		log.Printf("update requested — downloading and installing looksee-agent for %s", selfupdate.Platform())
 		if err := selfupdate.Apply(a.cfg.EngineURL); err != nil {
 			log.Printf("self-update failed, continuing on the current version: %v", err)
+		} else if selfupdate.Supervised() {
+			log.Printf("update installed, exiting so the service manager restarts the new version")
+			os.Exit(selfupdate.RestartExitCode)
 		} else if err := selfupdate.Relaunch(); err != nil {
 			log.Printf("update installed but failed to relaunch — restart the service manually: %v", err)
 		} else {
