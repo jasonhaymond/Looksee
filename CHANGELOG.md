@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-10-08
+
+### Fixed
+
+- **`./scripts/update.sh` failed with "Permission denied"** — the shell scripts
+  (`scripts/update.sh`, `backup.sh`, `restore.sh`, and the agent's `install*.sh`,
+  `uninstall*.sh`, `build-all.sh`) were committed from Windows without the executable
+  bit, so running them directly as the docs show never worked; only `bash <script>` did.
+  They're now executable in the repo. If you hit this, run `bash scripts/update.sh`
+  once (don't `chmod` the file on the server — git would see that as a local change and
+  `update.sh` refuses to run over local changes); the update pulls the fixed modes.
+
 ## [3.0.1] - 2026-10-08
 
 ### Fixed
