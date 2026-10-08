@@ -61,16 +61,28 @@ echo "==> Building for production"
 (cd dashboard && npm run build)
 
 echo "==> Restarting processes"
-pm2 restart looksee-engine looksee-dashboard
+# startOrReload (not restart) so the update also works when pm2 has no
+# record of the apps — after a reboot without `pm2 save`/`pm2 startup`, or
+# when run as a different user than the one that first started them. A
+# plain `pm2 restart` fails with "Process or Namespace not found" there.
+pm2 startOrReload ecosystem.config.cjs --update-env
+pm2 save
 
-echo "==> Waiting for the engine to report healthy"
+EXPECTED_VERSION="$(node -p "require('./engine/package.json').version")"
+echo "==> Waiting for the engine to report healthy on v$EXPECTED_VERSION"
 for _ in $(seq 1 30); do
-  if curl -sf "$ENGINE_URL/api/health" | grep -q '"status":"ok"'; then
-    echo "Update complete — engine is healthy."
+  HEALTH="$(curl -sf "$ENGINE_URL/api/health" || true)"
+  # The version must match too: an old process left running under another
+  # name (or another user's pm2) would otherwise answer "ok" on old code.
+  if echo "$HEALTH" | grep -q '"status":"ok"' && echo "$HEALTH" | grep -q "\"version\":\"$EXPECTED_VERSION\""; then
+    echo "Update complete — engine is healthy on v$EXPECTED_VERSION."
     exit 0
   fi
   sleep 2
 done
 
-echo "Engine did not report healthy within 60s after restart — check 'pm2 logs looksee-engine'." >&2
+echo "Engine did not report healthy on v$EXPECTED_VERSION within 60s." >&2
+echo "Last health response: ${HEALTH:-<none>}" >&2
+echo "Check 'pm2 list' (as the user that runs Looksee) and 'pm2 logs looksee-engine'." >&2
+echo "If an older version answered, something else still holds port 4100: 'ss -ltnp | grep 4100'." >&2
 exit 1

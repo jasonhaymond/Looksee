@@ -121,14 +121,18 @@ pm2 startup   # follow the one printed command (needs sudo)
 ```
 
 Useful commands: `pm2 status`, `pm2 logs looksee-engine`, `pm2 logs looksee-dashboard`,
-`pm2 restart looksee-engine looksee-dashboard` (used by `scripts/update.sh`).
+`pm2 restart looksee-engine looksee-dashboard`. `scripts/update.sh` uses `pm2
+startOrReload ecosystem.config.cjs`, which also (re)registers the apps if pm2 has
+forgotten them. Always run pm2 commands and `update.sh` **as the same user** — pm2 keeps
+a separate process list per user, so `sudo pm2 …` or `sudo ./update.sh` won't see the
+apps your normal user started.
 
 **If you use systemd instead of pm2**, create `/etc/systemd/system/looksee-engine.service`
 and `looksee-dashboard.service` with `WorkingDirectory`/`ExecStart` pointing at
 `node dist/index.js` (engine) and `node_modules/.bin/next start -p 3100` (dashboard)
 respectively, `Restart=on-failure`, then `sudo systemctl enable --now` both. Replace the
-`pm2 restart` line in `scripts/update.sh` with `sudo systemctl restart looksee-engine
-looksee-dashboard` if you go this route.
+`pm2 startOrReload …` and `pm2 save` lines in `scripts/update.sh` with `sudo systemctl
+restart looksee-engine looksee-dashboard` if you go this route.
 
 ## 5. Firewall
 
@@ -390,6 +394,14 @@ to this table).
 - **Web Push subscribe fails silently** — it requires HTTPS (or `localhost` for dev) and
   `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` set on the engine; check `pm2 logs
   looksee-engine` for "VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY are not configured".
+- **`update.sh` stops with "[PM2][ERROR] Process or Namespace looksee-engine not
+  found"** (scripts from before 3.0.1) — pm2 has no record of the apps for the user that
+  ran the script: run as a different user (e.g. with `sudo`), or a reboot without
+  `pm2 save`/`pm2 startup`. Everything before the restart (snapshot, migrate, build)
+  already finished. As your normal user: `pm2 list` and `ss -ltnp | grep -E ':4100|:3100'`;
+  if nothing holds the ports, `cd ~/Looksee && pm2 start ecosystem.config.cjs && pm2 save`.
+  If an old process still holds them, stop it (`pm2 delete <name>` under its owner)
+  first. 3.0.1's `update.sh` handles the unregistered case itself.
 - **`npm run db:migrate` fails** — confirm `docker compose ps` shows Postgres running and
   `DATABASE_URL` in `engine/.env` matches.
 - **Agent reports "Invalid agent token"** — the host's agent key was reset (regenerating

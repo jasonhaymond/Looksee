@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-10-08
+
+### Fixed
+
+- **`scripts/update.sh` failed at the restart step with "[PM2][ERROR] Process or
+  Namespace looksee-engine not found"** whenever pm2 had no record of the apps for the
+  user running it (run as another user, or after a reboot without `pm2 save`/`pm2
+  startup`) — everything before it had already succeeded, but nothing was restarted. It
+  now uses `pm2 startOrReload ecosystem.config.cjs` (starts or reloads as needed) and
+  `pm2 save`.
+- The post-update health check only looked for `"status":"ok"`, so an old process still
+  holding port 4100 could make an update look successful. It now also requires the
+  engine to report the version that was just deployed, and prints the last health
+  response and next steps when it doesn't.
+
 ## [3.0.0] - 2026-10-08
 
 A major expansion of what Looksee can monitor, plus a rebuilt management interface.
