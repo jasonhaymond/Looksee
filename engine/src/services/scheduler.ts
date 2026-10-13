@@ -34,6 +34,11 @@ export function startScheduler() {
 // decides when it's due (L3).
 const effectiveInterval = sql`(CASE WHEN ${checks.lastStatus} IS NOT NULL AND ${checks.lastStatus} <> 'up' AND ${checks.retryIntervalSeconds} IS NOT NULL THEN ${checks.retryIntervalSeconds} ELSE ${checks.intervalSeconds} END)`;
 
+// When the scheduler last completed its query for due checks — the
+// watchdog's evidence that the engine isn't just running, but working.
+let lastTickAt = Date.now();
+export const schedulerLastTick = () => lastTickAt;
+
 export async function runDueChecks() {
   const due = await db
     .select()
@@ -47,6 +52,7 @@ export async function runDueChecks() {
         or(isNull(checks.lastRunAt), lt(checks.lastRunAt, sql`now() - (${effectiveInterval} || ' seconds')::interval`))
       )
     );
+  lastTickAt = Date.now();
   const ready = (await takeCollectorChecks(due)).filter((c) => !running.has(c.id));
   logger.debug("scheduler", `Tick: ${ready.length} engine check(s) due`, { checkIds: ready.map((c) => c.id) });
 

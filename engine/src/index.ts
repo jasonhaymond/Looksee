@@ -2,6 +2,7 @@ import "dotenv/config";
 import cron from "node-cron";
 import { app } from "./app.js";
 import { startScheduler } from "./services/scheduler.js";
+import { startWatchdog } from "./services/watchdog.js";
 import { initBackupScheduler } from "./services/backup.js";
 import { db } from "./db/index.js";
 import { appMeta } from "./db/schema.js";
@@ -44,6 +45,7 @@ cron.schedule("45 3 * * *", () => {
 
 startScheduler();
 startReceivers();
+startWatchdog();
 
 // Re-notify and escalate open incidents even when no new results arrive.
 setInterval(() => {
@@ -57,7 +59,7 @@ initBackupScheduler().catch((err) => {
 });
 
 // Backstop for async code running detached from the request lifecycle (see
-// app.ts's express-async-errors import for the common in-request case) —
+// Express 5 forwards in-request rejections to the error handler itself) —
 // keeps one stray rejection from taking down the whole process.
 process.on("unhandledRejection", (reason) => {
   logger.error("engine", `Unhandled promise rejection outside the request lifecycle: ${reason instanceof Error ? reason.stack ?? reason.message : String(reason)}`, "Something failed in the background outside of a normal request — the process kept running, but this is worth a look.");

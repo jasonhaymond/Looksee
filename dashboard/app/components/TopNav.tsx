@@ -44,6 +44,7 @@ export const NAV: (NavItem | NavGroup)[] = [
     label: "System",
     items: [
       { href: "/security", label: "Security", hint: "Sign-in, 2FA, IP allowlist, attacks" },
+      { href: "/watchdog", label: "Watchdog", hint: "Get told if Looksee itself goes down" },
       { href: "/backups", label: "Backups" },
       { href: "/logs", label: "Logs" },
     ],

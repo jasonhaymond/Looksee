@@ -174,12 +174,8 @@ if a real use case shows up.
 - SNMPv3 traps (v1/v2c traps are received today).
 - Kubernetes monitoring (explicitly out of scope for 3.0).
 - Multi-step HTTP transactions / login flows (explicitly out of scope for 3.0).
-- **Queued (October 2026)**:
-  - Passkeys/WebAuthn as a second factor (YubiKeys and phone passkeys), alongside TOTP.
-  - Express 4 → 5 migration (Express 4 is supported but in maintenance; 5 is the
-    recommended line).
-  - An external uptime monitor for Looksee itself (something outside the homelab
-    watching `/api/health`), since Looksee can't alert on its own outage.
+- Built in 4.1 (queued October 2026): passkeys/WebAuthn as a second factor alongside
+  TOTP; Express 5; an outbound watchdog ping for Looksee's own outages.
 - More than one user account with roles (would change the single-admin decision).
 - Engine-side command checks (rejected — see CLAUDE.md: scripts run only from
   `script_dir`).

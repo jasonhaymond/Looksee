@@ -4,12 +4,13 @@ import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import { and, eq, gt, ne } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { loginChallenges, sessions, trustedIps, users } from "../db/schema.js";
+import { loginChallenges, sessions, trustedIps, users, webauthnCredentials } from "../db/schema.js";
 import { SESSION_COOKIE_NAME, createSession, deleteSessionByToken, sessionCookieOptions } from "../lib/session.js";
 import { requireAuth } from "../middleware/auth.js";
 import { clientIp } from "../lib/ipMatch.js";
 import { consumeTotp, generateRecoveryCodes, generateTotpSecret, otpauthUri } from "../lib/totp.js";
-import { getSecuritySettings, lockedOut, recordSecurityEvent } from "../services/security.js";
+import { getSecuritySettings, lockedOut, notifySecurity, recordSecurityEvent } from "../services/security.js";
+import { authenticationOptions, credentialsFor, finishRegistration, startRegistration, verifyPasskey } from "../services/passkeys.js";
 import { sendEmail } from "../services/notifications/email.js";
 
 export const authRouter = Router();
@@ -79,10 +80,14 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
     .insert(loginChallenges)
     .values({ userId: user.id, ip, needsTotp: true, enrollSecret, emailCodeHash: emailCode ? await bcrypt.hash(emailCode, 10) : null, expiresAt: new Date(Date.now() + CHALLENGE_MINUTES * 60_000) })
     .returning();
+  // A user with passkeys can use one instead of the code. (Enrolment always
+  // uses an authenticator app, so there's a code to fall back on.)
+  const passkey = enrollSecret ? null : await authenticationOptions(user, challenge.id);
   res.json({
     challengeId: challenge.id,
     step: enrollSecret ? "enroll" : "totp",
     emailCode: needsEmail,
+    passkey,
     ...(enrollSecret ? { enroll: { secret: enrollSecret, uri: otpauthUri(enrollSecret, user.email) } } : {}),
   });
 });
@@ -126,6 +131,8 @@ authRouter.post("/login/verify", loginLimiter, async (req, res) => {
       .set({ totpSecret: challenge.enrollSecret, totpEnabled: true, recoveryCodes: await Promise.all(recoveryCodes.map((c) => bcrypt.hash(c, 10))) })
       .where(eq(users.id, user.id));
     await recordSecurityEvent("totp_enrolled", { req, detail: user.email });
+  } else if (req.body?.passkey && typeof req.body.passkey === "object") {
+    if (!challenge.webauthnChallenge || !(await verifyPasskey(user, challenge.webauthnChallenge, req.body.passkey))) return fail("passkey");
   } else if (recovery) {
     let match = -1;
     for (let i = 0; i < user.recoveryCodes.length; i++) if (await bcrypt.compare(recovery, user.recoveryCodes[i])) match = i;
@@ -199,6 +206,46 @@ authRouter.post("/recovery-codes", requireAuth, async (req, res) => {
   const codes = generateRecoveryCodes();
   await db.update(users).set({ recoveryCodes: await Promise.all(codes.map((c) => bcrypt.hash(c, 10))) }).where(eq(users.id, user.id));
   res.json({ recoveryCodes: codes });
+});
+
+// ---- passkeys ----------------------------------------------------------
+
+authRouter.get("/passkeys", requireAuth, async (req, res) => {
+  const rows = await credentialsFor(req.user!.id);
+  res.json(rows.map(({ id, name, deviceType, backedUp, createdAt, lastUsedAt, transports }) => ({ id, name, deviceType, backedUp, createdAt, lastUsedAt, transports })));
+});
+
+// Adding a passkey needs a current authenticator code, so a stolen session
+// can't quietly add its own key for later.
+authRouter.post("/passkeys/options", requireAuth, async (req, res) => {
+  const user = await db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
+  if (!user?.totpSecret || !consumeTotp(user.id, user.totpSecret, String(req.body?.code ?? ""))) {
+    res.status(400).json({ error: "Enter a current code from your authenticator app" });
+    return;
+  }
+  res.json(await startRegistration(user, clientIp(req)));
+});
+
+authRouter.post("/passkeys", requireAuth, async (req, res) => {
+  const user = await db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
+  if (!user || !req.body?.response) {
+    res.status(400).json({ error: "Missing passkey response" });
+    return;
+  }
+  try {
+    const saved = await finishRegistration(user, String(req.body.challengeId ?? ""), String(req.body.name ?? ""), req.body.response);
+    await recordSecurityEvent("passkey_added", { req, detail: `${user.email}: ${saved.name}` });
+    await notifySecurity("Security: passkey added", `A passkey named "${saved.name}" was added to ${user.email} from ${clientIp(req)}. If that wasn't you, remove it on the Security page and change your password.`);
+    res.status(201).json({ id: saved.id, name: saved.name });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : "Couldn't add the passkey" });
+  }
+});
+
+authRouter.delete("/passkeys/:id", requireAuth, async (req, res) => {
+  const [gone] = await db.delete(webauthnCredentials).where(and(eq(webauthnCredentials.id, String(req.params.id)), eq(webauthnCredentials.userId, req.user!.id))).returning();
+  if (gone) await recordSecurityEvent("passkey_removed", { req, detail: `${req.user!.email}: ${gone.name}` });
+  res.status(204).end();
 });
 
 // Moving to a new phone: start returns a fresh secret; confirm swaps it in

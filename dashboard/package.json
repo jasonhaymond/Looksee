@@ -1,6 +1,6 @@
 {
   "name": "looksee-dashboard",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3100",
@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^14.0.0",
     "marked": "^16.4.2",
     "next": "^16.4.0",
     "qrcode-generator": "^2.0.4",

@@ -101,6 +101,25 @@ export const securitySettings = pgTable("security_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Singleton row (id always 1): the outbound "dead man's switch". While the
+// engine is healthy it pings `url` every intervalSeconds; an outside service
+// (Healthchecks.io, Uptime Kuma push, …) alerts when the pings stop — the one
+// failure Looksee can't report itself. The URLs carry the service's token, so
+// they're write-only like other secrets.
+export const watchdogSettings = pgTable("watchdog_settings", {
+  id: integer("id").primaryKey(),
+  enabled: boolean("enabled").notNull().default(false),
+  url: text("url"),
+  // Optional: called instead of `url` when the self-check fails (e.g. a
+  // Healthchecks.io ".../fail" URL), so a stuck-but-alive engine alerts too.
+  failUrl: text("fail_url"),
+  intervalSeconds: integer("interval_seconds").notNull().default(60),
+  lastPingAt: timestamp("last_ping_at", { withTimezone: true }),
+  lastResult: text("last_result"),
+  lastError: text("last_error"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Everything security-relevant that happened: sign-ins, failures, blocks,
 // scanner probes, bad agent keys. Security rules count these.
 export const securityEvents = pgTable("security_events", {
@@ -152,6 +171,26 @@ export const trustedIps = pgTable("trusted_ips", {
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("trusted_ips_user_ip_idx").on(t.userId, t.ip)]);
 
+// Passkeys / security keys (WebAuthn) — an alternative second step to the
+// authenticator code. TOTP stays enrolled as the fallback, so two-factor is
+// never weaker than before.
+export const webauthnCredentials = pgTable("webauthn_credentials", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  // base64url credential ID and COSE public key, as the authenticator sent them.
+  credentialId: text("credential_id").notNull().unique(),
+  publicKey: text("public_key").notNull(),
+  counter: integer("counter").notNull().default(0),
+  transports: jsonb("transports").$type<string[]>().notNull().default([]),
+  name: text("name").notNull(),
+  // "multiDevice" = a synced passkey (phone/password manager); "singleDevice"
+  // = bound to one authenticator (a YubiKey).
+  deviceType: text("device_type"),
+  backedUp: boolean("backed_up").notNull().default(false),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // A password that was right but still needs a second step (TOTP code and/or
 // an emailed new-IP code) before a session is issued.
 export const loginChallenges = pgTable("login_challenges", {
@@ -162,6 +201,9 @@ export const loginChallenges = pgTable("login_challenges", {
   // Set while a user without 2FA is enrolling (2FA is mandatory): the
   // secret becomes theirs once a code from it verifies.
   enrollSecret: text("enroll_secret"),
+  // A WebAuthn challenge issued for this sign-in (passkey as the second
+  // step) or for adding a passkey while signed in.
+  webauthnChallenge: text("webauthn_challenge"),
   emailCodeHash: text("email_code_hash"),
   attempts: integer("attempts").notNull().default(0),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

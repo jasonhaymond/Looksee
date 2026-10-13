@@ -51,8 +51,20 @@ Authenticator, 1Password, Bitwarden, Aegis, …). It can't be turned off in the 
 4. Looksee shows **ten recovery codes, once**. Save them in your password manager, tick
    the box, and continue. Each code signs you in once without the app.
 
-**Every later sign-in:** password, then the current 6-digit code (or **Use a recovery
-code**).
+**Every later sign-in:** password, then the current 6-digit code — or your passkey, if
+you've added one (below) — or **Use a recovery code**. Each code works once; if a code is
+refused right after you used it, wait for the next one.
+
+**Passkeys and security keys.** Under *Your account & 2FA → Passkeys & security keys*,
+**+ Add a passkey**: name it, enter a current authenticator code (so a stolen session
+can't add its own key), and touch your YubiKey or confirm on your phone/Windows Hello.
+At sign-in, **Use a passkey or security key** replaces typing the code. The authenticator
+app stays enrolled as the fallback, so two-factor never gets weaker; adding a passkey is
+logged and sends a security notification. Passkeys are bound to Looksee's address
+(the dashboard's hostname) — they work at `https://looksee.example.com`, not at an IP
+or a different hostname. For a proxy setup where that address can't be worked out from
+`DASHBOARD_URL`/`PUBLIC_URL`, set `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGINS` in
+`engine/.env`.
 
 **On the Security page (Your account & 2FA):**
 
@@ -251,8 +263,9 @@ Recommended, roughly in order of value:
    Borg backups are encrypted; keep the passphrase in your password manager.
 9. **Rotate credentials that leak** — **Regenerate key** on a host (Agent tab), **Regenerate
    URL** on a heartbeat check, **Replace settings** on a channel.
-10. **Monitor Looksee from outside** — a free external uptime monitor on `/api/health`,
-    so you hear about it if Looksee itself goes down.
+10. **Monitor Looksee from outside** — turn on the [watchdog](user-guide.md#watchdog)
+    (System → Watchdog) with a free Healthchecks.io check, so you hear about it if
+    Looksee itself goes down.
 11. **Sign the Windows agent** so security software on your hosts trusts it — see
     [windows-agent-security.md](windows-agent-security.md#signing-the-agent).
 
@@ -260,8 +273,9 @@ Chosen for the production deployment (October 2026): the dashboard stays public 
 two-factor, lockouts and rules; Caddy adds HSTS and hides its Server header; security
 notifications go to email and phone push.
 
-Planned (see `spec.md`): passkeys/WebAuthn as a second factor, and an external uptime
-monitor. Not planned: more than one user account, per-agent IP pinning.
+Since 4.1: passkeys/security keys as a second factor (above) and the outbound
+[watchdog](user-guide.md#watchdog) for Looksee's own outages. Not planned: more than one
+user account, per-agent IP pinning.
 
 ## Locked out? Recovery
 

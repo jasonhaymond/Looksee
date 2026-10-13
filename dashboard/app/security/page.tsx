@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import qrcode from "qrcode-generator";
-import { api, type Channel, type IpBlock, type SecurityEvent, type SecurityOverview, type SecurityRule, type SessionRow, type TrustedIp } from "../lib/api";
+import { startRegistration } from "@simplewebauthn/browser";
+import { api, type Passkey, type Channel, type IpBlock, type SecurityEvent, type SecurityOverview, type SecurityRule, type SessionRow, type TrustedIp } from "../lib/api";
 import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { ActionMenu, Button, FilterChip, Label, Modal, inputClass, relativeTime, useToast } from "../components/ui";
@@ -144,6 +145,7 @@ function AccountCard({ overview, toast, reload }: { overview: SecurityOverview; 
           </div>
         </form>
       </div>
+      <PasskeysSection toast={toast} />
       <div className="mt-4">
         <div className="mb-1 flex items-center justify-between">
           <h3 className="text-sm font-medium">Signed-in sessions</h3>
@@ -219,6 +221,102 @@ function AccountCard({ overview, toast, reload }: { overview: SecurityOverview; 
         </Modal>
       )}
     </Card>
+  );
+}
+
+// Passkeys / security keys as an alternative second step at sign-in. The
+// authenticator app stays as the fallback, so two-factor never gets weaker.
+function PasskeysSection({ toast }: { toast: (m: string, k?: "info" | "error") => void }) {
+  const [keys, setKeys] = useState<Passkey[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => api.passkeys().then(setKeys), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  return (
+    <div className="mt-4">
+      <div className="mb-1 flex items-center justify-between">
+        <h3 className="text-sm font-medium">Passkeys &amp; security keys</h3>
+        <Button className="!py-0.5 text-xs" onClick={() => setAdding(true)}>
+          + Add a passkey
+        </Button>
+      </div>
+      <p className="mb-2 text-xs text-[var(--muted)]">Use a YubiKey, your phone, Windows Hello or a password manager instead of typing a code at sign-in. Your authenticator app keeps working as the fallback.</p>
+      {keys.length === 0 ? (
+        <p className="text-xs text-[var(--muted)]">None yet.</p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {keys.map((k) => (
+            <li key={k.id} className="flex flex-wrap items-center gap-x-3 border-t border-[var(--border)] py-1.5">
+              <span className="font-medium">{k.name}</span>
+              <span className="text-xs text-[var(--muted)]">
+                {k.deviceType === "multiDevice" ? "synced passkey" : "security key / device-bound"} · added {new Date(k.createdAt).toLocaleDateString()} · last used {relativeTime(k.lastUsedAt)}
+              </span>
+              <span className="flex-1" />
+              <button
+                className="text-xs text-[var(--down)] underline"
+                onClick={async () => {
+                  if (!confirm(`Remove the passkey "${k.name}"?`)) return;
+                  await api.removePasskey(k.id);
+                  load();
+                }}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {adding && (
+        <Modal title="Add a passkey or security key" onClose={() => setAdding(false)}>
+          <form
+            className="space-y-3 text-sm"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setBusy(true);
+              try {
+                const { challengeId, options } = await api.passkeyOptions(code);
+                let response;
+                try {
+                  response = await startRegistration({ optionsJSON: options });
+                } catch {
+                  throw new Error("The passkey prompt was cancelled, timed out, or this key is already added.");
+                }
+                await api.addPasskey({ challengeId, name: name || "Passkey", response });
+                toast(`Added “${name || "Passkey"}”. You can use it at your next sign-in.`);
+                setAdding(false);
+                setCode("");
+                setName("");
+                load();
+              } catch (err) {
+                toast(err instanceof Error ? err.message : "Couldn't add the passkey", "error");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <Label label="Name it">
+              <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="YubiKey 5C, iPhone, Windows Hello…" className={inputClass} />
+            </Label>
+            <Label label="Current authenticator code" help="Confirms it's really you before a new way to sign in is added.">
+              <input required inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} className={inputClass} />
+            </Label>
+            <p className="text-xs text-[var(--muted)]">Your browser will ask you to touch your security key or confirm on your device.</p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setAdding(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" disabled={busy}>
+                {busy ? "Waiting for your key…" : "Continue"}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
   );
 }
 

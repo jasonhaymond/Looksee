@@ -49,8 +49,9 @@ two-factor, IP restriction, attack alerts), [windows-agent-security.md](windows-
 16. [Status pages](#status-pages)
 17. [Dashboards and widgets](#dashboards-and-widgets)
 18. [Security](#security)
-19. [Light and dark theme](#light-and-dark-theme)
-20. [Backups and logs](#backups-and-logs)
+19. [Watchdog](#watchdog)
+20. [Light and dark theme](#light-and-dark-theme)
+21. [Backups and logs](#backups-and-logs)
 
 ## How Looksee is organized
 
@@ -80,7 +81,7 @@ The top bar groups the pages:
 | Monitoring | Checks, Hosts, Endpoints & locations, Discovery |
 | Alerting | Alert history, Channels, Maintenance |
 | Insights | SLA reports, Traps & syslog, Top talkers, Status pages |
-| System | Security, Backups, Logs |
+| System | Security, Watchdog, Backups, Logs |
 | Help | This guide, the check reference, and the security guides |
 
 On a phone the same groups are behind the **Menu** button. The theme button (◐ ☀ ☾)
@@ -788,7 +789,8 @@ reachable from the internet. Full details, recommendations and recovery steps ar
 - **Two-factor sign-in is required.** The first sign-in after installing (or upgrading
   to 4.0) walks you through scanning a QR code with an authenticator app and saving ten
   recovery codes. Change your password, make new recovery codes, move to a new phone,
-  and see/sign out other sessions under **Your account & 2FA**.
+  add **passkeys or security keys** (a YubiKey, your phone, Windows Hello) to use
+  instead of the code, and see/sign out other sessions under **Your account & 2FA**.
 - **Sign-in safeguards** — lockout after repeated failures, session length, idle
   sign-out, minimum password length, and (optional) an **emailed code for sign-ins from
   a new IP**.
@@ -801,6 +803,29 @@ reachable from the internet. Full details, recommendations and recovery steps ar
 
 Locked out? On the server, run `npm run security:reset` in the `engine` folder — see the
 security guide.
+
+## Watchdog
+
+Looksee can alert on everything except its own outage. **System → Watchdog** sets up a
+"dead man's switch": while Looksee is healthy it pings an outside service every minute,
+and that service alerts you when the pings stop — the server died, the power or internet
+went out at home, or Looksee is stuck.
+
+1. Create a check at an outside service. Healthchecks.io's free tier is built for this:
+   **Add Check**, period 1 minute, grace 5 minutes, then choose how it tells you
+   (email, Telegram, push…). Uptime Kuma's *Push* monitor works too, if it runs somewhere
+   other than your homelab.
+2. Paste its ping URL into **Ping URL** (and, for Healthchecks.io, the same URL plus
+   `/fail` into **Failure URL**), **Save**, **Turn on**, then **Send a ping now**.
+   **Check:** the outside service shows Looksee as up.
+
+Before each ping Looksee checks itself — the database answers and the check scheduler has
+run in the last two minutes. If that self-check fails it calls the failure URL instead
+(or nothing, if there isn't one), so you hear about a Looksee that's running but broken.
+The URLs contain the service's secret token, so they're never shown again once saved.
+
+Prefer a service that polls you instead (UptimeRobot, Better Stack)? Point an HTTPS
+monitor at `https://<your-looksee>/api/health` with the keyword `"status":"ok"`.
 
 ## Light and dark theme
 

@@ -211,3 +211,47 @@ describe("review fixes", () => {
     expect(JSON.stringify(ev)).not.toContain("super-secret-token-value");
   });
 });
+
+describe("passkeys", () => {
+  const pkUser = `test-passkey-${crypto.randomUUID()}@example.com`;
+  const pkIp = from(ip());
+  const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  let cookie = "";
+  beforeAll(async () => {
+    await db.insert(users).values({ email: pkUser, passwordHash: await bcrypt.hash(password, 10), totpSecret: secret, totpEnabled: true });
+    const s1 = await request(app).post("/api/auth/login").set("X-Forwarded-For", pkIp).send({ email: pkUser, password });
+    expect(s1.body.passkey).toBeNull();
+    const s2 = await request(app).post("/api/auth/login/verify").set("X-Forwarded-For", pkIp).send({ challengeId: s1.body.challengeId, code: totpCode(secret) });
+    cookie = s2.headers["set-cookie"]![0];
+  });
+  afterAll(async () => {
+    await db.delete(users).where(eq(users.email, pkUser));
+  });
+
+  it("needs a current authenticator code to start adding a passkey", async () => {
+    const bad = await request(app).post("/api/auth/passkeys/options").set("Cookie", cookie).set("X-Forwarded-For", pkIp).send({ code: "000000" });
+    expect(bad.status).toBe(400);
+    // Next 30 s step, since codes are single-use.
+    const ok = await request(app).post("/api/auth/passkeys/options").set("Cookie", cookie).set("X-Forwarded-For", pkIp).send({ code: totpCode(secret, Date.now() + 30_000) });
+    expect(ok.status).toBe(200);
+    expect(ok.body.options.rp.name).toBe("Looksee");
+    expect(ok.body.options.user.name).toBe(pkUser);
+    const forged = await request(app).post("/api/auth/passkeys").set("Cookie", cookie).set("X-Forwarded-For", pkIp).send({ challengeId: ok.body.challengeId, name: "x", response: { id: "AAAA", rawId: "AAAA", type: "public-key", response: { clientDataJSON: "e30", attestationObject: "AA" }, clientExtensionResults: {} } });
+    expect(forged.status).toBe(400);
+    expect((await request(app).get("/api/auth/passkeys").set("Cookie", cookie)).body).toEqual([]);
+  });
+
+  it("offers passkey sign-in once one exists, and rejects a forged assertion", async () => {
+    const u = await db.query.users.findFirst({ where: eq(users.email, pkUser) });
+    const { webauthnCredentials } = await import("../src/db/schema.js");
+    await db.insert(webauthnCredentials).values({ userId: u!.id, credentialId: "dGVzdC1jcmVk", publicKey: "AAAA", name: "Fake key" });
+    const s1 = await request(app).post("/api/auth/login").set("X-Forwarded-For", pkIp).send({ email: pkUser, password });
+    expect(s1.body.passkey.allowCredentials[0].id).toBe("dGVzdC1jcmVk");
+    const forged = await request(app)
+      .post("/api/auth/login/verify")
+      .set("X-Forwarded-For", pkIp)
+      .send({ challengeId: s1.body.challengeId, passkey: { id: "dGVzdC1jcmVk", rawId: "dGVzdC1jcmVk", type: "public-key", response: { clientDataJSON: "e30", authenticatorData: "AA", signature: "AA" }, clientExtensionResults: {} } });
+    expect(forged.status).toBe(401);
+    expect(forged.headers["set-cookie"]).toBeUndefined();
+  });
+});

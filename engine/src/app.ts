@@ -1,5 +1,4 @@
 import express from "express";
-import "express-async-errors";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { pool } from "./db/index.js";
@@ -26,6 +25,7 @@ import { insightsRouter } from "./routes/insights.js";
 import { collectorRouter } from "./routes/collector.js";
 import { locationsRouter } from "./routes/locations.js";
 import { securityRouter } from "./routes/security.js";
+import { watchdogRouter } from "./routes/watchdog.js";
 import { notFoundHandler, securityGate, securityHeaders } from "./middleware/securityGate.js";
 
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
@@ -57,6 +57,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/endpoints", endpointsRouter);
 app.use("/api/locations", locationsRouter);
 app.use("/api/security", securityRouter);
+app.use("/api/watchdog", watchdogRouter);
 app.use("/api/hosts", hostsRouter);
 app.use("/api/checks", checksRouter);
 app.use("/api/channels", channelsRouter);

@@ -113,6 +113,20 @@
       "when": 1791860802338,
       "tag": "0015_v3_3_security",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791908775276,
+      "tag": "0016_v4_1_passkeys",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791909308319,
+      "tag": "0017_v4_1_watchdog",
+      "breakpoints": true
     }
   ]
 }

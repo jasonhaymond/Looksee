@@ -20,7 +20,7 @@ const STATUS_WORDS: Record<string, Status> = { up: "up", ok: "up", success: "up"
 // POST bodies may carry the same fields as JSON. Answers 200 "OK" so a
 // plain `curl -fsS` in a cron job succeeds without parsing anything.
 publicRouter.all("/hb/:token", pushLimiter, async (req, res) => {
-  const check = await db.query.checks.findFirst({ where: eq(checks.pushToken, req.params.token) });
+  const check = await db.query.checks.findFirst({ where: eq(checks.pushToken, String(req.params.token)) });
   if (!check || (check.type !== "heartbeat" && check.type !== "push_value")) {
     await recordSecurityEvent("bad_push_token", { req, path: "/api/hb/…" });
     res.status(404).type("text/plain").send("Unknown push token");

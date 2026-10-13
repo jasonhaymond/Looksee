@@ -3,7 +3,7 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v4.0.0 — 57 check types across the engine and agent (reachability, web,
+**Status**: v4.1.0 — 57 check types across the engine and agent (reachability, web,
 real-browser, DNS/DNSSEC, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
 app integrations, SNMP templates/walks/interface tables, printers, traps/syslog,
 Redfish/IPMI, Proxmox, VMware, Hyper-V, Docker, 60+ host metrics, files and folder
@@ -14,13 +14,14 @@ alerts with message templates and remediation hints, per-check history pages and
 history, host process/service inventory, smart suggested checks, maintenance windows,
 dependencies, escalation, SLA reports, public status pages, discovery, NetFlow/sFlow top
 talkers, light/dark themes, in-app help, and a security layer (required two-factor
-sign-in, lockouts, IP allowlist, new-IP email confirmation, attack detection with
-auto-blocking). Built and verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md)
+sign-in with passkey/security-key support, lockouts, IP allowlist, new-IP email
+confirmation, attack detection with auto-blocking, and an outbound watchdog for
+Looksee's own outages). Built and verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md)
 for exactly what was tested how); the homelab server runs the 3.x line.
 
-**Current version: v4.0.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#400---2026-10-13)
-(upgrading from 3.2 requires setting up two-factor at your first sign-in — see the
-upgrade notes there). See [Deploying](#deploying) for a first deployment and
+**Current version: v4.1.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#410---2026-10-13)
+(4.1 adds passkeys and the watchdog; upgrading from 3.x to 4.x requires setting up
+two-factor at your first sign-in — see the 4.0.0 upgrade notes there). See [Deploying](#deploying) for a first deployment and
 [`docs/user-guide.md`](docs/user-guide.md) for day-to-day usage (also built into the
 app under **Help**).
 

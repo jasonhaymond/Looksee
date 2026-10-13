@@ -19,7 +19,7 @@ adjust package manager commands for another distro.
 5. [Firewall](#5-firewall)
 6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
 7. [Backups](#7-backups)
-8. [Updating](#8-updating) — including [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
+8. [Updating](#8-updating) — including [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
 9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Security notes](#11-security-notes)
@@ -322,6 +322,21 @@ protect against this server failing.
 ```bash
 ~/Looksee/scripts/update.sh
 ```
+
+### Upgrading to 4.1
+
+4.1 adds passkeys/security keys as a second factor, the outbound watchdog, and moves the
+engine to Express 5. The upgrade is the normal `update.sh` run; its two migrations only
+add a table, a column and a settings table. Nothing to configure, then optionally:
+
+1. **Turn on the watchdog** — System → Watchdog, following the Healthchecks.io steps on
+   that page ([user guide → Watchdog](user-guide.md#watchdog)). **Check:** *Send a ping
+   now* turns the check green at the outside service.
+2. **Add a passkey** — System → Security → *Passkeys & security keys* →
+   **+ Add a passkey** (a YubiKey works). Sign out and back in with **Use a passkey or
+   security key** to confirm it.
+
+Rolling back to 4.0 is code-only safe (the new tables are simply unused).
 
 ### Upgrading to 4.0
 

@@ -269,3 +269,44 @@ describe("smart suggestions", () => {
     expect(new Set(sug.map((s) => s.key)).size).toBe(sug.length);
   });
 });
+
+describe("Express 5", () => {
+  it("forwards errors thrown in async handlers to the error handler (no express-async-errors)", async () => {
+    // An invalid uuid makes Postgres throw inside an async route.
+    const res = await request(app).get("/api/checks/not-a-uuid/stats").set("Cookie", cookie).timeout(5000);
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Internal server error");
+  });
+  it("still 404s unknown routes and parses JSON bodies", async () => {
+    expect((await request(app).get("/api/does-not-exist").set("Cookie", cookie)).status).toBe(404);
+    const r = await request(app).post("/api/locations").set("Cookie", cookie).send({});
+    expect(r.status).toBe(400);
+  });
+});
+
+describe("watchdog (outbound dead man's switch)", () => {
+  it("keeps the ping URL write-only, refuses to enable without one, and pings a real receiver", async () => {
+    const { db: database } = await import("../src/db/index.js");
+    const { watchdogSettings } = await import("../src/db/schema.js");
+    await database.delete(watchdogSettings);
+    const off = await request(app).patch("/api/watchdog").set("Cookie", cookie).send({ enabled: true });
+    expect(off.status).toBe(400);
+    expect((await request(app).patch("/api/watchdog").set("Cookie", cookie).send({ url: "ftp://nope" })).status).toBe(400);
+
+    const saved = await request(app).patch("/api/watchdog").set("Cookie", cookie).send({ url: `${hookBase}/ping/secret-uuid-123`, intervalSeconds: 5, enabled: true });
+    expect(saved.status).toBe(200);
+    expect(saved.body.urlSet).toBe(true);
+    expect(saved.body.intervalSeconds).toBe(30);
+    expect(JSON.stringify(saved.body)).not.toContain("secret-uuid-123");
+    expect(saved.body.selfCheck.ok).toBe(true);
+
+    received.length = 0;
+    const t = await request(app).post("/api/watchdog/test").set("Cookie", cookie);
+    expect(t.status).toBe(200);
+    expect(t.body.healthy).toBe(true);
+    expect(received.some((r) => r.path === "/ping/secret-uuid-123")).toBe(true);
+    const after = (await request(app).get("/api/watchdog").set("Cookie", cookie)).body;
+    expect(after.lastResult).toMatch(/healthy/);
+    await database.delete(watchdogSettings);
+  });
+});

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import qrcode from "qrcode-generator";
+import { startAuthentication } from "@simplewebauthn/browser";
 import { api, ApiError, type LoginStep } from "../lib/api";
 import { ThemeToggle } from "../components/ThemeToggle";
 
@@ -51,6 +52,20 @@ export default function LoginPage() {
       setStep(await api.login(email, password));
       setCode("");
       setEmailCode("");
+    });
+  };
+
+  const usePasskey = () => {
+    if (!step?.passkey) return;
+    run(async () => {
+      let response;
+      try {
+        response = await startAuthentication({ optionsJSON: step.passkey! });
+      } catch {
+        throw new ApiError(400, "The passkey prompt was cancelled or timed out — try again, or use your authenticator code.");
+      }
+      await api.verifyLogin({ challengeId: step.challengeId, passkey: response, ...(step.emailCode ? { emailCode } : {}) });
+      router.push("/");
     });
   };
 
@@ -119,7 +134,7 @@ export default function LoginPage() {
                 </details>
               </>
             ) : (
-              <p className="text-[var(--muted)]">{useRecovery ? "Enter one of your recovery codes." : "Enter the 6-digit code from your authenticator app."}</p>
+              <p className="text-[var(--muted)]">{useRecovery ? "Enter one of your recovery codes." : step.passkey ? "Use your passkey or security key, or the 6-digit code from your authenticator app." : "Enter the 6-digit code from your authenticator app."}</p>
             )}
             {step.emailCode && (
               <label className="block">
@@ -127,9 +142,21 @@ export default function LoginPage() {
                 <input inputMode="numeric" autoComplete="one-time-code" required value={emailCode} onChange={(e) => setEmailCode(e.target.value)} className={field} />
               </label>
             )}
+            {step.passkey && !useRecovery && (
+              <>
+                <button type="button" onClick={usePasskey} disabled={loading || (step.emailCode && !emailCode)} className={primary}>
+                  Use a passkey or security key
+                </button>
+                <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                  <span className="h-px flex-1 bg-[var(--border)]" />
+                  or enter a code
+                  <span className="h-px flex-1 bg-[var(--border)]" />
+                </div>
+              </>
+            )}
             <label className="block">
               {useRecovery ? "Recovery code" : "Authenticator code"}
-              <input autoFocus inputMode={useRecovery ? "text" : "numeric"} autoComplete="one-time-code" required value={code} onChange={(e) => setCode(e.target.value)} placeholder={useRecovery ? "abcd-efgh" : "123 456"} className={field} />
+              <input autoFocus={!step.passkey} inputMode={useRecovery ? "text" : "numeric"} autoComplete="one-time-code" required value={code} onChange={(e) => setCode(e.target.value)} placeholder={useRecovery ? "abcd-efgh" : "123 456"} className={field} />
             </label>
             {error && <p className="text-[var(--down)]">{error}</p>}
             <button type="submit" disabled={loading} className={primary}>

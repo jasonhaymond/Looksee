@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-13
+
+### Added
+
+- **Passkeys and security keys** (WebAuthn) as the second sign-in step, instead of
+  typing the authenticator code — a YubiKey, a phone or password-manager passkey, or
+  Windows Hello. Add them under System → Security → *Passkeys & security keys*; adding
+  one needs a current authenticator code and sends a security notification. The
+  authenticator app stays enrolled as the fallback, so two-factor stays mandatory.
+  `WEBAUTHN_RP_ID`/`WEBAUTHN_ORIGINS` override the defaults worked out from
+  `DASHBOARD_URL` for unusual proxy setups.
+- **Watchdog** (System → Watchdog): an outbound "dead man's switch" that pings an outside
+  service (Healthchecks.io, Uptime Kuma push, any URL) every minute while Looksee's
+  self-check passes (database reachable, scheduler running), and calls an optional
+  failure URL when it doesn't — so you hear about Looksee's own outages. URLs are
+  write-only.
+
+### Changed
+
+- The engine runs on **Express 5** (was 4). `express-async-errors` is gone — Express 5
+  forwards errors from async routes itself (tested).
+
+### Verified
+
+- Engine suite 184 tests (new: passkey options need a code, forged registration and
+  assertion rejected, passkey offered once registered; watchdog write-only URLs,
+  validation and a real ping; Express 5 async-error handling).
+- Passkeys end to end in Chrome with a virtual FIDO2 security key: registered on the
+  Security page, signed in with it instead of a code, and an unregistered key was refused.
+- Watchdog page at desktop and mobile widths, dark and light.
+
 ## [4.0.0] - 2026-10-13
 
 ### Upgrade notes

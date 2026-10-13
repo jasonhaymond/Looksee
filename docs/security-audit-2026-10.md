@@ -141,5 +141,6 @@ For you to do (each documented where linked):
 4. Optional hardening: VPN/identity-proxy in front of the dashboard, Caddy HSTS, edge
    geo-blocking — [security guide checklist](security-guide.md#hardening-checklist-for-an-internet-facing-looksee).
 
-Planned work (not urgent): Express 5 migration; re-check the two dev-only advisories when
-drizzle-kit and eslint-config-next release fixes; passkeys/WebAuthn as a second factor.
+Planned work: re-check the two dev-only advisories when drizzle-kit and
+eslint-config-next release fixes. Done in 4.1: Express 5 migration, passkeys/WebAuthn,
+outbound watchdog.

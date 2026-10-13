@@ -1,3 +1,5 @@
+import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4100";
 
 export class ApiError extends Error {
@@ -331,7 +333,9 @@ export type DiscoveredDevice = {
   knownHostId: string | null;
   suggestedChecks: SuggestedCheck[];
 };
-export type LoginStep = { challengeId: string; step: "enroll" | "totp"; emailCode: boolean; enroll?: { secret: string; uri: string } };
+export type LoginStep = { challengeId: string; step: "enroll" | "totp"; emailCode: boolean; enroll?: { secret: string; uri: string }; passkey?: PublicKeyCredentialRequestOptionsJSON | null };
+export type WatchdogView = { enabled: boolean; urlSet: boolean; url: string | null; failUrlSet: boolean; failUrl: string | null; intervalSeconds: number; lastPingAt: string | null; lastResult: string | null; lastError: string | null; selfCheck: { ok: boolean; reason: string } };
+export type Passkey = { id: string; name: string; deviceType: string | null; backedUp: boolean; createdAt: string; lastUsedAt: string | null; transports: string[] };
 export type SecuritySettings = {
   allowlistEnabled: boolean;
   allowlist: string[];
@@ -367,7 +371,14 @@ const qs = (params: Record<string, unknown>) => {
 
 export const api = {
   login: (email: string, password: string) => request<LoginStep>("/api/auth/login", json({ email, password })),
-  verifyLogin: (input: { challengeId: string; code?: string; emailCode?: string; recoveryCode?: string }) => request<{ id: string; email: string; recoveryCodes?: string[] }>("/api/auth/login/verify", json(input)),
+  verifyLogin: (input: { challengeId: string; code?: string; emailCode?: string; recoveryCode?: string; passkey?: AuthenticationResponseJSON }) => request<{ id: string; email: string; recoveryCodes?: string[] }>("/api/auth/login/verify", json(input)),
+  watchdog: () => request<WatchdogView>("/api/watchdog"),
+  updateWatchdog: (input: { enabled?: boolean; url?: string | null; failUrl?: string | null; intervalSeconds?: number }) => request<WatchdogView>("/api/watchdog", patch(input)),
+  testWatchdog: () => request<{ sent: boolean; healthy: boolean; detail: string }>("/api/watchdog/test", { method: "POST" }),
+  passkeys: () => request<Passkey[]>("/api/auth/passkeys"),
+  passkeyOptions: (code: string) => request<{ challengeId: string; options: PublicKeyCredentialCreationOptionsJSON }>("/api/auth/passkeys/options", json({ code })),
+  addPasskey: (input: { challengeId: string; name: string; response: RegistrationResponseJSON }) => request<{ id: string; name: string }>("/api/auth/passkeys", json(input)),
+  removePasskey: (id: string) => request<void>(`/api/auth/passkeys/${id}`, del),
   changePassword: (input: { currentPassword: string; newPassword: string; code: string }) => request<{ ok: true }>("/api/auth/password", json(input)),
   regenerateRecoveryCodes: (code: string) => request<{ recoveryCodes: string[] }>("/api/auth/recovery-codes", json({ code })),
   rotateTotp: (code: string) => request<{ challengeId: string; secret: string; uri: string }>("/api/auth/totp/rotate", json({ code })),
