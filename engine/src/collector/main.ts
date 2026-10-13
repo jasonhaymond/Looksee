@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { runNetworkProbe } from "../services/probes/network.js";
 import { sendWakeOnLan } from "../services/probes/protocols.js";
+import { browseSnmp } from "../services/probes/snmp.js";
 import { type EventInput, type FlowRow, type ReceiverPorts, FlowAggregator, sourceAllowed, startListeners } from "../services/receivers/core.js";
 import { scanNetwork } from "../services/discoveryCore.js";
 
@@ -207,15 +208,22 @@ async function runScan(scan: { id: string; cidr: string; community: string }) {
 async function runJob(job: { id: string; kind: string; payload: Record<string, unknown> }) {
   let ok = false;
   let message = "";
+  let data: unknown;
   try {
-    if (job.kind !== "wake") throw new Error(`Unknown job kind "${job.kind}" — update the collector`);
-    await sendWakeOnLan(String(job.payload.mac ?? ""), job.payload.broadcast ? String(job.payload.broadcast) : undefined);
+    if (job.kind === "wake") {
+      await sendWakeOnLan(String(job.payload.mac ?? ""), job.payload.broadcast ? String(job.payload.broadcast) : undefined);
+      message = `Magic packet sent to ${job.payload.mac}`;
+    } else if (job.kind === "snmp_walk") {
+      data = await browseSnmp(job.payload as Record<string, unknown>);
+      message = "walk finished";
+    } else {
+      throw new Error(`Unknown job kind "${job.kind}" — update the collector`);
+    }
     ok = true;
-    message = `Magic packet sent to ${job.payload.mac}`;
   } catch (err) {
     message = errText(err);
   }
-  await api("POST", `/jobs/${job.id}`, { ok, message }).catch((err) => log(`job ${job.id} report failed: ${errText(err)}`));
+  await api("POST", `/jobs/${job.id}`, { ok, message, data }).catch((err) => log(`job ${job.id} report failed: ${errText(err)}`));
 }
 
 // ---- loops --------------------------------------------------------------

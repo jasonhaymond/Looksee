@@ -124,7 +124,7 @@ export default function ReportsPage() {
       ) : rows.length === 0 ? (
         <EmptyState>No results recorded in this period.</EmptyState>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--panel)]/40">
+        <div className="overflow-x-auto rounded-xl surface">
           <table className="w-full text-sm">
             <thead className="text-xs text-[var(--muted)]">
               <tr>

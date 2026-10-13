@@ -163,10 +163,12 @@ collectorRouter.post("/scans/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/collector/jobs/:id { ok, message }
+// POST /api/collector/jobs/:id { ok, message, data? }
+// data (an SNMP walk's rows) is stored as JSON in result in place of message.
 collectorRouter.post("/jobs/:id", async (req, res) => {
   const ok = Boolean(req.body?.ok);
-  const message = typeof req.body?.message === "string" ? req.body.message.slice(0, 1000) : null;
+  const text = typeof req.body?.message === "string" ? req.body.message.slice(0, 1000) : null;
+  const message = ok && req.body?.data !== undefined ? JSON.stringify(req.body.data).slice(0, 3_000_000) : text;
   const [job] = await db
     .update(collectorJobs)
     .set({ status: ok ? "done" : "error", result: message, finishedAt: new Date() })
@@ -176,6 +178,6 @@ collectorRouter.post("/jobs/:id", async (req, res) => {
     res.status(404).json({ error: "Job not found for this collector" });
     return;
   }
-  if (!ok) logger.warn("collector", `Collector job ${job.id} (${job.kind}) failed: ${message}`, `A ${job.kind} request sent through a site collector failed: ${message}`, { jobId: job.id });
+  if (!ok) logger.warn("collector", `Collector job ${job.id} (${job.kind}) failed: ${text}`, `A ${job.kind} request sent through a site collector failed: ${text}`, { jobId: job.id });
   res.json({ ok: true });
 });

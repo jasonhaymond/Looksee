@@ -22,10 +22,10 @@ function ensureConfigured() {
 // in on and granted permission") — a subscription that's gone stale
 // (uninstalled PWA, cleared site data) fails with 404/410, which we treat
 // as a cue to delete it rather than a real error.
-export async function sendWebPush(_config: unknown, message: string) {
+export async function sendWebPush(_config: unknown, message: string, title = "Looksee alert", url?: string) {
   ensureConfigured();
   const subscriptions = await db.query.webPushSubscriptions.findMany();
-  const payload = JSON.stringify({ title: "Looksee alert", body: message });
+  const payload = JSON.stringify({ title, body: message, url });
 
   await Promise.all(
     subscriptions.map(async (sub) => {

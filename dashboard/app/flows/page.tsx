@@ -74,7 +74,7 @@ export default function FlowsPage() {
       ) : (
         <ol className="space-y-2">
           {(rows ?? []).map((r, i) => (
-            <li key={r.label} className="rounded-lg border border-[var(--border)] bg-[var(--panel)]/40 p-2 text-sm">
+            <li key={r.label} className="rounded-lg surface p-2 text-sm">
               <div className="flex flex-wrap justify-between gap-2">
                 <span className="font-mono">
                   <span className="mr-2 text-[var(--muted)]">{i + 1}.</span>

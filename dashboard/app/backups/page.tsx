@@ -98,7 +98,7 @@ export default function BackupsPage() {
   if (!authChecked || !settings) return null;
 
   return (
-    <main className="mx-auto max-w-3xl p-6">
+    <main className="mx-auto max-w-4xl p-4 sm:p-6">
       <TopNav active="/backups" />
       <h2 className="mb-4 text-lg font-medium">Backups</h2>
       <PageHelp anchor="backups-and-logs">
@@ -116,7 +116,7 @@ export default function BackupsPage() {
         </div>
       )}
 
-      <section className="mb-6 rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
+      <section className="mb-6 rounded-xl surface p-4">
         <h2 className="mb-3 font-medium">Repository settings</h2>
         <form onSubmit={handleSave} className="space-y-3 text-sm">
           <label className="block">
@@ -176,7 +176,7 @@ export default function BackupsPage() {
           {saveError && <p className="text-[var(--down)]">{saveError}</p>}
           {saved && <p className="text-[var(--up)]">Saved.</p>}
           <div className="flex items-center gap-3">
-            <button type="submit" className="rounded-md bg-[var(--up)] px-3 py-1.5 font-medium text-black">
+            <button type="submit" className="rounded-md bg-[var(--accent)] px-3 py-1.5 font-medium text-[var(--on-accent)]">
               Save settings
             </button>
             <span className="inline-flex items-center text-[var(--muted)]">
@@ -190,7 +190,7 @@ export default function BackupsPage() {
         </form>
       </section>
 
-      <section className="mb-6 rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
+      <section className="mb-6 rounded-xl surface p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="font-medium">Archives</h2>
           <span className="inline-flex items-center">
@@ -223,7 +223,7 @@ export default function BackupsPage() {
         )}
       </section>
 
-      <section className="rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-4">
+      <section className="rounded-xl surface p-4">
         <h2 className="mb-3 font-medium">Recent runs</h2>
         {runs.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">No runs yet.</p>

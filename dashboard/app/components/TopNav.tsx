@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "../lib/api";
 import { PushEnableButton } from "./PushEnableButton";
+import { ThemeToggle } from "./ThemeToggle";
 
 type NavItem = { href: string; label: string; hint?: string };
 type NavGroup = { label: string; items: NavItem[] };
@@ -18,14 +19,15 @@ export const NAV: (NavItem | NavGroup)[] = [
     items: [
       { href: "/manage", label: "Checks", hint: "Everything being monitored" },
       { href: "/hosts", label: "Hosts", hint: "Machines running the agent" },
-      { href: "/endpoints", label: "Endpoints", hint: "Groups / networks" },
+      { href: "/endpoints", label: "Endpoints & locations", hint: "Networks, grouped by place" },
       { href: "/discovery", label: "Discovery", hint: "Scan a subnet for devices" },
     ],
   },
   {
     label: "Alerting",
     items: [
-      { href: "/channels", label: "Channels", hint: "Email, push, webhooks" },
+      { href: "/alerts", label: "Alert history", hint: "Every incident, open and resolved" },
+      { href: "/channels", label: "Channels", hint: "Email, push, Slack, Teams, Telegram…" },
       { href: "/maintenance", label: "Maintenance", hint: "Silence alerts on a schedule" },
     ],
   },
@@ -41,6 +43,7 @@ export const NAV: (NavItem | NavGroup)[] = [
   {
     label: "System",
     items: [
+      { href: "/security", label: "Security", hint: "Sign-in, 2FA, IP allowlist, attacks" },
       { href: "/backups", label: "Backups" },
       { href: "/logs", label: "Logs" },
     ],
@@ -87,7 +90,7 @@ export function TopNav({ active }: { active: string }) {
         <Link href="/" className="text-xl font-semibold">
           Looksee
         </Link>
-        <nav className="hidden items-center gap-x-5 text-sm md:flex" aria-label="Main">
+        <nav className="hidden items-center gap-x-4 whitespace-nowrap text-sm md:flex" aria-label="Main">
           {NAV.map((n) =>
             isGroup(n) ? (
               <div key={n.label} className="relative">
@@ -96,7 +99,7 @@ export function TopNav({ active }: { active: string }) {
                   <span className="text-[9px]">▾</span>
                 </button>
                 {openGroup === n.label && (
-                  <div className="absolute left-0 top-full z-40 mt-2 w-60 rounded-lg border border-[var(--border)] bg-[var(--panel)] p-1 shadow-xl">
+                  <div className="absolute left-0 top-full z-40 mt-2 w-64 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-1 shadow-xl">
                     {n.items.map((i) => (
                       <Link key={i.href} href={i.href} onClick={() => setOpenGroup(null)} className={`block rounded-md px-3 py-2 hover:bg-[var(--border)]/40 ${i.href === active ? "bg-[var(--border)]/40" : ""}`}>
                         <span className="block text-[var(--text)]">{i.label}</span>
@@ -112,7 +115,11 @@ export function TopNav({ active }: { active: string }) {
               </Link>
             )
           )}
+          <Link href="/help" className={linkClass(active === "/help")}>
+            Help
+          </Link>
           <PushEnableButton />
+          <ThemeToggle />
           <button onClick={handleLogout} className="text-[var(--muted)] hover:text-[var(--text)]">
             Sign out
           </button>
@@ -141,7 +148,11 @@ export function TopNav({ active }: { active: string }) {
               </Link>
             )
           )}
-          <div className="flex items-center gap-4 border-t border-[var(--border)] pt-3">
+          <Link href="/help" className="block rounded-md px-2 py-1.5">
+            Help &amp; user guide
+          </Link>
+          <div className="flex flex-wrap items-center gap-4 border-t border-[var(--border)] pt-3">
+            <ThemeToggle showLabel />
             <PushEnableButton />
             <button onClick={handleLogout} className="text-[var(--muted)]">
               Sign out

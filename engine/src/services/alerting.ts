@@ -1,9 +1,13 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { checks, checkResults, alertRules, alertRuleChannels, alertEvents, notificationChannels, checkDependencies } from "../db/schema.js";
+import { checks, checkResults, alertRules, alertRuleChannels, alertEvents, notificationChannels, checkDependencies, hosts, endpoints, locations } from "../db/schema.js";
 import { sendEmail } from "./notifications/email.js";
 import { sendWebhook } from "./notifications/webhook.js";
 import { sendWebPush } from "./notifications/webpush.js";
+import { sendSlack, sendTeams, sendTelegram } from "./notifications/chat.js";
+import { dashboardUrl, formatDuration, renderFor, type AlertContext, type AlertEvent, type Templates } from "./notifications/templates.js";
+import { remediationFor } from "./remediation.js";
+import { recordSighting } from "./addresses.js";
 import { isInMaintenance } from "./maintenance.js";
 import type { Status } from "./thresholds.js";
 import { logger } from "../lib/logger.js";
@@ -69,6 +73,15 @@ export async function recordCheckResult(checkId: string, input: ResultInput) {
     })
     .where(eq(checks.id, checkId));
 
+  // An ARP check that found its device is also an address sighting.
+  if (check.type === "arp_presence" && input.status === "up") {
+    const d = (input.details ?? {}) as { mac?: string; ip?: string };
+    const cfg = (check.config ?? {}) as { mac?: string; ip?: string };
+    const mac = d.mac ?? cfg.mac;
+    const ip = d.ip ?? cfg.ip;
+    if (mac && ip) await recordSighting({ mac, ip, source: "arp", hostId: check.hostId, endpointId: check.endpointId }).catch(() => undefined);
+  }
+
   if (inMaintenance) return;
   await evaluateAlertRules({ ...check, flapping }, input);
 }
@@ -108,10 +121,10 @@ async function evaluateAlertRules(check: typeof checks.$inferSelect, latest: Res
       const severity = latest.status === "warn" ? "warn" : "down";
       const text = `${check.name} is ${severity.toUpperCase()}${latest.message ? `: ${latest.message}` : ""}`;
       await db.insert(alertEvents).values({ alertRuleId: rule.id, severity, message: text, lastNotifiedAt: new Date() });
-      await notify(rule.id, `[Looksee] ${text}`, `${check.name} is ${severity.toUpperCase()}`, false);
+      await notify(rule.id, await alertContext(check, "triggered", severity, latest.message ?? null, null), false);
     } else if (openEvent && latest.status !== "unknown" && !failing(latest.status, rule.triggerOn)) {
       await db.update(alertEvents).set({ status: "resolved", resolvedAt: new Date() }).where(eq(alertEvents.id, openEvent.id));
-      await notify(rule.id, `[Looksee] ${check.name} has recovered (now ${latest.status.toUpperCase()}).`, `${check.name} recovered`, Boolean(openEvent.escalatedAt));
+      await notify(rule.id, await alertContext(check, "resolved", latest.status, latest.message ?? null, openEvent.triggeredAt), Boolean(openEvent.escalatedAt));
     }
   }
 }
@@ -126,36 +139,74 @@ export async function processOpenAlerts(now = new Date()) {
     if (!rule || !rule.enabled) continue;
     const check = await db.query.checks.findFirst({ where: eq(checks.id, rule.checkId) });
     if (!check || (await isInMaintenance(check, now))) continue;
-    const text = event.message ?? `${check.name} is still failing`;
-
+    const status = check.lastStatus ?? event.severity;
     if (rule.escalateAfterMinutes && !event.escalatedAt && now.getTime() - event.triggeredAt.getTime() >= rule.escalateAfterMinutes * 60_000) {
       await db.update(alertEvents).set({ escalatedAt: now }).where(eq(alertEvents.id, event.id));
-      await notify(rule.id, `[Looksee] ESCALATED — ${text} (open for ${rule.escalateAfterMinutes}+ min)`, `Escalated: ${check.name}`, true, true);
+      await notify(rule.id, await alertContext(check, "escalated", status, check.lastMessage, event.triggeredAt), true, true);
       continue;
     }
     const last = event.lastNotifiedAt ?? event.triggeredAt;
     if (rule.renotifyMinutes && now.getTime() - last.getTime() >= rule.renotifyMinutes * 60_000) {
       await db.update(alertEvents).set({ lastNotifiedAt: now }).where(eq(alertEvents.id, event.id));
-      await notify(rule.id, `[Looksee] Still failing — ${text}`, `Still failing: ${check.name}`, Boolean(event.escalatedAt));
+      await notify(rule.id, await alertContext(check, "reminder", status, check.lastMessage, event.triggeredAt), Boolean(event.escalatedAt));
     }
   }
+}
+
+// Everything a template can mention, looked up once per notification.
+export async function alertContext(check: typeof checks.$inferSelect, event: AlertEvent, status: string, message: string | null, openedAt: Date | null): Promise<AlertContext> {
+  const host = check.hostId ? await db.query.hosts.findFirst({ where: eq(hosts.id, check.hostId) }) : undefined;
+  const endpoint = await db.query.endpoints.findFirst({ where: eq(endpoints.id, check.endpointId) });
+  const location = endpoint?.locationId ? await db.query.locations.findFirst({ where: eq(locations.id, endpoint.locationId) }) : undefined;
+  const hints = remediationFor({ type: check.type, status: event === "resolved" ? "up" : status, message, config: check.config });
+  return {
+    event,
+    check: check.name,
+    checkId: check.id,
+    type: check.type.replace(/_/g, " "),
+    status: status.toUpperCase(),
+    message: message ?? "",
+    host: host?.name ?? "",
+    endpoint: endpoint?.name ?? "",
+    location: location?.name ?? "",
+    time: new Date().toLocaleString(),
+    duration: openedAt ? formatDuration(Date.now() - openedAt.getTime()) : "",
+    remediation: hints.map((h) => `• ${h}`).join("\n"),
+    url: `${dashboardUrl()}/checks/${check.id}`,
+  };
+}
+
+// One channel, one rendered message — also what the Channels page's "Send
+// test" uses, so a test proves the exact path a real alert takes.
+export async function deliver(channel: typeof notificationChannels.$inferSelect, ctx: AlertContext) {
+  const { title, body } = renderFor(channel.templates as Templates, ctx);
+  await deliverText(channel, title, body, ctx.url, ctx.status, ctx);
+}
+
+// Sends an already-rendered message; security notifications use this
+// directly since they aren't about a check.
+export async function deliverText(channel: typeof notificationChannels.$inferSelect, title: string, body: string, url?: string, status?: string, vars: Record<string, unknown> = {}) {
+  if (channel.type === "email") await sendEmail(channel.config, body, title);
+  else if (channel.type === "webhook") await sendWebhook(channel.config, body, { ...vars, title, url });
+  else if (channel.type === "web_push") await sendWebPush(channel.config, body, title, url);
+  else if (channel.type === "telegram") await sendTelegram(channel.config, title, body);
+  else if (channel.type === "slack") await sendSlack(channel.config, title, body);
+  else if (channel.type === "teams") await sendTeams(channel.config, title, body, { url, status });
+  // SMS sender lands once a provider is chosen (see spec.md deferred
+  // items) — an enabled sms channel is a no-op for now, not an error.
 }
 
 // includeEscalation: also send to the rule's escalation channels (once an
 // incident has escalated, its reminders and recovery go there too).
 // escalationOnly: just the escalation channels (the escalation notice itself).
-async function notify(alertRuleId: string, message: string, subject: string, includeEscalation: boolean, escalationOnly = false) {
+async function notify(alertRuleId: string, ctx: AlertContext, includeEscalation: boolean, escalationOnly = false) {
   const links = await db.query.alertRuleChannels.findMany({ where: eq(alertRuleChannels.alertRuleId, alertRuleId) });
   const chosen = links.filter((l) => (escalationOnly ? l.escalation : !l.escalation || includeEscalation));
   for (const link of chosen) {
     const channel = await db.query.notificationChannels.findFirst({ where: eq(notificationChannels.id, link.channelId) });
     if (!channel || !channel.enabled) continue;
     try {
-      if (channel.type === "email") await sendEmail(channel.config, message, subject);
-      else if (channel.type === "webhook") await sendWebhook(channel.config, message);
-      else if (channel.type === "web_push") await sendWebPush(channel.config, message);
-      // SMS sender lands once a provider is chosen (see spec.md deferred
-      // items) — an enabled sms channel is a no-op for now, not an error.
+      await deliver(channel, ctx);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       logger.error(

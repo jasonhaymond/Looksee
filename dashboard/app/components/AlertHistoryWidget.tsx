@@ -31,7 +31,7 @@ export function AlertHistoryWidget({ widget, endpoint, onChanged }: { widget: Wi
   const rangeLabel = RANGE_OPTIONS.find((o) => o.hours === rangeHours)?.label ?? `${rangeHours}h`;
 
   return (
-    <div className="h-full overflow-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+    <div className="h-full overflow-auto surface rounded-lg p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="truncate font-medium">Alert history{endpoint ? ` — ${endpoint.name}` : ""}</h3>
         <RangeSelect hours={rangeHours} onChange={handleRangeChange} />

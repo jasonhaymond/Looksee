@@ -19,14 +19,14 @@ export function GroupSummaryCard({
 }) {
   if (!endpoint) {
     return (
-      <p className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3 text-xs text-[var(--muted)]">
+      <p className="surface rounded-lg p-3 text-xs text-[var(--muted)]">
         Endpoint not found — it may have been deleted.
       </p>
     );
   }
 
   return (
-    <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+    <div className="h-full surface rounded-lg p-3">
       <div className="mb-2 flex items-center gap-2">
         <h3 className="font-medium">{endpoint.name}</h3>
         <GroupSummary checks={checks} latestByCheck={latestByCheck} />

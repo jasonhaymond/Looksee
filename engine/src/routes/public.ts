@@ -4,6 +4,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { checks, statusPages } from "../db/schema.js";
 import { recordCheckResult } from "../services/alerting.js";
+import { recordSecurityEvent } from "../services/security.js";
 import { applyThresholds, type Status } from "../services/thresholds.js";
 
 // Everything here is reachable without a session: the public status pages
@@ -21,6 +22,7 @@ const STATUS_WORDS: Record<string, Status> = { up: "up", ok: "up", success: "up"
 publicRouter.all("/hb/:token", pushLimiter, async (req, res) => {
   const check = await db.query.checks.findFirst({ where: eq(checks.pushToken, req.params.token) });
   if (!check || (check.type !== "heartbeat" && check.type !== "push_value")) {
+    await recordSecurityEvent("bad_push_token", { req, path: "/api/hb/…" });
     res.status(404).type("text/plain").send("Unknown push token");
     return;
   }

@@ -13,7 +13,7 @@ export function ClockWidget() {
   }, []);
 
   return (
-    <div className="flex h-full flex-col items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+    <div className="flex h-full flex-col items-center justify-center surface rounded-lg p-3">
       {now && (
         <>
           <p className="text-2xl font-semibold tabular-nums">{now.toLocaleTimeString()}</p>

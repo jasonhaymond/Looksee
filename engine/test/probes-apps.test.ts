@@ -396,5 +396,7 @@ describe("headless browser", () => {
     const broken = await runProbe("browser", { url: `${base}/broken` });
     expect(broken.status).toBe("warn");
     expect(broken.message).toMatch(/JavaScript error/);
-  }, 60_000);
+    // Two full Chrome launches; starting and closing Chrome alone has taken
+    // ~12 s each on a Windows dev box.
+  }, 120_000);
 });

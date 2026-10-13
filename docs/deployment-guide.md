@@ -19,12 +19,12 @@ adjust package manager commands for another distro.
 5. [Firewall](#5-firewall)
 6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
 7. [Backups](#7-backups)
-8. [Updating](#8-updating) — including [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
+8. [Updating](#8-updating) — including [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
 9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Security notes](#11-security-notes)
 
-Related: [user guide](user-guide.md) · [agent README](../agent/README.md) · [README](../README.md) · [CHANGELOG](../CHANGELOG.md)
+Related: [user guide](user-guide.md) · [security guide](security-guide.md) · [Windows agent & security software](windows-agent-security.md) · [agent README](../agent/README.md) · [README](../README.md) · [CHANGELOG](../CHANGELOG.md)
 
 ## 1. What you'll need
 
@@ -41,7 +41,8 @@ Related: [user guide](user-guide.md) · [agent README](../agent/README.md) · [R
 
 ```bash
 sudo apt update
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+# Node.js 24 LTS (supported until April 2028; Node 20 reached end of life in April 2026)
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs git
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -53,7 +54,8 @@ sudo npm install -g pm2
 
 # Only needed if you plan to build agent binaries on this server rather than
 # via the Docker-based build in agent/README.md
-# curl -fsSL https://go.dev/dl/go1.22.linux-amd64.tar.gz | sudo tar -C /usr/local -xz
+# (Go 1.26 or newer)
+# curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz | sudo tar -C /usr/local -xz
 # echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 ```
 
@@ -87,11 +89,15 @@ cp .env.example .env
 # (node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"),
 # CORS_ALLOWED_ORIGINS, PUBLIC_URL (same value as NEXT_PUBLIC_API_URL below —
 # used to build the agent install command shown on the Hosts page), SMTP_*
-# if you want email alerts, and VAPID_* for Web Push (see .env.example for
-# the generate command — never regenerate once real subscriptions exist).
+# if you want email alerts, VAPID_* for Web Push (see .env.example for the
+# generate command — never regenerate once real subscriptions exist), and
+# TRUST_PROXY = your reverse proxy's IP (127.0.0.1 if Caddy runs on this
+# server; e.g. 10.1.30.10 if it's another machine) — see section 6.
 npm ci
 npm run db:migrate
 npm run db:create-admin   # interactive — run in a real terminal, not piped
+# Two-factor sign-in is required: the first sign-in in the browser shows a QR
+# code to scan with an authenticator app and ten recovery codes to save.
 
 cd ../dashboard
 cp .env.example .env
@@ -145,6 +151,16 @@ sudo ufw enable
 
 Don't open 5432 (Postgres, already bound to `127.0.0.1` by `docker-compose.yml`), 4100
 (engine), or 3100 (dashboard) — only Caddy needs to be internet/LAN-reachable.
+
+**Caddy on a different machine?** (e.g. a separate reverse-proxy host) Then allow 4100
+and 3100 from *that machine only* — Looksee trusts `X-Forwarded-For` from its proxy
+(`TRUST_PROXY`), so nothing else on the LAN should be able to reach those ports directly.
+Replace `10.1.30.10` with the proxy's IP:
+
+```bash
+sudo ufw allow from 10.1.30.10 to any port 4100 proto tcp
+sudo ufw allow from 10.1.30.10 to any port 3100 proto tcp
+```
 
 **Event and flow receivers (optional).** The engine also listens for SNMP traps, syslog
 and NetFlow/IPFIX/sFlow on unprivileged ports (`SNMP_TRAP_PORT`, `SYSLOG_PORT`,
@@ -211,6 +227,12 @@ same-origin (no CORS, simpler cookies):
 
 ```caddy
 looksee.haymondtechnologies.com {
+  # Browsers only ever use HTTPS for this site from now on (1 year), and
+  # responses don't advertise the server software.
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    -Server
+  }
   @api path /api/* /install/*
   handle @api {
     reverse_proxy localhost:4100
@@ -220,6 +242,15 @@ looksee.haymondtechnologies.com {
   }
 }
 ```
+
+**Check** after reloading Caddy:
+
+```bash
+curl -sI https://looksee.haymondtechnologies.com/api/health | grep -i -E "strict-transport|^server"
+```
+
+You should see `strict-transport-security: max-age=31536000; includeSubDomains` and no
+`server:` line. Only add HSTS once HTTPS works — browsers remember it for a year.
 
 **`/install/*` must be routed to the engine too**, not just `/api/*` — it's where the
 one-line agent install command (section 9) and the binaries it downloads are served from.
@@ -291,6 +322,67 @@ protect against this server failing.
 ```bash
 ~/Looksee/scripts/update.sh
 ```
+
+### Upgrading to 4.0
+
+4.0 adds a security layer, locations, Slack/Teams/Telegram channels and templates, host
+inventory, IP-change tracking and more (see the CHANGELOG). The upgrade is the normal
+`update.sh` run; its two migrations only add tables and columns. Then:
+
+1. **Set `TRUST_PROXY`** in `engine/.env` to your reverse proxy's IP (`127.0.0.1` when
+   Caddy runs on this server), and restart the engine:
+
+   ```bash
+   echo 'TRUST_PROXY=10.1.30.10' >> ~/Looksee/engine/.env   # your Caddy host's IP
+   pm2 restart looksee-engine
+   ```
+
+   If Caddy is on another machine, apply the firewall rule in [section 5](#5-firewall).
+2. **Move the server off Node.js 20** if it's still on it (`node -v`) — Node 20 stopped
+   receiving security fixes on 2026-04-30. This needs root, so it's a manual step:
+
+   ```bash
+   curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+   sudo apt install -y nodejs
+   node -v                       # v24.x
+   cd ~/Looksee && scripts/update.sh   # reinstalls dependencies for the new Node and restarts
+   ```
+
+   **Check:** `curl -s localhost:4100/api/health` shows `"status":"ok"` and the new
+   version. pm2 keeps using the Node it was started with until the processes are
+   recreated; if `pm2 describe looksee-engine | grep "node.js version"` still says 20,
+   run `pm2 delete looksee-engine looksee-dashboard && pm2 start ecosystem.config.cjs && pm2 save`.
+3. **Sign in and set up two-factor.** It's now required: the first sign-in shows a QR
+   code for an authenticator app, then ten recovery codes — save them in your password
+   manager. **Check:** System → Security → *Your account & 2FA* shows "Two-factor: on".
+   Then on the same page check that *Your current IP as Looksee sees it* is your real
+   public IP when you're off your LAN (if it shows the proxy's address, `TRUST_PROXY`
+   isn't right yet).
+4. **Point security notifications somewhere.** Recommended: email plus push to your
+   phone.
+   1. Email needs SMTP: Alerting → Channels → SMTP server → **Send test email**.
+   2. On your phone, open the dashboard, install it as an app (Share → *Add to Home
+      Screen* on iOS, *Install app* on Android), and tap **Enable push** in the top bar.
+   3. Alerting → Channels → **Add a channel**: type *Browser / phone push*, name it
+      "Phone push".
+   4. System → Security → *Attack detection*: leave *Send security emails to* blank (your
+      sign-in email), tick **Phone push**, **Save**, then **Send a test**. **Check:** the
+      test arrives both by email and as a phone notification.
+5. **Update agents** to 4.0.0 (**Hosts → select → Actions → Update agents**) for
+   process/service inventory, the script picker and script expected output.
+6. **Add HSTS and drop the Server header in Caddy** — the `header` block in
+   [section 6](#6-reverse-proxy--https), then `sudo caddy validate --config
+   /etc/caddy/Caddyfile && sudo systemctl reload caddy` and the check shown there.
+7. Optional: the other items in the
+   [security guide's checklist](security-guide.md#hardening-checklist-for-an-internet-facing-looksee);
+   agent signing — [windows-agent-security.md](windows-agent-security.md#signing-the-agent).
+
+**If you get locked out** (lost authenticator, allowlist mistake): on the server,
+`cd ~/Looksee/engine && npm run security:reset` (add `-- --2fa` to also clear two-factor).
+
+**Rolling back to 3.2** is code-only safe: 4.0's migrations are additive, so 3.2 runs
+against the 4.0 schema (it ignores the new tables/columns, and signs in with the
+password alone again).
 
 ### Upgrading to 3.2
 
@@ -490,22 +582,30 @@ to this table).
 
 ## 11. Security notes
 
-Already built in: rate limiting on login, httpOnly+secure session cookies, bcrypt
-password hashing, notification-channel configs never returned once saved, agent tokens
-scoped per-host. Still on you as the operator:
+Looksee's own safeguards — required two-factor sign-in, lockouts, the optional IP
+allowlist and new-IP email confirmation, attack detection with auto-blocking, the
+security log, and recovery — are documented in the **[security guide](security-guide.md)**,
+along with a hardening checklist for an internet-facing server. Also built in: bcrypt
+password hashing, `httpOnly`/`secure`/`SameSite=Strict` session cookies, sign-in rate
+limiting, security headers, notification-channel configs never returned once saved,
+agent tokens scoped per host, and process command lines masked for credentials before
+agents send them. Still on you as the operator:
 
 - Keep the server's OS packages updated.
 - Always deploy behind HTTPS (section 6) — Web Push and secure cookies both depend on it.
-- Keep `engine/.env`/`dashboard/.env` out of version control (already gitignored) and out
-  of chat/tickets/logs.
-- Use a strong, unique admin password (`npm run db:create-admin`).
+- Set `TRUST_PROXY` (section 3) and firewall ports 4100/3100 to the proxy only.
+- Keep `engine/.env`/`dashboard/.env` and `agent/signing.env` out of version control
+  (already gitignored) and out of chat/tickets/logs.
+- Use a strong, unique admin password; keep the two-factor recovery codes in a password
+  manager.
 - **Public endpoints, by design**: `/api/health`, `/install/*`, published status pages
   (`/status/<slug>` — only the names, status and uptime of the checks you put on them),
-  and heartbeat/push URLs (`/api/hb/<token>` — the token is the credential; regenerate
-  it on the check if it leaks). Everything else needs a signed-in session.
+  heartbeat/push URLs (`/api/hb/<token>` — the token is the credential; regenerate it on
+  the check if it leaks), and the agent/collector APIs (agent key required). Everything
+  else needs a signed-in session.
 - **Check credentials** (database passwords, API tokens, SNMPv3 keys, backup
   passphrases) are write-only in the dashboard but are stored in the database and sent
-  to the agent that runs the check, so treat database backups as sensitive.
+  to the agent or collector that runs the check, so treat database backups as sensitive.
 - **Agent script checks** only run files in the agent's own `script_dir` (disabled when
   unset) — the dashboard can't push new code to a host.
 - **Receivers** (traps/syslog/flows) are unauthenticated; keep them LAN-only (section 5).

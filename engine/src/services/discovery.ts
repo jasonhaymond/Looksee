@@ -2,6 +2,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { discoveryScans } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
+import { normalizeMac } from "./probes/protocols.js";
+import { recordSighting } from "./addresses.js";
 import { type DiscoveredDevice, type ScannedDevice, scanNetwork, suggestForDevice } from "./discoveryCore.js";
 
 export { DISCOVERY_PORTS, MAX_SCAN_ADDRESSES, expandCidr, suggestForDevice, type DiscoveredDevice } from "./discoveryCore.js";
@@ -10,11 +12,15 @@ export { DISCOVERY_PORTS, MAX_SCAN_ADDRESSES, expandCidr, suggestForDevice, type
 // suggested checks, and stores the finished scan.
 export async function completeScan(scanId: string, cidr: string, devices: ScannedDevice[]) {
   const knownHosts = await db.query.hosts.findMany();
+  const scan = await db.query.discoveryScans.findFirst({ where: eq(discoveryScans.id, scanId) });
+  const sameMac = (a: string | null, b: string | null) => Boolean(a && b && normalizeMac(a) === normalizeMac(b));
   const results: DiscoveredDevice[] = devices.map((d) => ({
     ...d,
-    knownHostId: knownHosts.find((h) => h.hostname && (h.hostname === d.ip || (d.hostname && h.hostname.toLowerCase() === d.hostname.toLowerCase())))?.id ?? null,
+    // A known MAC identifies the host even after its IP changed.
+    knownHostId: knownHosts.find((h) => sameMac(h.macAddress, d.mac) || (h.hostname && (h.hostname === d.ip || (d.hostname && h.hostname.toLowerCase() === d.hostname.toLowerCase()))))?.id ?? null,
     suggestedChecks: suggestForDevice(d),
   }));
+  for (const d of results) if (d.mac) await recordSighting({ mac: d.mac, ip: d.ip, source: "discovery", hostId: d.knownHostId, endpointId: scan?.endpointId ?? null });
   await db.update(discoveryScans).set({ results, status: "done", error: null, finishedAt: new Date() }).where(eq(discoveryScans.id, scanId));
   logger.info("discovery", `Scan of ${cidr} found ${results.length} device(s)`, `Network scan of ${cidr} finished: ${results.length} device(s) found.`, { scanId });
 }

@@ -1,23 +1,86 @@
 @import "tailwindcss";
 
+/* Theme tokens. Every color in the app comes from these — components never
+   hard-code a color — so the light and dark themes stay in step.
+   Dark is the default; light applies when chosen, or when the theme is
+   "System" (no data-theme attribute) and the OS prefers light. Contrast
+   was checked against WCAG AA in both: text ≥ 12:1, muted ≥ 5.5:1 on bg
+   and panel, and the status colors ≥ 4.5:1 as text on panel. */
 :root {
-  /* Lightened from the original near-black (#0b0f14/#131a22/#223041) so
-     panels/cards read as distinct surfaces against the page background
-     instead of blending into it — still a dark theme, just with real
-     bg/panel/border separation. Re-checked against WCAG AA (4.5:1) for
-     text/muted on both bg and panel before finalizing; text stays ~13-15:1,
-     muted ~5.9-6.8:1, comfortably clear of the 4.5:1 floor. */
-  --bg: #121820;
-  --panel: #1c2530;
-  --border: #31445c;
-  --text: #e6edf3;
-  --muted: #93a1b0;
+  color-scheme: dark;
+  --bg: #0e1319;
+  --panel: #19212b;
+  --panel-2: #222c38; /* raised: menus, modals, hover */
+  --border: #3b4e66;
+  --border-strong: #56708f;
+  --text: #eef3f8;
+  --muted: #a2b0be;
   --up: #3fb950;
-  --down: #f85149;
-  --warn: #d29922;
+  --down: #ff6b61;
+  --warn: #e3a72f;
   /* Maintenance: deliberately not a pass/fail hue, so a paused check never
      reads as healthy or broken at a glance. */
-  --maint: #a78bfa;
+  --maint: #b39dfb;
+  --accent: #3fb950;
+  /* Chart series (not a status color) and gridlines. */
+  --series: #4493f8;
+  --grid: #2a3644;
+  --on-accent: #04110a;
+  --danger-bg: #f85149;
+  --on-danger: #1a0402;
+  --code-bg: rgba(0, 0, 0, 0.38);
+  --overlay: rgba(2, 6, 10, 0.68);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #eceff4;
+    --panel: #ffffff;
+    --panel-2: #f5f7fa;
+    --border: #c2cbd6;
+    --border-strong: #8d9bab;
+    --text: #111820;
+    --muted: #4c5967;
+    --up: #16702f;
+    --down: #c8202c;
+    --warn: #8a5a00;
+    --maint: #6d3fd6;
+    --accent: #16702f;
+    --series: #0969da;
+    --grid: #e1e6ec;
+    --on-accent: #ffffff;
+    --danger-bg: #c8202c;
+    --on-danger: #ffffff;
+    --code-bg: #eef1f5;
+    --overlay: rgba(17, 24, 32, 0.45);
+    --shadow: 0 1px 3px rgba(17, 24, 32, 0.12), 0 0 0 1px rgba(17, 24, 32, 0.03);
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eceff4;
+  --panel: #ffffff;
+  --panel-2: #f5f7fa;
+  --border: #c2cbd6;
+  --border-strong: #8d9bab;
+  --text: #111820;
+  --muted: #4c5967;
+  --up: #16702f;
+  --down: #c8202c;
+  --warn: #8a5a00;
+  --maint: #6d3fd6;
+  --accent: #16702f;
+  --series: #0969da;
+  --grid: #e1e6ec;
+  --on-accent: #ffffff;
+  --danger-bg: #c8202c;
+  --on-danger: #ffffff;
+  --code-bg: #eef1f5;
+  --overlay: rgba(17, 24, 32, 0.45);
+  --shadow: 0 1px 3px rgba(17, 24, 32, 0.12), 0 0 0 1px rgba(17, 24, 32, 0.03);
 }
 
 body {
@@ -25,12 +88,52 @@ body {
   color: var(--text);
 }
 
+/* Panels/cards get a faint shadow as well as a border, so they separate
+   from the page in both themes. */
+.surface {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
 /* Every <select> in this app uses Tailwind's bg-transparent, which only
    affects the closed box — the browser renders the expanded options list
-   with its own default colors (usually black-on-white) unless the element
-   itself has an explicit, non-transparent background. */
+   with its own default colors unless the element itself has an explicit,
+   non-transparent background. */
 select,
 select option {
   background-color: var(--panel);
   color: var(--text);
 }
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Rendered markdown in the in-app help (app/help). */
+.help-prose { line-height: 1.6; font-size: 0.95rem; }
+.help-prose h1 { font-size: 1.6rem; font-weight: 600; margin-bottom: 0.75rem; }
+.help-prose h2 { font-size: 1.3rem; font-weight: 600; margin: 2rem 0 0.75rem; padding-top: 1rem; border-top: 1px solid var(--border); scroll-margin-top: 1rem; }
+.help-prose section:first-of-type h2 { border-top: 0; }
+.help-prose h3 { font-size: 1.08rem; font-weight: 600; margin: 1.5rem 0 0.5rem; scroll-margin-top: 1rem; }
+.help-prose h4 { font-weight: 600; margin: 1rem 0 0.4rem; }
+.help-prose p, .help-prose ul, .help-prose ol, .help-prose table, .help-prose pre, .help-prose blockquote { margin: 0.6rem 0; }
+.help-prose ul { list-style: disc; padding-left: 1.4rem; }
+.help-prose ol { list-style: decimal; padding-left: 1.4rem; }
+.help-prose li { margin: 0.2rem 0; }
+.help-prose a { text-decoration: underline; text-underline-offset: 2px; }
+.help-prose code { background: var(--code-bg); padding: 0.1rem 0.3rem; border-radius: 4px; font-size: 0.85em; }
+.help-prose pre { background: var(--code-bg); border: 1px solid var(--border); padding: 0.75rem; border-radius: 8px; overflow-x: auto; }
+.help-prose pre code { background: none; padding: 0; }
+.help-prose table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 0.85rem; }
+.help-prose th, .help-prose td { border: 1px solid var(--border); padding: 0.35rem 0.6rem; text-align: left; vertical-align: top; }
+.help-prose th { background: var(--panel-2); }
+.help-prose blockquote { border-left: 3px solid var(--accent); padding-left: 0.8rem; color: var(--muted); }
+.help-prose hr { border-color: var(--border); margin: 1.5rem 0; }

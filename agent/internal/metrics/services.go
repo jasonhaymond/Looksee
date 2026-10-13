@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/shirou/gopsutil/v3/process"
+	"github.com/shirou/gopsutil/v4/process"
 )
 
 // IsProcessRunning matches by process name substring rather than requiring

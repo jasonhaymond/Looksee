@@ -13,9 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shirou/gopsutil/v3/cpu"
-	"github.com/shirou/gopsutil/v3/host"
-	"github.com/shirou/gopsutil/v3/mem"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/host"
+	"github.com/shirou/gopsutil/v4/mem"
+	"github.com/shirou/gopsutil/v4/sensors"
 
 	"looksee-agent/internal/execx"
 )
@@ -249,7 +250,7 @@ func (s *SlowCollector) collectSessions() {
 
 func (s *SlowCollector) collectSensors() {
 	var temps []Temp
-	if ts, err := host.SensorsTemperatures(); err == nil {
+	if ts, err := sensors.SensorsTemperatures(); err == nil {
 		for _, t := range ts {
 			if t.Temperature > 0 && t.Temperature < 150 {
 				temps = append(temps, Temp{Sensor: t.SensorKey, Celsius: round2(t.Temperature)})

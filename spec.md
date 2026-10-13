@@ -66,18 +66,21 @@ doc as decisions change rather than letting it drift from reality.
 ## Data model (conceptual)
 
 ```
-Site
- └─ Host / Target
-     └─ Check (type + config + interval)
-         └─ Result (agentless) / Metric (agent-reported)
+Location (optional, 4.0 — a physical place)
+ └─ Endpoint (a network; called "Site" in v1)
+     └─ Host / Target
+         └─ Check (type + config + interval)
+             └─ Result (agentless) / Metric (agent-reported)
 
 Alert Rule (attached to a Check or a group of Checks)
- └─ Notification Channel (email / webhook / Web Push / SMS)
+ └─ Notification Channel (email / Slack / Teams / Telegram / webhook / Web Push / SMS)
+     └─ Message templates (triggered / resolved / reminder / escalated)
 ```
 
-`Site` exists from v1 even though only one site (the personal homelab) is configured
-initially — this is so adding a second network (e.g. the separate church/AV network) later
-is a config entry, not a schema migration.
+`Site` (now "Endpoint") exists from v1 even though only one site (the personal homelab)
+was configured initially — this is so adding a second network (e.g. the separate
+church/AV network) later is a config entry, not a schema migration. 4.0 added
+**Locations** above endpoints for grouping networks by physical place.
 
 ## v1 check types
 
@@ -148,6 +151,22 @@ if a real use case shows up.
 - Staging environment: skipped for v1 (solo tool, low blast-radius) — revisit if this
   ever grows beyond personal use.
 
+## v4.0 scope (built)
+
+- **Security**: mandatory TOTP two-factor with recovery codes, lockouts, session limits,
+  optional IP allowlist and new-IP email confirmation, a security event log and rules
+  that notify and auto-block IPs, a shell-only reset command. See `docs/security-guide.md`.
+- **Organizing**: locations; multi-target check creation; duplicate to endpoints/hosts
+  keeping alert rules; bulk actions in one grouped menu.
+- **Alerting**: Slack, Teams and Telegram channels; per-channel message templates;
+  remediation hints; alert history page; per-check page with charts and stats.
+- **Agent 4.0**: process/service inventory (credentials masked), scripts in `script_dir`
+  reported for the picker, script output/exit code for expected-output matching.
+- **Network**: Counter64 fix for SNMP interface traffic, per-row walk rates, full walks,
+  a walk browser, printer error/job templates, MAC→IP history and IP-change checks.
+- **UI**: light/dark themes, higher contrast, in-app help built from `docs/`, a check
+  reference for every type, Windows agent signing pipeline and security-software guide.
+
 ## Deferred / future ideas
 
 - Native mobile app (if PWA + Web Push proves insufficient).
@@ -155,6 +174,15 @@ if a real use case shows up.
 - SNMPv3 traps (v1/v2c traps are received today).
 - Kubernetes monitoring (explicitly out of scope for 3.0).
 - Multi-step HTTP transactions / login flows (explicitly out of scope for 3.0).
+- **Queued (October 2026)**:
+  - Passkeys/WebAuthn as a second factor (YubiKeys and phone passkeys), alongside TOTP.
+  - Express 4 → 5 migration (Express 4 is supported but in maintenance; 5 is the
+    recommended line).
+  - An external uptime monitor for Looksee itself (something outside the homelab
+    watching `/api/health`), since Looksee can't alert on its own outage.
+- More than one user account with roles (would change the single-admin decision).
+- Engine-side command checks (rejected — see CLAUDE.md: scripts run only from
+  `script_dir`).
 
 ## v3.0 scope (built)
 

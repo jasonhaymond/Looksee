@@ -16,7 +16,7 @@ export type Field = {
   options?: { value: string; label: string }[];
   default?: unknown;
   // Where suggestions come from for a text field (agent-discovered names).
-  suggest?: "services" | "processes" | "containers" | "mounts" | "interfaces" | "devices";
+  suggest?: "services" | "processes" | "containers" | "mounts" | "interfaces" | "devices" | "scripts";
   showIf?: (config: Record<string, unknown>) => boolean;
   advanced?: boolean;
   wide?: boolean;
@@ -317,6 +317,19 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     description: "Is a device on the engine's own LAN segment? Works even for devices that ignore ping. Optionally verifies its MAC (spots IP conflicts and swapped hardware).",
     fields: [{ key: "ip", label: "IP address", kind: "text" }, { key: "mac", label: "MAC address", kind: "text", placeholder: "aa:bb:cc:dd:ee:ff" }],
   },
+  {
+    type: "ip_change",
+    label: "IP address change (by MAC)",
+    category: "Network services",
+    description: "Flags when a device's MAC address shows up at a new IP — from agent reports, discovery scans and ARP checks. Catches DHCP lease changes that break checks targeting the old address.",
+    value: { unit: "", hint: "IP changes in the last 24 hours" },
+    fields: [
+      { key: "mac", label: "MAC address", kind: "text", placeholder: "blank = the host's own MAC(s)", help: "Leave blank and pick a host to watch every MAC the agent reports for it." },
+      severity("warn"),
+      { ...holdMinutes, default: 60, help: "How long the check stays failing after a change, so an alert rule catches it." },
+      { key: "includeIpv6", label: "Also watch IPv6 addresses", kind: "checkbox", advanced: true, help: "Off by default: IPv6 privacy addresses change by design." },
+    ],
+  },
 
   // ---- Databases & apps ----
   {
@@ -424,17 +437,22 @@ export const CHECK_TYPES: CheckTypeDef[] = [
         key: "preset",
         label: "Template",
         kind: "select",
-        options: opts(["", "Custom OID"], ["printer_supplies", "Printer: lowest toner/ink %"], ["ups_battery", "UPS: battery %"], ["ups_runtime", "UPS: minutes remaining"], ["ups_on_battery", "UPS: on battery?"], ["hr_cpu", "CPU % (HOST-RESOURCES)"], ["hr_memory", "Memory % (HOST-RESOURCES)"], ["hr_storage", "Fullest disk % (HOST-RESOURCES)"], ["sensor_temp_max", "Hottest sensor °C (ENTITY-SENSOR)"], ["uptime_reboot", "Reboot detection (sysUpTime)"]),
+        options: opts(["", "Custom OID"], ["printer_supplies", "Printer: lowest toner/ink %"], ["printer_status", "Printer: errors (jam, paper, offline…)"], ["printer_jobs", "Printer: failed / aborted print jobs"], ["ups_battery", "UPS: battery %"], ["ups_runtime", "UPS: minutes remaining"], ["ups_on_battery", "UPS: on battery?"], ["hr_cpu", "CPU % (HOST-RESOURCES)"], ["hr_memory", "Memory % (HOST-RESOURCES)"], ["hr_storage", "Fullest disk % (HOST-RESOURCES)"], ["sensor_temp_max", "Hottest sensor °C (ENTITY-SENSOR)"], ["uptime_reboot", "Reboot detection (sysUpTime)"]),
         default: "",
       },
       { key: "oid", label: "OID", kind: "text", placeholder: "1.3.6.1.2.1.1.3.0", showIf: (c) => !c.preset, required: true },
-      { key: "mode", label: "Read as", kind: "select", options: opts(["get", "Single value"], ["walk_avg", "Walk: average"], ["walk_sum", "Walk: sum"], ["walk_min", "Walk: minimum"], ["walk_max", "Walk: maximum"], ["walk_count", "Walk: count"]), default: "get", showIf: (c) => !c.preset },
-      { key: "asRate", label: "Counter — report per-second rate", kind: "checkbox", showIf: (c) => !c.preset, advanced: true },
+      { key: "mode", label: "Read as", kind: "select", options: opts(["get", "Single value"], ["walk_avg", "Walk: average"], ["walk_sum", "Walk: sum"], ["walk_min", "Walk: minimum"], ["walk_max", "Walk: maximum"], ["walk_count", "Walk: count"], ["walk_all", "Full walk: keep every value"]), default: "get", showIf: (c) => !c.preset, help: "Walk modes read every value under the OID. Full walk records all of them in the result (the check page shows the table)." },
+      { key: "aggregate", label: "Value of a full walk", kind: "select", options: opts(["count", "Number of rows"], ["sum", "Sum"], ["avg", "Average"], ["min", "Minimum"], ["max", "Maximum"]), default: "count", showIf: (c) => !c.preset && c.mode === "walk_all" },
+      { key: "asRate", label: "Counter — report per-second rate", kind: "checkbox", showIf: (c) => !c.preset, help: "For counters (octets, packets, errors). On a walk each row's rate is worked out separately, then combined — so \"max\" is the busiest row's rate." },
+      { key: "indexFilter", label: "Only rows whose index matches (regex)", kind: "text", placeholder: "^(1|2|3)$", showIf: (c) => !c.preset && String(c.mode ?? "get") !== "get", advanced: true },
+      { key: "maxRows", label: "Keep at most N rows", kind: "number", default: 2000, showIf: (c) => !c.preset && c.mode === "walk_all", advanced: true },
       { key: "scale", label: "Multiply by", kind: "number", showIf: (c) => !c.preset, advanced: true },
       { key: "unit", label: "Unit label", kind: "text", showIf: (c) => !c.preset, advanced: true },
       { key: "expectString", label: "Text value must contain", kind: "text", showIf: (c) => !c.preset, advanced: true },
       { key: "instance", label: "Disk name filter", kind: "text", showIf: is("preset", "hr_storage") },
-      { ...holdMinutes, showIf: is("preset", "uptime_reboot") },
+      { key: "countCanceled", label: "Count canceled jobs as failures too", kind: "checkbox", showIf: is("preset", "printer_jobs") },
+      { ...severity("warn"), showIf: is("preset", "printer_jobs") },
+      { ...holdMinutes, showIf: is("preset", "uptime_reboot", "printer_jobs") },
     ],
   },
   {
@@ -613,12 +631,17 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     type: "agent_script",
     label: "Custom script",
     category: "Services & processes (agent)",
-    description: "Runs a script from the agent's script_dir. Exit 0/1/2 = up/warn/down (Nagios convention); a number in the output becomes the value.",
+    description: "Runs a script or command wrapper from the agent's script_dir and checks its output and exit code. Without an expected output, exit 0/1/2 = up/warn/down (Nagios convention); a number in the output becomes the value.",
     needsHost: true,
     value: { unit: "", hint: "perfdata or first number in the output" },
     fields: [
-      { key: "script", label: "Script file name", kind: "text", required: true, placeholder: "check_queue.sh", help: "Must sit directly in script_dir on that host — see the agent README." },
+      { key: "script", label: "Script file name", kind: "text", required: true, placeholder: "check_queue.sh", suggest: "scripts", help: "Must sit directly in script_dir on that host — the list shows what the agent found there. Looksee never sends commands to run; see the agent README → Custom scripts." },
       { key: "args", label: "Arguments", kind: "text" },
+      { key: "expectMode", label: "Expected output", kind: "select", options: opts(["", "None — use the exit code"], ["contains", "Contains"], ["not_contains", "Does not contain"], ["equals", "Equals (whole output)"], ["regex", "Matches regex"]), default: "" },
+      { key: "expectText", label: "Expected text / pattern", kind: "text", required: true, showIf: (c) => Boolean(c.expectMode), wide: true },
+      { key: "expectIgnoreCase", label: "Ignore case", kind: "checkbox", showIf: (c) => Boolean(c.expectMode) },
+      { key: "expectExitCode", label: "Expected exit code", kind: "number", placeholder: "any", help: "Blank = any exit code is fine when an expected output is set." },
+      { key: "expectSeverity", label: "Status when it doesn't match", kind: "select", options: opts(["down", "Down (critical)"], ["warn", "Warn"]), default: "down", showIf: (c) => Boolean(c.expectMode) || (c.expectExitCode !== undefined && c.expectExitCode !== "") },
       timeout(30),
       { key: "parseValue", label: "Read a number from the output", kind: "checkbox", default: true, advanced: true },
     ],

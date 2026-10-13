@@ -10,10 +10,10 @@ self.addEventListener("push", (event) => {
   } catch {
     data.body = event.data ? event.data.text() : data.body;
   }
-  event.waitUntil(self.registration.showNotification(data.title, { body: data.body, icon: "/icon.svg" }));
+  event.waitUntil(self.registration.showNotification(data.title, { body: data.body, icon: "/icon.svg", data: { url: data.url } }));
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  event.waitUntil(self.clients.openWindow("/"));
+  event.waitUntil(self.clients.openWindow(event.notification.data?.url || "/"));
 });

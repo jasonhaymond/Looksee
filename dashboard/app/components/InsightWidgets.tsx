@@ -29,7 +29,7 @@ export function TopTalkersWidget({ widget, onChanged }: { widget: Widget; onChan
     onChanged();
   };
   return (
-    <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+    <div className="h-full surface rounded-lg p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <Link href="/flows" className="font-medium hover:underline">
           Top talkers
@@ -78,7 +78,7 @@ export function StatusSummaryWidget({ checks, endpoint }: { checks: Check[]; end
   for (const c of checks) counts[displayStatus(c)] = (counts[displayStatus(c)] ?? 0) + 1;
   const problems = checks.filter((c) => ["down", "warn"].includes(displayStatus(c))).sort((a, b) => (displayStatus(a) === "down" ? -1 : 1) - (displayStatus(b) === "down" ? -1 : 1));
   return (
-    <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+    <div className="h-full surface rounded-lg p-3">
       <div className="mb-2 font-medium">{endpoint ? endpoint.name : "All endpoints"}</div>
       <div className="mb-2 flex flex-wrap gap-3 text-sm">
         {["down", "warn", "up", "maintenance", "unknown"].map((s) =>

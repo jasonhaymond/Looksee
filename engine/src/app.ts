@@ -24,6 +24,9 @@ import { statusPagesRouter } from "./routes/statusPages.js";
 import { publicRouter } from "./routes/public.js";
 import { insightsRouter } from "./routes/insights.js";
 import { collectorRouter } from "./routes/collector.js";
+import { locationsRouter } from "./routes/locations.js";
+import { securityRouter } from "./routes/security.js";
+import { notFoundHandler, securityGate, securityHeaders } from "./middleware/securityGate.js";
 
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
   .split(",")
@@ -34,9 +37,17 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
 // this directly with supertest without binding a real port.
 export const app = express();
 app.disable("x-powered-by");
+// Which X-Forwarded-For hops to believe for the client IP (blocks, the
+// allowlist, lockouts and the event log all key on it). The default trusts
+// proxies on private/loopback addresses — set TRUST_PROXY to the reverse
+// proxy's exact IP in production (see .env.example).
+app.set("trust proxy", process.env.TRUST_PROXY || "loopback, linklocal, uniquelocal");
+app.use(securityHeaders);
 
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(cookieParser());
+// After CORS so a 403 still carries CORS headers the dashboard can read.
+app.use(securityGate);
 // Agent reports carry a full metrics snapshot plus process/service lists;
 // the 100 KB default is too small for a busy host.
 app.use(express.json({ limit: "4mb" }));
@@ -44,6 +55,8 @@ app.use(express.urlencoded({ extended: false }));
 
 app.use("/api/auth", authRouter);
 app.use("/api/endpoints", endpointsRouter);
+app.use("/api/locations", locationsRouter);
+app.use("/api/security", securityRouter);
 app.use("/api/hosts", hostsRouter);
 app.use("/api/checks", checksRouter);
 app.use("/api/channels", channelsRouter);
@@ -79,6 +92,8 @@ app.get("/api/health", async (_req, res) => {
     res.status(500).json({ status: "error", db: "unreachable", version: VERSION, agentVersion: readAgentVersion() });
   }
 });
+
+app.use(notFoundHandler);
 
 app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
   const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);

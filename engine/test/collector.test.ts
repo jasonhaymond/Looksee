@@ -4,6 +4,7 @@ import request from "supertest";
 import bcrypt from "bcryptjs";
 import { eq, inArray } from "drizzle-orm";
 import { app } from "../src/app.js";
+import { loginWith2fa } from "./helpers.js";
 import { db } from "../src/db/index.js";
 import { checks, endpoints, events, hosts, users } from "../src/db/schema.js";
 import { runOneCheck, takeCollectorChecks } from "../src/services/scheduler.js";
@@ -30,7 +31,7 @@ async function makeCheck(endpointId: string, type: string, config: Record<string
 
 beforeAll(async () => {
   await db.insert(users).values({ email, passwordHash: await bcrypt.hash(password, 10) });
-  cookie = (await request(app).post("/api/auth/login").send({ email, password })).headers["set-cookie"]![0];
+  cookie = await loginWith2fa(email, password);
 
   const [site, local, pushSite] = await db
     .insert(endpoints)

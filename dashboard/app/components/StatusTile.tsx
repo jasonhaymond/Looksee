@@ -17,7 +17,7 @@ export function StatusTile({ check, latest }: { check: Check; latest: CheckResul
   const [showAlerts, setShowAlerts] = useState(false);
 
   return (
-    <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+    <div className="h-full surface rounded-lg p-3">
       <div className="flex items-center gap-2">
         <StatusBadge status={status} compact />
         <span className="truncate font-medium">{check.name}</span>

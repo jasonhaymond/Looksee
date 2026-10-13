@@ -33,8 +33,10 @@ export type Endpoint = {
   collectorHostId: string | null;
   // For devices pushing syslog/traps/flows straight to the server.
   publicIps: string[];
+  locationId: string | null;
 };
-export type EndpointInput = { name?: string; description?: string | null; collectorHostId?: string | null; publicIps?: string[] };
+export type EndpointInput = { name?: string; description?: string | null; collectorHostId?: string | null; publicIps?: string[]; locationId?: string | null };
+export type Location = { id: string; name: string; description: string | null; address: string | null; createdAt: string };
 export type Host = {
   id: string;
   endpointId: string;
@@ -59,7 +61,15 @@ export type Host = {
   collectorVersion: string | null;
   collectorLastSeenAt: string | null;
   collectorError: string | null;
+  processCount?: number | null;
+  serviceCount?: number | null;
+  inventoryUpdatedAt?: string | null;
+  availableScripts?: string[] | null;
 };
+export type ProcessInfo = { pid: number; name: string; user?: string; cpuPercent?: number; memoryMb?: number; command?: string; started?: number };
+export type ServiceInfo = { name: string; displayName?: string; state: string; startType?: string };
+export type HostInventory = { processes: ProcessInfo[] | null; services: ServiceInfo[] | null; scripts: string[] | null; containers: string[] | null; updatedAt: string | null; processNames: string[] | null; serviceNames: string[] | null };
+export type AddressRow = { id: string; mac: string; ip: string; source: string; firstSeenAt: string; lastSeenAt: string };
 export type HostSnapshot = {
   cpu?: { percent?: number; iowait?: number; steal?: number; perCore?: number[] };
   load?: { l1: number; l5: number; l15: number; cores: number };
@@ -108,7 +118,31 @@ export type Check = {
   blockedBy: string | null;
   pushToken: string | null;
   pushUrl: string | null;
+  locationId?: string | null;
+  // Things to look at while it's failing (engine/src/services/remediation.ts).
+  remediation?: string[];
 };
+export type CheckStats = {
+  hours: number;
+  bucketSeconds: number;
+  results: number;
+  up: number;
+  warn: number;
+  down: number;
+  uptimePercent: number | null;
+  latencyAvg: number | null;
+  latencyMin: number | null;
+  latencyMax: number | null;
+  latencyP95: number | null;
+  valueAvg: number | null;
+  valueMin: number | null;
+  valueMax: number | null;
+  stateChanges: number;
+  series: { t: string; latency: number | null; value: number | null; valueMin: number | null; valueMax: number | null; status: string; n: number }[];
+  incidents: { id: string; status: string; severity: string; message: string | null; triggeredAt: string; resolvedAt: string | null }[];
+};
+export type AlertRulePayload = { channelIds: string[]; escalationChannelIds: string[]; consecutiveFailures: number; triggerOn: "down" | "warn"; renotifyMinutes: number | null; escalateAfterMinutes: number | null };
+export type WalkRow = { oid: string; type: string; value: string };
 export type CheckInput = {
   name: string;
   endpointId: string;
@@ -132,10 +166,12 @@ export type CheckResult = {
   checkedAt: string;
 };
 export type BulkResult = { affected: number; errors: { id: string; error: string }[] };
-export type Channel = { id: string; name: string; type: string; enabled: boolean };
+export type ChannelTemplate = { title?: string; body?: string };
+export type Channel = { id: string; name: string; type: string; enabled: boolean; templates?: Record<string, ChannelTemplate> };
+export type TemplateInfo = { events: string[]; defaults: Record<string, Required<ChannelTemplate>>; variables: { name: string; help: string }[] };
 
 export type MetricDef = { key: string; label: string; group: string; kind: "number" | "boolean"; unit?: string; instance?: string; instanceRequired?: boolean; agg?: string; expect?: boolean; platforms?: string; help?: string };
-export type Suggestion = { key: string; name: string; type: string; config: Record<string, unknown>; reason: string; intervalSeconds?: number };
+export type Suggestion = { key: string; name: string; type: string; config: Record<string, unknown>; reason: string; intervalSeconds?: number; group?: string };
 
 export type SmtpSettings = {
   id: number;
@@ -231,7 +267,12 @@ export type AlertEvent = {
   message?: string | null;
   triggeredAt: string;
   resolvedAt: string | null;
+  endpointId?: string | null;
+  hostId?: string | null;
+  checkType?: string | null;
+  durationMinutes?: number;
 };
+export type AlertEventQuery = { endpointId?: string; locationId?: string; checkId?: string; hostId?: string; status?: "open" | "resolved"; since?: string; until?: string; q?: string; limit?: number };
 export type HostMetric = {
   id: string;
   hostId: string;
@@ -290,6 +331,28 @@ export type DiscoveredDevice = {
   knownHostId: string | null;
   suggestedChecks: SuggestedCheck[];
 };
+export type LoginStep = { challengeId: string; step: "enroll" | "totp"; emailCode: boolean; enroll?: { secret: string; uri: string } };
+export type SecuritySettings = {
+  allowlistEnabled: boolean;
+  allowlist: string[];
+  allowlistAgents: boolean;
+  newIpConfirmation: boolean;
+  lockoutThreshold: number;
+  lockoutMinutes: number;
+  sessionHours: number;
+  idleTimeoutMinutes: number | null;
+  minPasswordLength: number;
+  notifyEmail: string | null;
+  notifyChannelIds: string[];
+  detectScans: boolean;
+  updatedAt: string;
+};
+export type SecurityOverview = { settings: SecuritySettings; yourIp: string; totpEnabled: boolean; recoveryCodesLeft: number; passwordChangedAt: string | null; kinds: { kind: string; label: string; severity: string }[]; trustProxy: string };
+export type SecurityEvent = { id: string; kind: string; severity: string; ip: string | null; userAgent: string | null; path: string | null; detail: string | null; createdAt: string };
+export type SecurityRule = { id: string; name: string; enabled: boolean; kinds: string[]; threshold: number; windowMinutes: number; perIp: boolean; notify: boolean; blockMinutes: number | null; cooldownMinutes: number; lastFiredAt: string | null };
+export type IpBlock = { id: string; ip: string; reason: string | null; until: string | null; createdAt: string };
+export type TrustedIp = { id: string; ip: string; firstSeenAt: string; lastSeenAt: string };
+export type SessionRow = { id: string; ip: string | null; userAgent: string | null; createdAt: string; lastSeenAt: string | null; expiresAt: string; current: boolean };
 export type DiscoveryScan = { id: string; cidr: string; endpointId: string | null; status: "queued" | "running" | "done" | "error"; results: DiscoveredDevice[]; error: string | null; startedAt: string; finishedAt: string | null };
 
 const json = (body: unknown) => ({ method: "POST", body: JSON.stringify(body) });
@@ -303,7 +366,34 @@ const qs = (params: Record<string, unknown>) => {
 };
 
 export const api = {
-  login: (email: string, password: string) => request<{ id: string; email: string }>("/api/auth/login", json({ email, password })),
+  login: (email: string, password: string) => request<LoginStep>("/api/auth/login", json({ email, password })),
+  verifyLogin: (input: { challengeId: string; code?: string; emailCode?: string; recoveryCode?: string }) => request<{ id: string; email: string; recoveryCodes?: string[] }>("/api/auth/login/verify", json(input)),
+  changePassword: (input: { currentPassword: string; newPassword: string; code: string }) => request<{ ok: true }>("/api/auth/password", json(input)),
+  regenerateRecoveryCodes: (code: string) => request<{ recoveryCodes: string[] }>("/api/auth/recovery-codes", json({ code })),
+  rotateTotp: (code: string) => request<{ challengeId: string; secret: string; uri: string }>("/api/auth/totp/rotate", json({ code })),
+  confirmRotateTotp: (challengeId: string, code: string) => request<{ ok: true }>("/api/auth/totp/rotate/confirm", json({ challengeId, code })),
+
+  securityOverview: () => request<SecurityOverview>("/api/security/overview"),
+  updateSecuritySettings: (input: Partial<SecuritySettings>) => request<SecuritySettings>("/api/security/settings", patch(input)),
+  testSecurityNotification: () => request<{ sent: true }>("/api/security/test-notification", { method: "POST" }),
+  securityEvents: (params: { kind?: string; ip?: string; severity?: string; q?: string; hours?: number; limit?: number }) => request<SecurityEvent[]>(`/api/security/events${qs(params)}`),
+  securityRules: () => request<SecurityRule[]>("/api/security/rules"),
+  createSecurityRule: (input: Partial<SecurityRule>) => request<SecurityRule>("/api/security/rules", json(input)),
+  updateSecurityRule: (id: string, input: Partial<SecurityRule>) => request<SecurityRule>(`/api/security/rules/${id}`, patch(input)),
+  deleteSecurityRule: (id: string) => request<void>(`/api/security/rules/${id}`, del),
+  ipBlocks: () => request<IpBlock[]>("/api/security/blocks"),
+  blockIp: (input: { ip: string; minutes?: number | null; reason?: string }) => request<{ ok: true }>("/api/security/blocks", json(input)),
+  unblockIp: (id: string) => request<void>(`/api/security/blocks/${id}`, del),
+  trustedIps: () => request<TrustedIp[]>("/api/security/trusted-ips"),
+  forgetTrustedIp: (id: string) => request<void>(`/api/security/trusted-ips/${id}`, del),
+  sessions: () => request<SessionRow[]>("/api/security/sessions"),
+  revokeSession: (id: string) => request<{ revoked: number }>(`/api/security/sessions/${id}`, del),
+
+  locations: () => request<Location[]>("/api/locations"),
+  createLocation: (input: { name: string; description?: string | null; address?: string | null; endpointIds?: string[] }) => request<Location>("/api/locations", json(input)),
+  updateLocation: (id: string, input: { name?: string; description?: string | null; address?: string | null; endpointIds?: string[] }) => request<Location>(`/api/locations/${id}`, patch(input)),
+  deleteLocation: (id: string) => request<void>(`/api/locations/${id}`, del),
+  locationMaintenance: (id: string, minutes: number) => request<{ endpoints: number; checks: number }>(`/api/locations/${id}/maintenance`, json({ minutes })),
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   me: () => request<{ id: string; email: string }>("/api/auth/me"),
   health: () => request<{ status: string; db: string; version: string; agentVersion: string | null }>("/api/health"),
@@ -324,13 +414,21 @@ export const api = {
   requestHostUpdate: (hostId: string) => request<{ requested: boolean }>(`/api/hosts/${hostId}/request-update`, { method: "POST" }),
   hostMetricCatalog: () => request<MetricDef[]>("/api/hosts/metric-catalog"),
   hostSuggestions: (id: string) => request<Suggestion[]>(`/api/hosts/${id}/suggestions`),
-  applySuggestions: (id: string, keys: string[]) => request<{ created: number }>(`/api/hosts/${id}/suggestions/apply`, json({ keys })),
+  applySuggestions: (id: string, keys: string[], opts: { alertRule?: AlertRulePayload | null; overrides?: Record<string, { name?: string; intervalSeconds?: number }> } = {}) => request<{ created: number }>(`/api/hosts/${id}/suggestions/apply`, json({ keys, ...opts })),
+  hostInventory: (id: string) => request<HostInventory>(`/api/hosts/${id}/inventory`),
+  hostAddresses: (id: string) => request<AddressRow[]>(`/api/hosts/${id}/addresses`),
   wakeHost: (id: string) => request<{ sent: boolean; viaCollector?: boolean }>(`/api/hosts/${id}/wake`, { method: "POST" }),
   bulkHosts: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/hosts/bulk", json({ ids, action, ...params })),
   hostMetrics: (hostId: string, limit = 30, since?: string) => request<HostMetric[]>(`/api/hosts/${hostId}/metrics${qs({ limit, since })}`),
 
   checks: (endpointId?: string) => request<Check[]>(`/api/checks${qs({ endpointId })}`),
-  createCheck: (input: Partial<CheckInput> & { endpointId: string; type: string; name: string }) => request<Check>("/api/checks", json(input)),
+  createCheck: (input: Partial<CheckInput> & { endpointId: string; type: string; name: string; alertRule?: AlertRulePayload | null }) => request<Check>("/api/checks", json(input)),
+  createChecksBatch: (input: Partial<CheckInput> & { type: string; name: string; alertRule?: AlertRulePayload | null; targets: { endpointId?: string; hostId?: string }[] }) =>
+    request<{ created: Check[]; errors: { target: string; error: string }[] }>("/api/checks/batch", json(input)),
+  check: (id: string) => request<Check>(`/api/checks/${id}`),
+  checkStats: (id: string, hours: number) => request<CheckStats>(`/api/checks/${id}/stats${qs({ hours })}`),
+  snmpWalk: (input: { config: Record<string, unknown>; endpointId?: string; checkId?: string }) => request<{ rows: WalkRow[]; truncated: boolean } | { jobId: string }>("/api/checks/snmp-walk", json(input)),
+  snmpWalkJob: (jobId: string) => request<{ rows: WalkRow[]; truncated: boolean } | { pending: true }>(`/api/checks/snmp-walk/${jobId}`),
   updateCheck: (id: string, input: Partial<CheckInput>) => request<Check>(`/api/checks/${id}`, patch(input)),
   deleteCheck: (id: string) => request<void>(`/api/checks/${id}`, del),
   // A check run by a site collector comes back { queued, message } instead.
@@ -340,8 +438,11 @@ export const api = {
   checkResults: (checkId: string, limit = 50, since?: string) => request<CheckResult[]>(`/api/checks/${checkId}/results${qs({ limit, since })}`),
 
   channels: () => request<Channel[]>("/api/channels"),
-  createChannel: (input: { name: string; type: string; config: Record<string, unknown> }) => request<Channel>("/api/channels", json(input)),
-  updateChannel: (id: string, input: { name?: string; config?: Record<string, unknown>; enabled?: boolean }) => request<Channel>(`/api/channels/${id}`, patch(input)),
+  createChannel: (input: { name: string; type: string; config: Record<string, unknown>; templates?: Record<string, ChannelTemplate> }) => request<Channel>("/api/channels", json(input)),
+  updateChannel: (id: string, input: { name?: string; config?: Record<string, unknown>; enabled?: boolean; templates?: Record<string, ChannelTemplate> }) => request<Channel>(`/api/channels/${id}`, patch(input)),
+  channelTemplates: () => request<TemplateInfo>("/api/channels/templates"),
+  previewTemplates: (templates: Record<string, ChannelTemplate>) => request<Record<string, { title: string; body: string }>>("/api/channels/preview", json({ templates })),
+  testChannel: (id: string) => request<{ sent: true }>(`/api/channels/${id}/test`, { method: "POST" }),
   deleteChannel: (id: string) => request<void>(`/api/channels/${id}`, del),
 
   smtpSettings: () => request<{ settings: SmtpSettings }>("/api/smtp/settings"),
@@ -353,7 +454,7 @@ export const api = {
   createAlertRule: (input: AlertRuleInput & { checkId: string }) => request<AlertRule>("/api/alert-rules", json(input)),
   updateAlertRule: (id: string, input: AlertRuleInput) => request<AlertRule>(`/api/alert-rules/${id}`, patch(input)),
   deleteAlertRule: (id: string) => request<void>(`/api/alert-rules/${id}`, del),
-  alertEvents: (params?: { endpointId?: string; since?: string; limit?: number }) => request<AlertEvent[]>(`/api/alert-rules/events${qs(params ?? {})}`),
+  alertEvents: (params?: AlertEventQuery) => request<AlertEvent[]>(`/api/alert-rules/events${qs(params ?? {})}`),
 
   vapidPublicKey: () => request<{ publicKey: string }>("/api/push/vapid-public-key"),
   subscribePush: (subscription: PushSubscriptionJSON) => request<{ ok: true }>("/api/push/subscribe", json(subscription)),
@@ -405,6 +506,6 @@ export const api = {
   discoveryScans: () => request<DiscoveryScan[]>("/api/insights/discovery/scans"),
   discoveryScan: (id: string) => request<DiscoveryScan>(`/api/insights/discovery/scans/${id}`),
   startDiscovery: (cidr: string, community?: string, endpointId?: string) => request<DiscoveryScan>("/api/insights/discovery/scans", json({ cidr, community, endpointId })),
-  addDiscovered: (scanId: string, input: { endpointId: string; devices: { ip: string; name?: string; mac?: string | null; createHost: boolean; checks: SuggestedCheck[] }[] }) =>
+  addDiscovered: (scanId: string, input: { endpointId: string; alertRule?: AlertRulePayload | null; devices: { ip: string; name?: string; mac?: string | null; createHost: boolean; checks: SuggestedCheck[] }[] }) =>
     request<{ hostsCreated: number; checksCreated: number }>(`/api/insights/discovery/scans/${scanId}/add`, json(input)),
 };

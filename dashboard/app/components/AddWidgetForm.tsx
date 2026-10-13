@@ -2,25 +2,24 @@
 
 import { useState } from "react";
 import type { Check, Host, Endpoint, WidgetType } from "../lib/api";
+import { typeLabel } from "../lib/checkTypes";
+import { Button, MultiPicker, inputClass, type PickItem } from "./ui";
 
-const WIDGET_TYPE_LABELS: Record<WidgetType, string> = {
-  status_tile: "Status tile (one check)",
-  group_summary: "Group summary (one endpoint)",
-  uptime_history: "Uptime history (one check)",
-  host_metrics: "Host metrics (one host)",
-  note: "Note",
-  alert_history: "Alert history (one endpoint or all)",
-  network_bandwidth: "Network bandwidth (one host)",
-  all_hosts: "All hosts grid",
-  backup_status: "Backup status",
-  clock: "Clock / date",
-  section_header: "Section header (group widgets visually)",
-  status_summary: "Status summary (problems right now)",
-  top_talkers: "Top talkers (NetFlow / sFlow)",
-};
-
-// Types that need no target picker at all — "Add" is available immediately.
-const NO_TARGET_TYPES = new Set<WidgetType>(["all_hosts", "backup_status", "clock", "top_talkers"]);
+const WIDGET_TYPES: { type: WidgetType; label: string; help: string; pick?: "check" | "endpoint" | "host" | "endpoint-or-all" }[] = [
+  { type: "status_tile", label: "Status tile", help: "One check's status, uptime and response time", pick: "check" },
+  { type: "uptime_history", label: "Uptime history", help: "One check's up/down bars over time", pick: "check" },
+  { type: "group_summary", label: "Endpoint summary", help: "Every check in one endpoint at a glance", pick: "endpoint" },
+  { type: "status_summary", label: "Problems right now", help: "Everything down or warning", pick: "endpoint-or-all" },
+  { type: "alert_history", label: "Alert history", help: "Recent alert incidents", pick: "endpoint-or-all" },
+  { type: "host_metrics", label: "Host metrics", help: "CPU, memory and disk of one host", pick: "host" },
+  { type: "network_bandwidth", label: "Network bandwidth", help: "One host's traffic", pick: "host" },
+  { type: "all_hosts", label: "All hosts", help: "Every host and its agent state" },
+  { type: "top_talkers", label: "Top talkers", help: "NetFlow / sFlow conversations" },
+  { type: "backup_status", label: "Backup status", help: "Looksee's own backups" },
+  { type: "clock", label: "Clock", help: "Date and time" },
+  { type: "note", label: "Note", help: "Free text" },
+  { type: "section_header", label: "Section header", help: "A full-width divider to group widgets" },
+];
 
 export function AddWidgetForm({
   endpoints,
@@ -33,94 +32,86 @@ export function AddWidgetForm({
   checks: Check[];
   hosts: Host[];
   // For every type except "note"/"section_header", target is the chosen
-  // check/endpoint/host id. For those two, target is the initial text
-  // instead — there's nothing existing to pick, so the form collects the
-  // content directly.
-  onAdd: (type: WidgetType, target: string) => void;
+  // check/endpoint/host id. For those two, target is the initial text.
+  // Called once per picked target, so several tiles can be added at once.
+  onAdd: (type: WidgetType, target: string) => Promise<void> | void;
   onCancel: () => void;
 }) {
   const [type, setType] = useState<WidgetType>("status_tile");
-  const [targetId, setTargetId] = useState("");
-  const [noteText, setNoteText] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  // The dashboard refreshes status every few seconds; the lists here are a
+  // snapshot taken when the form opened, so the picker never re-sorts or
+  // jumps back to the top while you're scrolling it.
+  const [snapshot] = useState(() => ({ endpoints, checks, hosts }));
+  const def = WIDGET_TYPES.find((w) => w.type === type)!;
+  const endpointName = new Map(snapshot.endpoints.map((e) => [e.id, e.name]));
+  const hostName = new Map(snapshot.hosts.map((h) => [h.id, h.name]));
 
-  const endpointNameById = new Map(endpoints.map((e) => [e.id, e.name]));
-  const hostNameById = new Map(hosts.map((h) => [h.id, h.name]));
+  let items: PickItem[] = [];
+  if (def.pick === "check")
+    items = snapshot.checks
+      .filter((c) => c.enabled)
+      .map((c) => ({ id: c.id, label: c.name, group: endpointName.get(c.endpointId), sub: [typeLabel(c.type), c.hostId ? hostName.get(c.hostId) : null].filter(Boolean).join(" · ") }));
+  else if (def.pick === "host") items = snapshot.hosts.map((h) => ({ id: h.id, label: h.name, group: endpointName.get(h.endpointId), sub: h.hostname ?? undefined }));
+  else if (def.pick === "endpoint" || def.pick === "endpoint-or-all") items = snapshot.endpoints.map((e) => ({ id: e.id, label: e.name, sub: e.description ?? undefined }));
 
-  // Which endpoint/host a check or host belongs to isn't obvious from its
-  // name alone once there's more than a couple — label each option with its
-  // source so picking the right one doesn't require guessing.
-  let options: { id: string; label: string }[] = [];
-  if (type === "status_tile" || type === "uptime_history") {
-    options = checks.map((c) => {
-      const endpoint = endpointNameById.get(c.endpointId) ?? "unknown endpoint";
-      const host = c.hostId ? hostNameById.get(c.hostId) : undefined;
-      return { id: c.id, label: host ? `${c.name} — ${endpoint} / ${host}` : `${c.name} — ${endpoint}` };
-    });
-  } else if (type === "group_summary") {
-    options = endpoints.map((e) => ({ id: e.id, label: e.name }));
-  } else if (type === "host_metrics" || type === "network_bandwidth") {
-    options = hosts.map((h) => ({ id: h.id, label: `${h.name} — ${endpointNameById.get(h.endpointId) ?? "unknown endpoint"}` }));
-  } else if (type === "alert_history" || type === "status_summary") {
-    options = [{ id: "", label: "All endpoints" }, ...endpoints.map((e) => ({ id: e.id, label: e.name }))];
-  }
+  const free = type === "note" || type === "section_header";
+  const multi = def.pick === "check" || def.pick === "host" || def.pick === "endpoint";
+  const canAdd = free ? text.trim().length > 0 : !def.pick || def.pick === "endpoint-or-all" || picked.length > 0;
 
-  const isFreeText = type === "note" || type === "section_header";
-  const canAdd = isFreeText || NO_TARGET_TYPES.has(type) || type === "alert_history" || type === "status_summary" || Boolean(targetId);
-
-  function handleAdd() {
+  async function add() {
     if (!canAdd) return;
-    onAdd(type, isFreeText ? noteText : targetId);
+    setBusy(true);
+    try {
+      if (free) await onAdd(type, text);
+      else if (!def.pick) await onAdd(type, "");
+      else if (def.pick === "endpoint-or-all") await onAdd(type, picked[0] ?? "");
+      else for (const id of picked) await onAdd(type, id);
+      onCancel();
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
-    <div className="flex flex-wrap items-start gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3 text-sm">
-      <select
-        value={type}
-        onChange={(e) => {
-          setType(e.target.value as WidgetType);
-          setTargetId("");
-        }}
-        className="rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
-      >
-        {(Object.keys(WIDGET_TYPE_LABELS) as WidgetType[]).map((t) => (
-          <option key={t} value={t}>
-            {WIDGET_TYPE_LABELS[t]}
-          </option>
+    <div className="surface space-y-3 rounded-xl p-3 text-sm">
+      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-5">
+        {WIDGET_TYPES.map((w) => (
+          <button
+            key={w.type}
+            type="button"
+            onClick={() => {
+              setType(w.type);
+              setPicked([]);
+            }}
+            aria-pressed={type === w.type}
+            className={`rounded-lg border p-2 text-left ${type === w.type ? "border-[var(--accent)] bg-[var(--accent)]/10" : "border-[var(--border)] hover:bg-[var(--panel-2)]"}`}
+          >
+            <span className="block text-sm font-medium">{w.label}</span>
+            <span className="block text-xs text-[var(--muted)]">{w.help}</span>
+          </button>
         ))}
-      </select>
-      {type === "note" ? (
-        <textarea
-          autoFocus
-          value={noteText}
-          onChange={(e) => setNoteText(e.target.value)}
-          placeholder="Note text…"
-          rows={2}
-          className="min-w-40 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
-        />
-      ) : type === "section_header" ? (
-        <input
-          autoFocus
-          value={noteText}
-          onChange={(e) => setNoteText(e.target.value)}
-          placeholder="Section name…"
-          className="min-w-40 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 py-1"
-        />
-      ) : NO_TARGET_TYPES.has(type) ? null : (
-        <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className="min-w-40 rounded-md border border-[var(--border)] bg-transparent px-2 py-1">
-          {type !== "alert_history" && type !== "status_summary" && <option value="">Choose...</option>}
-          {options.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+      </div>
+      {type === "note" && <textarea autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Note text…" rows={2} className={inputClass} />}
+      {type === "section_header" && <input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Section name…" className={inputClass} />}
+      {def.pick && (
+        <div>
+          <div className="mb-1 text-xs text-[var(--muted)]">
+            {def.pick === "endpoint-or-all" ? "Limit to one endpoint (optional — none picked = all endpoints)" : multi ? `Pick one or more — one widget each` : "Pick one"}
+          </div>
+          <MultiPicker items={items} selected={picked} onChange={setPicked} single={!multi} placeholder={`Search ${def.pick === "check" ? "checks by name, type or host" : def.pick === "host" ? "hosts" : "endpoints"}…`} groupLabel="Endpoint" height="max-h-72" />
+        </div>
       )}
-      <button onClick={handleAdd} disabled={!canAdd} className="rounded-md bg-[var(--up)] px-3 py-1 font-medium text-black disabled:opacity-40">
-        Add
-      </button>
-      <button onClick={onCancel} className="text-[var(--muted)]">
-        Cancel
-      </button>
+      <div className="flex gap-2">
+        <Button variant="primary" onClick={add} disabled={!canAdd || busy}>
+          {busy ? "Adding…" : picked.length > 1 ? `Add ${picked.length} widgets` : "Add widget"}
+        </Button>
+        <Button variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
     </div>
   );
 }

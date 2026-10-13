@@ -56,6 +56,7 @@ export const CHECK_TYPE_META = {
   push_value: { executor: "engine", local: true },
   agent_heartbeat: { executor: "engine", hostRequired: true, local: true },
   disk_forecast: { executor: "engine", hostRequired: true, local: true },
+  ip_change: { executor: "engine", local: true },
 
   agent_service: { executor: "agent", hostRequired: true },
   agent_process: { executor: "agent", hostRequired: true },

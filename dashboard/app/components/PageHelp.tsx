@@ -6,12 +6,7 @@ export function PageHelp({ children, anchor }: { children: React.ReactNode; anch
   return (
     <p className="mb-4 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">
       {children}{" "}
-      <a
-        href={`https://github.com/jasonhaymond/Looksee/blob/main/docs/user-guide.md#${anchor}`}
-        target="_blank"
-        rel="noreferrer"
-        className="underline hover:text-[var(--text)]"
-      >
+      <a href={`/help#${anchor}`} className="underline hover:text-[var(--text)]">
         Learn more
       </a>
     </p>

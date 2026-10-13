@@ -39,7 +39,7 @@ export function NetworkBandwidthWidget({ widget, host, onChanged }: { widget: Wi
 
   if (!host) {
     return (
-      <p className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3 text-xs text-[var(--muted)]">
+      <p className="surface rounded-lg p-3 text-xs text-[var(--muted)]">
         Host not found — it may have been deleted.
       </p>
     );
@@ -54,7 +54,7 @@ export function NetworkBandwidthWidget({ widget, host, onChanged }: { widget: Wi
   const latestTx = tx[tx.length - 1];
 
   return (
-    <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+    <div className="h-full surface rounded-lg p-3">
       <div className="flex items-center justify-between gap-2">
         <h3 className="truncate font-medium">{host.name}</h3>
         <RangeSelect hours={rangeHours} onChange={handleRangeChange} />

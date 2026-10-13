@@ -2,6 +2,7 @@ import { applyThresholds } from "../thresholds.js";
 import { type Config, type ProbeContext, type ProbeOutcome, warn } from "./types.js";
 import { NETWORK_PROBES } from "./network.js";
 import { probeAgentHeartbeat, probeAnomaly, probeDiskForecast, probeEventMatch, probePushStaleness } from "./internal.js";
+import { probeIpChange } from "../addresses.js";
 
 export type { ProbeContext, ProbeOutcome } from "./types.js";
 
@@ -16,6 +17,7 @@ const PROBES: Record<string, (config: Config, ctx: ProbeContext) => Promise<Prob
   push_value: probePushStaleness,
   agent_heartbeat: probeAgentHeartbeat,
   disk_forecast: probeDiskForecast,
+  ip_change: probeIpChange,
 };
 
 export const PROBE_TYPES = Object.keys(PROBES);

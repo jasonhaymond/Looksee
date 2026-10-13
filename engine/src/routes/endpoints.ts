@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { endpoints, hosts, checks, maintenanceWindows } from "../db/schema.js";
+import { endpoints, hosts, checks, locations, maintenanceWindows } from "../db/schema.js";
 import { invalidateMaintenanceCache } from "../services/maintenance.js";
 import { invalidateSiteIpCache } from "../services/receivers/index.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -42,6 +42,11 @@ async function siteFields(body: Record<string, unknown> | undefined): Promise<{ 
       if (!host?.agentApiKey) return { error: "The site collector must be a host with an agent installed" };
     }
     out.collectorHostId = hostId;
+  }
+  if (body?.locationId !== undefined) {
+    const locationId = body.locationId ? String(body.locationId) : null;
+    if (locationId && !(await db.query.locations.findFirst({ where: eq(locations.id, locationId) }))) return { error: "locationId not found" };
+    out.locationId = locationId;
   }
   if (body?.publicIps !== undefined) {
     const raw = Array.isArray(body.publicIps) ? body.publicIps : String(body.publicIps ?? "").split(/[\s,]+/);
@@ -105,6 +110,15 @@ endpointsRouter.post("/bulk", async (req, res) => {
     case "disable_checks":
       affected = (await db.update(checks).set({ enabled: action === "enable_checks" }).where(inArray(checks.endpointId, ids)).returning({ id: checks.id })).length;
       break;
+    case "set_location": {
+      const locationId = req.body?.locationId ? String(req.body.locationId) : null;
+      if (locationId && !(await db.query.locations.findFirst({ where: eq(locations.id, locationId) }))) {
+        res.status(400).json({ error: "locationId not found" });
+        return;
+      }
+      affected = (await db.update(endpoints).set({ locationId }).where(inArray(endpoints.id, ids)).returning({ id: endpoints.id })).length;
+      break;
+    }
     case "maintenance": {
       const minutes = Math.max(1, Number(req.body?.minutes) || 60);
       const now = new Date();

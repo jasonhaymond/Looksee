@@ -2,11 +2,11 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, type Check, type Endpoint, type Host, type HostDetail, type Suggestion } from "../lib/api";
+import { api, ApiError, type AddressRow, type Channel, type Check, type Endpoint, type Host, type HostDetail, type HostInventory, type Location, type Suggestion } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
 import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
-import { BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, Label, Modal, PromptDialog, StatusBadge, Tags, formatBytes, inputClass, relativeTime, useSelection, useToast } from "../components/ui";
+import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Label, Modal, PromptDialog, StatusBadge, Tags, alertRulePayload, emptyAlertOptions, formatBytes, inputClass, relativeTime, useSelection, useToast, type BulkAction } from "../components/ui";
 import { displayStatus } from "../components/CheckDetail";
 import { collectorState } from "../components/collector";
 
@@ -95,6 +95,16 @@ function Overview({ detail }: { detail: HostDetail }) {
         <div className="overflow-x-auto">
           <div className="mb-1 text-xs text-[var(--muted)]">Interfaces</div>
           <table className="w-full whitespace-nowrap text-xs">
+            <thead className="text-left text-[var(--muted)]">
+              <tr>
+                <th className="py-1 pr-2 font-normal">Name</th>
+                <th className="pr-2 font-normal">Link</th>
+                <th className="pr-2 font-normal">Speed</th>
+                <th className="pr-2 font-normal">Traffic</th>
+                <th className="pr-2 font-normal">MAC</th>
+                <th className="font-normal">Addresses</th>
+              </tr>
+            </thead>
             <tbody>
               {s.net.map((n) => (
                 <tr key={n.name} className="border-t border-[var(--border)]">
@@ -104,7 +114,8 @@ function Overview({ detail }: { detail: HostDetail }) {
                   <td className="pr-2">
                     ↓ {((n.rxBytesPerSec * 8) / 1e6).toFixed(2)} ↑ {((n.txBytesPerSec * 8) / 1e6).toFixed(2)} Mbps
                   </td>
-                  <td className="truncate text-[var(--muted)]">{(n.addrs ?? []).slice(0, 2).join(", ")}</td>
+                  <td className="pr-2 font-mono text-[var(--muted)]">{n.mac || "—"}</td>
+                  <td className="truncate text-[var(--muted)]">{(n.addrs ?? []).slice(0, 3).join(", ")}</td>
                 </tr>
               ))}
             </tbody>
@@ -180,10 +191,12 @@ function Overview({ detail }: { detail: HostDetail }) {
   );
 }
 
-function SuggestionsTab({ host, onApplied }: { host: Host; onApplied: () => void }) {
+function SuggestionsTab({ host, channels, onApplied }: { host: Host; channels: Channel[]; onApplied: () => void }) {
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [alert, setAlert] = useState(emptyAlertOptions());
+  const [done, setDone] = useState<string | null>(null);
   const load = useCallback(() => {
     api.hostSuggestions(host.id).then((s) => {
       setSuggestions(s);
@@ -195,10 +208,33 @@ function SuggestionsTab({ host, onApplied }: { host: Host; onApplied: () => void
   if (!suggestions.length) return <p className="text-sm text-[var(--muted)]">{host.hasSnapshot ? "Nothing more to suggest — this host already has every recommended check." : "Suggestions appear once a 3.x agent has reported in."}</p>;
   return (
     <div className="space-y-2 text-sm">
-      <p className="text-xs text-[var(--muted)]">Based on what the agent found on this host. Untick anything you don&apos;t want; thresholds can be changed afterwards.</p>
-      <div className="max-h-80 space-y-1 overflow-y-auto">
-        {suggestions.map((s) => (
-          <label key={s.key} className="flex items-start gap-2 rounded px-1 py-0.5 hover:bg-[var(--border)]/20">
+      <p className="text-xs text-[var(--muted)]">Based on what the agent found on this host — its services, processes, containers, listening ports and logs. Untick anything you don&apos;t want; thresholds can be changed afterwards.</p>
+      <div className="max-h-96 space-y-3 overflow-y-auto">
+        {[...new Set(suggestions.map((s) => s.group ?? "Other"))].map((g) => {
+          const inGroup = suggestions.filter((s) => (s.group ?? "Other") === g);
+          const all = inGroup.every((s) => picked.has(s.key));
+          return (
+            <div key={g}>
+              <label className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+                <input
+                  type="checkbox"
+                  checked={all}
+                  onChange={() =>
+                    setPicked((p) => {
+                      const n = new Set(p);
+                      for (const s of inGroup) {
+                        if (all) n.delete(s.key);
+                        else n.add(s.key);
+                      }
+                      return n;
+                    })
+                  }
+                  className="accent-[var(--accent)]"
+                />
+                {g} ({inGroup.length})
+              </label>
+        {inGroup.map((s) => (
+          <label key={s.key} className="flex items-start gap-2 rounded px-1 py-0.5 hover:bg-[var(--panel-2)]">
             <input
               type="checkbox"
               className="mt-0.5 accent-[var(--up)]"
@@ -217,15 +253,26 @@ function SuggestionsTab({ host, onApplied }: { host: Host; onApplied: () => void
             </span>
           </label>
         ))}
+            </div>
+          );
+        })}
       </div>
+      <details className="rounded-lg border border-[var(--border)] p-3" open={channels.length > 0}>
+        <summary className="cursor-pointer text-sm font-medium">Alerts for the new checks</summary>
+        <div className="mt-2">
+          <AlertOptions channels={channels} value={alert} onChange={setAlert} />
+        </div>
+      </details>
+      {done && <p className="text-xs text-[var(--up)]">{done}</p>}
       <div className="flex gap-2">
         <Button
           variant="primary"
           disabled={!picked.size || busy}
           onClick={async () => {
             setBusy(true);
-            await api.applySuggestions(host.id, [...picked]);
+            const r = await api.applySuggestions(host.id, [...picked], { alertRule: alertRulePayload(alert) });
             setBusy(false);
+            setDone(`Created ${r.created} check(s)${alertRulePayload(alert) ? " with alert rules" : ""}.`);
             load();
             onApplied();
           }}
@@ -279,7 +326,7 @@ function AgentTab({ host, latestAgentVersion, onChanged }: { host: Host; latestA
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded bg-black/30 p-1.5">{revealed.installCommands[platform]}</code>
+            <code className="flex-1 break-all rounded bg-[var(--code-bg)] p-1.5">{revealed.installCommands[platform]}</code>
             <CopyButton text={revealed.installCommands[platform]} />
           </div>
         </div>
@@ -333,8 +380,161 @@ function EditTab({ host, endpoints, onSaved }: { host: Host; endpoints: Endpoint
   );
 }
 
-function HostPanel({ host, endpoints, checks, latestAgentVersion, onChanged }: { host: Host; endpoints: Endpoint[]; checks: Check[]; latestAgentVersion: string | null; onChanged: () => void }) {
-  const [tab, setTab] = useState<"overview" | "checks" | "suggest" | "agent" | "edit">("overview");
+function InventoryTab({ host, kind }: { host: Host; kind: "processes" | "services" }) {
+  const [inv, setInv] = useState<HostInventory | null>(null);
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [sort, setSort] = useState<"memory" | "cpu" | "name">("memory");
+  useEffect(() => {
+    api.hostInventory(host.id).then(setInv);
+  }, [host.id, host.lastSeenAt]);
+  if (!inv) return null;
+  const query = q.trim().toLowerCase();
+  const updated = inv.updatedAt ? `Updated ${relativeTime(inv.updatedAt)} (every ~5 minutes).` : "";
+  if (kind === "processes") {
+    const rows = inv.processes;
+    if (!rows) return <p className="text-sm text-[var(--muted)]">{inv.processNames?.length ? `This agent only reports process names (${inv.processNames.length}). Update it to agent 4.0+ for PID, user, CPU and memory.` : "No process inventory yet — it arrives with the first 4.0+ agent report."}</p>;
+    const shown = rows.filter((p) => !query || `${p.name} ${p.user ?? ""} ${p.command ?? ""} ${p.pid}`.toLowerCase().includes(query)).sort((a, b) => (sort === "name" ? a.name.localeCompare(b.name) : sort === "cpu" ? (b.cpuPercent ?? 0) - (a.cpuPercent ?? 0) : (b.memoryMb ?? 0) - (a.memoryMb ?? 0)));
+    return (
+      <div className="space-y-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${rows.length} processes…`} className={`${inputClass} max-w-xs`} />
+          <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className={`${inputClass} w-auto`} aria-label="Sort">
+            <option value="memory">Most memory</option>
+            <option value="cpu">Most CPU</option>
+            <option value="name">Name</option>
+          </select>
+          <span className="text-xs text-[var(--muted)]">{updated}</span>
+        </div>
+        <div className="max-h-96 overflow-auto rounded border border-[var(--border)]">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-[var(--panel-2)] text-left text-[var(--muted)]">
+              <tr>
+                <th className="px-2 py-1 font-normal">Name</th>
+                <th className="px-2 py-1 font-normal">PID</th>
+                <th className="px-2 py-1 font-normal">User</th>
+                <th className="px-2 py-1 text-right font-normal">CPU %</th>
+                <th className="px-2 py-1 text-right font-normal">Memory</th>
+                <th className="px-2 py-1 font-normal">Command</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.slice(0, 1000).map((p) => (
+                <tr key={p.pid} className="border-t border-[var(--border)]">
+                  <td className="px-2 py-1 font-medium">{p.name}</td>
+                  <td className="px-2 py-1 text-[var(--muted)]">{p.pid}</td>
+                  <td className="px-2 py-1">{p.user}</td>
+                  <td className="px-2 py-1 text-right">{p.cpuPercent?.toFixed(1)}</td>
+                  <td className="px-2 py-1 text-right">{p.memoryMb != null ? `${Math.round(p.memoryMb)} MB` : ""}</td>
+                  <td className="max-w-md truncate px-2 py-1 font-mono text-[var(--muted)]" title={p.command}>
+                    {p.command}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+  const rows = inv.services;
+  if (!rows) return <p className="text-sm text-[var(--muted)]">{inv.serviceNames?.length ? `This agent only reports service names (${inv.serviceNames.length}). Update it to agent 4.0+ for state and start type.` : "No service inventory yet — it arrives with the first 4.0+ agent report."}</p>;
+  const running = (s: { state: string }) => /running|active/i.test(s.state);
+  const auto = (s: { startType?: string }) => /auto|enabled/i.test(s.startType ?? "");
+  const shown = rows.filter((s) => (filter === "all" || (filter === "running" ? running(s) : filter === "stopped" ? !running(s) : auto(s) && !running(s))) && (!query || `${s.name} ${s.displayName ?? ""}`.toLowerCase().includes(query)));
+  return (
+    <div className="space-y-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${rows.length} services…`} className={`${inputClass} max-w-xs`} />
+        {(
+          [
+            ["all", "All"],
+            ["running", "Running"],
+            ["stopped", "Not running"],
+            ["auto_stopped", "Automatic but stopped"],
+          ] as const
+        ).map(([k, label]) => (
+          <FilterChip key={k} active={filter === k} onClick={() => setFilter(k)}>
+            {label}
+          </FilterChip>
+        ))}
+        <span className="text-xs text-[var(--muted)]">{updated}</span>
+      </div>
+      <div className="max-h-96 overflow-auto rounded border border-[var(--border)]">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-[var(--panel-2)] text-left text-[var(--muted)]">
+            <tr>
+              <th className="px-2 py-1 font-normal">Service</th>
+              <th className="px-2 py-1 font-normal">State</th>
+              <th className="px-2 py-1 font-normal">Starts</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((s) => (
+              <tr key={s.name} className="border-t border-[var(--border)]">
+                <td className="px-2 py-1">
+                  <span className="font-medium">{s.name}</span>
+                  {s.displayName && s.displayName !== s.name && <span className="block text-[var(--muted)]">{s.displayName}</span>}
+                </td>
+                <td className="px-2 py-1">
+                  <StatusBadge status={running(s) ? "up" : auto(s) ? "down" : "unknown"} compact /> {s.state}
+                </td>
+                <td className="px-2 py-1 text-[var(--muted)]">{s.startType}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function AddressesTab({ host }: { host: Host }) {
+  const [rows, setRows] = useState<AddressRow[] | null>(null);
+  useEffect(() => {
+    api.hostAddresses(host.id).then(setRows);
+  }, [host.id]);
+  if (!rows) return null;
+  if (!rows.length) return <p className="text-sm text-[var(--muted)]">No address sightings yet. They come from the agent&apos;s interface list, discovery scans and ARP checks. Add an “IP address change” check to be alerted when this host&apos;s IP changes.</p>;
+  const macs = [...new Set(rows.map((r) => r.mac))];
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="text-xs text-[var(--muted)]">Every IP each of this host&apos;s MAC addresses has been seen with, newest first. Add an “IP address change (by MAC)” check to be alerted on a change.</p>
+      {macs.map((mac) => (
+        <div key={mac}>
+          <div className="mb-1 font-mono text-xs">{mac}</div>
+          <table className="w-full text-xs">
+            <thead className="text-left text-[var(--muted)]">
+              <tr>
+                <th className="py-1 pr-2 font-normal">IP</th>
+                <th className="pr-2 font-normal">First seen</th>
+                <th className="pr-2 font-normal">Last seen</th>
+                <th className="font-normal">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows
+                .filter((r) => r.mac === mac)
+                .map((r, i) => (
+                  <tr key={r.id} className="border-t border-[var(--border)]">
+                    <td className="py-1 pr-2 font-mono">
+                      {r.ip} {i === 0 && <span className="text-[var(--up)]">(current)</span>}
+                    </td>
+                    <td className="pr-2">{new Date(r.firstSeenAt).toLocaleString()}</td>
+                    <td className="pr-2">{relativeTime(r.lastSeenAt)}</td>
+                    <td className="text-[var(--muted)]">{r.source}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HostPanel({ host, endpoints, checks, channels, latestAgentVersion, onChanged }: { host: Host; endpoints: Endpoint[]; checks: Check[]; channels: Channel[]; latestAgentVersion: string | null; onChanged: () => void }) {
+  const [tab, setTab] = useState<"overview" | "checks" | "suggest" | "processes" | "services" | "addresses" | "agent" | "edit">("overview");
   const [detail, setDetail] = useState<HostDetail | null>(null);
   const toast = useToast();
   useEffect(() => {
@@ -345,14 +545,17 @@ function HostPanel({ host, endpoints, checks, latestAgentVersion, onChanged }: {
     ["overview", "Overview"],
     ["checks", `Checks (${mine.length})`],
     ["suggest", "Suggested checks"],
+    ["processes", `Processes${host.processCount ? ` (${host.processCount})` : ""}`],
+    ["services", `Services${host.serviceCount ? ` (${host.serviceCount})` : ""}`],
+    ["addresses", "IP history"],
     ["agent", "Agent"],
     ["edit", "Edit"],
   ] as const;
   return (
-    <div className="space-y-3 border-t border-[var(--border)] bg-[var(--bg)]/40 p-3">
+    <div className="space-y-3 border-t border-[var(--border)] bg-[var(--bg)] p-3">
       <div className="flex flex-wrap items-center gap-1">
         {tabs.map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)} className={`rounded-md px-3 py-1 text-xs ${tab === k ? "bg-[var(--border)] text-[var(--text)]" : "text-[var(--muted)] hover:text-[var(--text)]"}`}>
+          <button key={k} onClick={() => setTab(k)} className={`rounded-md px-3 py-1 text-xs ${tab === k ? "bg-[var(--panel-2)] text-[var(--text)] ring-1 ring-[var(--border)]" : "text-[var(--muted)] hover:text-[var(--text)]"}`}>
             {label}
           </button>
         ))}
@@ -380,7 +583,9 @@ function HostPanel({ host, endpoints, checks, latestAgentVersion, onChanged }: {
             {mine.map((c) => (
               <li key={c.id} className="flex items-center gap-2">
                 <StatusBadge status={displayStatus(c)} compact />
-                <span>{c.name}</span>
+                <a href={`/checks/${c.id}`} className="hover:underline">
+                  {c.name}
+                </a>
                 <span className="truncate text-xs text-[var(--muted)]">{c.lastMessage}</span>
               </li>
             ))}
@@ -388,7 +593,10 @@ function HostPanel({ host, endpoints, checks, latestAgentVersion, onChanged }: {
         ) : (
           <p className="text-sm text-[var(--muted)]">No checks on this host yet — try Suggested checks.</p>
         ))}
-      {tab === "suggest" && <SuggestionsTab host={host} onApplied={onChanged} />}
+      {tab === "suggest" && <SuggestionsTab host={host} channels={channels} onApplied={onChanged} />}
+      {tab === "processes" && <InventoryTab host={host} kind="processes" />}
+      {tab === "services" && <InventoryTab host={host} kind="services" />}
+      {tab === "addresses" && <AddressesTab host={host} />}
       {tab === "agent" && <AgentTab host={host} latestAgentVersion={latestAgentVersion} onChanged={onChanged} />}
       {tab === "edit" && <EditTab host={host} endpoints={endpoints} onSaved={onChanged} />}
       {toast.node}
@@ -402,19 +610,24 @@ export default function HostsPage() {
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [checks, setChecks] = useState<Check[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
   const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [endpointFilter, setEndpointFilter] = useState("");
+  const [locationFilter, setLocationFilter] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<"add" | "delete" | "move" | "tags" | "untag" | "maint" | null>(null);
+  const [dialog, setDialog] = useState<"add" | "delete" | "move" | "tags" | "untag" | "maint" | "suggest" | null>(null);
   const toast = useToast();
 
   const load = useCallback(async () => {
-    const [e, h, c, health] = await Promise.all([api.endpoints(), api.hosts(), api.checks(), api.health()]);
+    const [e, h, c, health, ch, l] = await Promise.all([api.endpoints(), api.hosts(), api.checks(), api.health(), api.channels(), api.locations()]);
     setEndpoints(e);
     setHosts(h);
     setChecks(c);
+    setChannels(ch);
+    setLocations(l);
     setLatestAgentVersion(health.agentVersion);
     setLoaded(true);
   }, []);
@@ -443,8 +656,9 @@ export default function HostsPage() {
   }, [endpoints]);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return hosts.filter((h) => (!endpointFilter || h.endpointId === endpointFilter) && (!q || `${h.name} ${h.hostname ?? ""} ${h.os ?? ""} ${(h.tags ?? []).join(" ")} ${h.agentVersion ?? ""}`.toLowerCase().includes(q)));
-  }, [hosts, search, endpointFilter]);
+    const locOf = new Map(endpoints.map((e) => [e.id, e.locationId]));
+    return hosts.filter((h) => (!endpointFilter || h.endpointId === endpointFilter) && (!locationFilter || locOf.get(h.endpointId) === locationFilter) && (!q || `${h.name} ${h.hostname ?? ""} ${h.os ?? ""} ${h.macAddress ?? ""} ${(h.tags ?? []).join(" ")} ${h.agentVersion ?? ""}`.toLowerCase().includes(q)));
+  }, [hosts, search, endpointFilter, locationFilter, endpoints]);
   const sel = useSelection(filtered.map((h) => h.id));
 
   async function bulk(action: string, params: Record<string, unknown> = {}, verb = "Updated") {
@@ -467,8 +681,16 @@ export default function HostsPage() {
       </div>
       <PageHelp anchor="hosts">A host is a machine running the Looksee agent. Open one to see its live state, install or update its agent, and add suggested checks in one click.</PageHelp>
 
-      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, IP, OS, tag…" className={`${inputClass} sm:col-span-2`} aria-label="Search hosts" />
+      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-4">
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, IP, MAC, OS, tag…" className={`${inputClass} sm:col-span-2`} aria-label="Search hosts" />
+        <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} className={inputClass} aria-label="Location filter">
+          <option value="">All locations</option>
+          {locations.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </select>
         <select value={endpointFilter} onChange={(e) => setEndpointFilter(e.target.value)} className={inputClass} aria-label="Endpoint filter">
           <option value="">All endpoints</option>
           {endpoints.map((e) => (
@@ -482,8 +704,8 @@ export default function HostsPage() {
       {loaded && hosts.length === 0 ? (
         <EmptyState>No hosts yet. Add one, then run its install command on that machine.</EmptyState>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]/40">
-          <div className="hidden grid-cols-[28px_100px_minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 border-b border-[var(--border)] px-3 py-2 text-xs text-[var(--muted)] md:grid">
+        <div className="surface overflow-hidden rounded-xl">
+          <div className="hidden grid-cols-[28px_100px_minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 border-b border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-xs text-[var(--muted)] md:grid">
             <Checkbox checked={sel.allSelected} indeterminate={sel.someSelected} onChange={(on) => sel.setMany(filtered.map((h) => h.id), on)} label="Select all hosts" />
             <span>Agent</span>
             <span>Name</span>
@@ -506,7 +728,7 @@ export default function HostsPage() {
               <Fragment key={h.id}>
                 <div
                   onClick={() => setExpanded(open ? null : h.id)}
-                  className={`grid cursor-pointer grid-cols-[28px_1fr] gap-x-3 gap-y-1 border-t border-[var(--border)] px-3 py-2 text-sm first:border-t-0 hover:bg-[var(--border)]/20 md:grid-cols-[28px_100px_minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_110px] md:items-center ${sel.selected.has(h.id) ? "bg-[var(--up)]/5" : ""}`}
+                  className={`grid cursor-pointer grid-cols-[28px_1fr] gap-x-3 gap-y-1 border-t border-[var(--border)] px-3 py-2 text-sm first:border-t-0 hover:bg-[var(--panel-2)] md:grid-cols-[28px_100px_minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_110px] md:items-center ${sel.selected.has(h.id) ? "bg-[var(--accent)]/10" : ""}`}
                 >
                   <span className="row-span-6 md:row-span-1">
                     <Checkbox checked={sel.selected.has(h.id)} onChange={() => sel.toggle(h.id)} label={`Select ${h.name}`} />
@@ -521,6 +743,7 @@ export default function HostsPage() {
                   </span>
                   <span className="min-w-0 truncate text-xs text-[var(--muted)]">
                     {[h.hostname, h.os].filter(Boolean).join(" · ") || "—"}
+                    {h.macAddress && <span className="block font-mono">{h.macAddress}</span>}
                     {h.agentVersion && (
                       <span className="block">
                         agent v{h.agentVersion}
@@ -534,7 +757,7 @@ export default function HostsPage() {
                   </span>
                   <span className="text-xs text-[var(--muted)]">{relativeTime(h.lastSeenAt)}</span>
                 </div>
-                {open && <HostPanel host={h} endpoints={endpoints} checks={checks} latestAgentVersion={latestAgentVersion} onChanged={load} />}
+                {open && <HostPanel host={h} endpoints={endpoints} checks={checks} channels={channels} latestAgentVersion={latestAgentVersion} onChanged={load} />}
               </Fragment>
             );
           })}
@@ -545,20 +768,23 @@ export default function HostsPage() {
         count={sel.ids.length}
         noun="host"
         onClear={sel.clear}
-        actions={[
-          { key: "suggest", label: "Add suggested checks", run: () => bulk("apply_suggestions", {}, "Created checks:") },
-          { key: "update", label: "Update agents", run: () => bulk("request_update", {}, "Requested an update on") },
-          { key: "maint", label: "Maintenance…", run: () => setDialog("maint") },
-          { key: "move", label: "Move to endpoint…", run: () => setDialog("move") },
-          { key: "tags", label: "Add tags…", run: () => setDialog("tags") },
-          { key: "untag", label: "Remove tags…", run: () => setDialog("untag") },
-          { key: "on", label: "Enable their checks", run: () => bulk("enable_checks", {}, "Enabled checks:") },
-          { key: "off", label: "Disable their checks", run: () => bulk("disable_checks", {}, "Disabled checks:") },
-          { key: "wake", label: "Wake (WoL)", run: () => bulk("wake", {}, "Sent wake packet to") },
-          { key: "delete", label: "Delete…", danger: true, run: () => setDialog("delete") },
-        ]}
+        actions={
+          [
+            { group: "Checks", key: "suggest", label: "Add suggested checks…", hint: "Everything recommended for each host", run: () => setDialog("suggest") },
+            { group: "Checks", key: "on", label: "Enable their checks", run: () => bulk("enable_checks", {}, "Enabled checks:") },
+            { group: "Checks", key: "off", label: "Disable their checks", run: () => bulk("disable_checks", {}, "Disabled checks:") },
+            { group: "Checks", key: "maint", label: "Maintenance…", run: () => setDialog("maint") },
+            { group: "Agent", key: "update", label: "Update agents", run: () => bulk("request_update", {}, "Requested an update on") },
+            { group: "Agent", key: "wake", label: "Wake (WoL)", run: () => bulk("wake", {}, "Sent wake packet to") },
+            { group: "Organize", key: "move", label: "Move to endpoint…", run: () => setDialog("move") },
+            { group: "Organize", key: "tags", label: "Add tags…", run: () => setDialog("tags") },
+            { group: "Organize", key: "untag", label: "Remove tags…", run: () => setDialog("untag") },
+            { key: "delete", label: "Delete…", danger: true, run: () => setDialog("delete") },
+          ] as BulkAction[]
+        }
       />
 
+      {dialog === "suggest" && <BulkSuggestDialog channels={channels} count={sel.ids.length} onClose={() => setDialog(null)} onSubmit={(alertRule) => bulk("apply_suggestions", { alertRule }, "Created checks:")} />}
       {dialog === "add" && <AddHostDialog endpoints={endpoints} defaultEndpointId={endpointFilter} onClose={() => setDialog(null)} onCreated={(h) => (load(), setExpanded(h.id))} />}
       {dialog === "delete" && (
         <ConfirmDialog title={`Delete ${sel.ids.length} host(s)?`} message={<p>Deletes the hosts, every check tied to them, and their metrics history.</p>} confirmWord="delete" actionLabel={`Delete ${sel.ids.length}`} onConfirm={() => bulk("delete", {}, "Deleted")} onClose={() => setDialog(null)} />
@@ -580,6 +806,35 @@ export default function HostsPage() {
       )}
       {toast.node}
     </main>
+  );
+}
+
+function BulkSuggestDialog({ channels, count, onClose, onSubmit }: { channels: Channel[]; count: number; onClose: () => void; onSubmit: (alertRule: ReturnType<typeof alertRulePayload>) => Promise<void> }) {
+  const [alert, setAlert] = useState(emptyAlertOptions());
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal title={`Add suggested checks to ${count} host(s)`} onClose={onClose} wide>
+      <div className="space-y-3 text-sm">
+        <p className="text-xs text-[var(--muted)]">Adds every recommended check each host doesn&apos;t have yet (open a host&apos;s Suggested checks tab to pick individually). Optionally attach an alert rule to all of them:</p>
+        <AlertOptions channels={channels} value={alert} onChange={setAlert} />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              await onSubmit(alertRulePayload(alert));
+              onClose();
+            }}
+          >
+            Add checks
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

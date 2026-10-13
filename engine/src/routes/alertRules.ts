@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lte } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { alertRules, alertRuleChannels, alertEvents, checks } from "../db/schema.js";
+import { alertRules, alertRuleChannels, alertEvents, checks, endpoints } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const alertRulesRouter = Router();
@@ -11,16 +11,34 @@ alertRulesRouter.use(requireAuth);
 // alertEvents -> alertRules -> checks by hand (same "fetch and merge, skip
 // drizzle relations() wiring for one small join" posture as GET / below)
 // rather than a single relational query.
+// Filters (all optional): endpointId, locationId, checkId, hostId,
+// status=open|resolved, since/until (ISO), q (check name or message text).
 alertRulesRouter.get("/events", async (req, res) => {
-  const endpointId = typeof req.query.endpointId === "string" ? req.query.endpointId : undefined;
-  const since = typeof req.query.since === "string" ? new Date(req.query.since) : undefined;
-  const validSince = since && !Number.isNaN(since.getTime()) ? since : undefined;
-  const limit = Math.min(Number(req.query.limit) || 50, 500);
+  const q = (k: string) => (typeof req.query[k] === "string" && req.query[k] ? (req.query[k] as string) : undefined);
+  const date = (k: string) => {
+    const d = q(k) ? new Date(q(k)!) : undefined;
+    return d && !Number.isNaN(d.getTime()) ? d : undefined;
+  };
+  const endpointId = q("endpointId");
+  const locationId = q("locationId");
+  const validSince = date("since");
+  const until = date("until");
+  const status = q("status");
+  const text = q("q")?.toLowerCase();
+  const limit = Math.min(Number(req.query.limit) || 50, 2000);
 
-  const checkRows = await db.query.checks.findMany({ where: endpointId ? eq(checks.endpointId, endpointId) : undefined });
+  const locationEndpoints = locationId ? (await db.query.endpoints.findMany({ where: eq(endpoints.locationId, locationId) })).map((e) => e.id) : null;
+  const checkRows = (await db.query.checks.findMany({ where: endpointId ? eq(checks.endpointId, endpointId) : undefined })).filter(
+    (c) => (!locationEndpoints || locationEndpoints.includes(c.endpointId)) && (!q("checkId") || c.id === q("checkId")) && (!q("hostId") || c.hostId === q("hostId") || c.probeHostId === q("hostId"))
+  );
   const checkById = new Map(checkRows.map((c) => [c.id, c]));
+  const filtered = endpointId || locationId || q("checkId") || q("hostId");
+  if (filtered && !checkRows.length) {
+    res.json([]);
+    return;
+  }
   const ruleRows = await db.query.alertRules.findMany({
-    where: endpointId ? inArray(alertRules.checkId, checkRows.map((c) => c.id)) : undefined,
+    where: filtered ? inArray(alertRules.checkId, checkRows.map((c) => c.id)) : undefined,
   });
   const ruleById = new Map(ruleRows.map((r) => [r.id, r]));
 
@@ -32,19 +50,29 @@ alertRulesRouter.get("/events", async (req, res) => {
   const events = await db.query.alertEvents.findMany({
     where: and(
       inArray(alertEvents.alertRuleId, ruleRows.map((r) => r.id)),
-      validSince ? gte(alertEvents.triggeredAt, validSince) : undefined
+      validSince ? gte(alertEvents.triggeredAt, validSince) : undefined,
+      until ? lte(alertEvents.triggeredAt, until) : undefined,
+      status === "open" ? isNull(alertEvents.resolvedAt) : status === "resolved" ? isNotNull(alertEvents.resolvedAt) : undefined
     ),
     orderBy: desc(alertEvents.triggeredAt),
-    limit,
+    limit: text ? 5000 : limit,
   });
 
-  res.json(
-    events.map((e) => {
-      const rule = ruleById.get(e.alertRuleId);
-      const check = rule ? checkById.get(rule.checkId) : undefined;
-      return { ...e, checkId: rule?.checkId ?? null, checkName: check?.name ?? "(deleted check)" };
-    })
-  );
+  const rows = events.map((e) => {
+    const rule = ruleById.get(e.alertRuleId);
+    const check = rule ? checkById.get(rule.checkId) : undefined;
+    const end = e.resolvedAt ?? new Date();
+    return {
+      ...e,
+      checkId: rule?.checkId ?? null,
+      checkName: check?.name ?? "(deleted check)",
+      endpointId: check?.endpointId ?? null,
+      hostId: check?.hostId ?? null,
+      checkType: check?.type ?? null,
+      durationMinutes: Math.round((end.getTime() - e.triggeredAt.getTime()) / 60_000),
+    };
+  });
+  res.json(text ? rows.filter((r) => `${r.checkName} ${r.message ?? ""}`.toLowerCase().includes(text)).slice(0, limit) : rows);
 });
 
 alertRulesRouter.get("/", async (req, res) => {

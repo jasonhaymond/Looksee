@@ -20,7 +20,7 @@ function timeAgo(iso: string | null): string {
 
 export function AllHostsWidget({ hosts, endpointNameById }: { hosts: Host[]; endpointNameById: Map<string, string> }) {
   return (
-    <div className="h-full overflow-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+    <div className="h-full overflow-auto surface rounded-lg p-3">
       <h3 className="mb-2 font-medium">All hosts</h3>
       {hosts.length === 0 ? (
         <p className="text-xs text-[var(--muted)]">No hosts yet — see Hosts to install the agent somewhere.</p>

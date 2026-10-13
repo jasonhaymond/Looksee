@@ -11,6 +11,7 @@ import {
   jsonb,
   timestamp,
   index,
+  uniqueIndex,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
@@ -41,6 +42,9 @@ export const channelType = pgEnum("channel_type", [
   "webhook",
   "web_push",
   "sms",
+  "telegram",
+  "slack",
+  "teams",
 ]);
 
 export const alertEventStatus = pgEnum("alert_event_status", ["triggered", "resolved"]);
@@ -49,6 +53,13 @@ export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  // TOTP two-factor: the base32 secret is set at enrollment and only counts
+  // once totpEnabled is true (after the first code is verified). Recovery
+  // codes are stored bcrypt-hashed and removed as they're used.
+  totpSecret: text("totp_secret"),
+  totpEnabled: boolean("totp_enabled").notNull().default(false),
+  recoveryCodes: jsonb("recovery_codes").$type<string[]>().notNull().default([]),
+  passwordChangedAt: timestamp("password_changed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -58,6 +69,113 @@ export const sessions = pgTable("sessions", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  // Where the session was created and last used, for the Security page's
+  // session list and the idle timeout.
+  ip: text("ip"),
+  userAgent: text("user_agent"),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Singleton row (id always 1). Every safeguard is off or permissive by
+// default so an upgrade never locks anyone out; scripts/security-reset
+// (npm run security:reset) turns the restrictive ones back off from a shell.
+export const securitySettings = pgTable("security_settings", {
+  id: integer("id").primaryKey(),
+  allowlistEnabled: boolean("allowlist_enabled").notNull().default(false),
+  // IPs and CIDRs (v4 or v6) allowed to reach the sign-in and admin API.
+  allowlist: jsonb("allowlist").$type<string[]>().notNull().default([]),
+  // Also apply the allowlist to agent/collector/heartbeat traffic.
+  allowlistAgents: boolean("allowlist_agents").notNull().default(false),
+  newIpConfirmation: boolean("new_ip_confirmation").notNull().default(false),
+  lockoutThreshold: integer("lockout_threshold").notNull().default(5),
+  lockoutMinutes: integer("lockout_minutes").notNull().default(15),
+  sessionHours: integer("session_hours").notNull().default(720),
+  idleTimeoutMinutes: integer("idle_timeout_minutes"),
+  minPasswordLength: integer("min_password_length").notNull().default(12),
+  // Where security notifications go: an email address (blank = the admin
+  // account's) and/or any notification channels.
+  notifyEmail: text("notify_email"),
+  notifyChannelIds: jsonb("notify_channel_ids").$type<string[]>().notNull().default([]),
+  detectScans: boolean("detect_scans").notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Everything security-relevant that happened: sign-ins, failures, blocks,
+// scanner probes, bad agent keys. Security rules count these.
+export const securityEvents = pgTable("security_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  kind: text("kind").notNull(),
+  severity: text("severity").notNull().default("info"),
+  ip: text("ip"),
+  userAgent: text("user_agent"),
+  path: text("path"),
+  detail: text("detail"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("security_events_time_idx").on(t.createdAt), index("security_events_ip_idx").on(t.ip, t.createdAt)]);
+
+// "When N events of these kinds happen within M minutes (per IP or in
+// total), notify and/or block the IP." Defaults are seeded; any can be
+// edited, disabled or added to.
+export const securityRules = pgTable("security_rules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  kinds: jsonb("kinds").$type<string[]>().notNull().default([]),
+  threshold: integer("threshold").notNull().default(5),
+  windowMinutes: integer("window_minutes").notNull().default(10),
+  perIp: boolean("per_ip").notNull().default(true),
+  notify: boolean("notify").notNull().default(true),
+  blockMinutes: integer("block_minutes"),
+  cooldownMinutes: integer("cooldown_minutes").notNull().default(60),
+  lastFiredAt: timestamp("last_fired_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const ipBlocks = pgTable("ip_blocks", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // An IP or CIDR.
+  ip: text("ip").notNull(),
+  reason: text("reason"),
+  // Null = until removed by hand.
+  until: timestamp("until", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// IPs a user has signed in from (and confirmed, when new-IP confirmation
+// is on).
+export const trustedIps = pgTable("trusted_ips", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  ip: text("ip").notNull(),
+  firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("trusted_ips_user_ip_idx").on(t.userId, t.ip)]);
+
+// A password that was right but still needs a second step (TOTP code and/or
+// an emailed new-IP code) before a session is issued.
+export const loginChallenges = pgTable("login_challenges", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  ip: text("ip"),
+  needsTotp: boolean("needs_totp").notNull().default(false),
+  // Set while a user without 2FA is enrolling (2FA is mandatory): the
+  // secret becomes theirs once a code from it verifies.
+  enrollSecret: text("enroll_secret"),
+  emailCodeHash: text("email_code_hash"),
+  attempts: integer("attempts").notNull().default(0),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// A physical place (home, office, church) that groups one or more endpoints
+// (networks). Hosts and checks inherit their endpoint's location, so a
+// location never needs to be set twice.
+export const locations = pgTable("locations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  description: text("description"),
+  address: text("address"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -80,6 +198,7 @@ export const endpoints = pgTable("endpoints", {
   // to the engine over the internet instead of via a collector: accepted by
   // the receivers and attributed to this endpoint.
   publicIps: jsonb("public_ips").$type<string[]>().notNull().default([]),
+  locationId: uuid("location_id").references(() => locations.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -128,6 +247,15 @@ export const hosts = pgTable("hosts", {
   // look like right now" (hosts page detail, suggested checks) is one row
   // read rather than a scan of host_metrics.
   lastSnapshot: jsonb("last_snapshot"),
+  // Full process and service inventory (pid/user/CPU/memory, service state
+  // and start type), refreshed every few agent cycles — the Hosts page's
+  // Processes/Services tabs and the check form's pickers read these.
+  processInventory: jsonb("process_inventory"),
+  serviceInventory: jsonb("service_inventory"),
+  inventoryUpdatedAt: timestamp("inventory_updated_at", { withTimezone: true }),
+  // File names in the agent's script_dir — the only scripts a custom
+  // script check may run.
+  availableScripts: jsonb("available_scripts").$type<string[]>(),
   tags: jsonb("tags").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -247,6 +375,10 @@ export const notificationChannels = pgTable("notification_channels", {
   type: channelType("type").notNull(),
   config: jsonb("config").notNull().default({}),
   enabled: boolean("enabled").notNull().default(true),
+  // Per-event message templates ({ triggered: { title, body }, resolved,
+  // reminder, escalated }); a missing event uses the channel type's default.
+  // Not secret, so readable unlike config.
+  templates: jsonb("templates").$type<Record<string, { title?: string; body?: string }>>().notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -349,6 +481,20 @@ export const flowRecords = pgTable("flow_records", {
   bytes: bigint("bytes", { mode: "number" }).notNull(),
   packets: bigint("packets", { mode: "number" }).notNull(),
 }, (t) => [index("flow_records_bucket_idx").on(t.bucket)]);
+
+// Every IP a MAC address has been seen with, from agent reports, discovery
+// scans and ARP checks — what ip_change checks and the Hosts page's address
+// history read. One row per (mac, ip) pair, lastSeenAt bumped on each sighting.
+export const macIpHistory = pgTable("mac_ip_history", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  mac: text("mac").notNull(),
+  ip: text("ip").notNull(),
+  hostId: uuid("host_id").references(() => hosts.id, { onDelete: "set null" }),
+  endpointId: uuid("endpoint_id").references(() => endpoints.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("mac_ip_history_mac_ip_idx").on(t.mac, t.ip), index("mac_ip_history_host_idx").on(t.hostId)]);
 
 export const discoveryScans = pgTable("discovery_scans", {
   id: uuid("id").primaryKey().defaultRandom(),

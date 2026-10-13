@@ -9,6 +9,21 @@ import { sendWakeOnLan } from "../services/probes/protocols.js";
 import { suggestChecks } from "../services/suggestions.js";
 import { invalidateMaintenanceCache } from "../services/maintenance.js";
 import { HOST_METRICS } from "../services/hostMetrics.js";
+import { addressHistory } from "../services/addresses.js";
+import { createAlertRule, parseAlertRule, type AlertRuleParams } from "../services/alertRuleFactory.js";
+
+// The full process/service lists can be thousands of rows — they're served
+// by /:id/inventory only, never in list or detail responses.
+type HostRow = typeof hosts.$inferSelect;
+function publicHost({ agentApiKey, processInventory, serviceInventory, ...rest }: HostRow) {
+  return {
+    ...rest,
+    hasAgentKey: Boolean(agentApiKey),
+    hasSnapshot: Boolean(rest.lastSnapshot),
+    processCount: Array.isArray(processInventory) ? processInventory.length : null,
+    serviceCount: Array.isArray(serviceInventory) ? serviceInventory.length : null,
+  };
+}
 
 export const hostsRouter = Router();
 hostsRouter.use(requireAuth);
@@ -22,7 +37,7 @@ hostsRouter.get("/", async (req, res) => {
   // agentApiKey is a credential — never returned in a list/read response,
   // only shown once at issuance (see /:id/agent-key below). The full
   // snapshot is left to GET /:id; the list stays small.
-  res.json(rows.map(({ agentApiKey, lastSnapshot, ...rest }) => ({ ...rest, hasAgentKey: Boolean(agentApiKey), hasSnapshot: Boolean(lastSnapshot) })));
+  res.json(rows.map((h) => ({ ...publicHost(h), lastSnapshot: undefined })));
 });
 
 // The host-metric catalog (label, unit, which instance it filters on) the
@@ -37,8 +52,31 @@ hostsRouter.get("/:id", async (req, res) => {
     res.status(404).json({ error: "Host not found" });
     return;
   }
-  const { agentApiKey, ...rest } = host;
-  res.json({ ...rest, hasAgentKey: Boolean(agentApiKey), hasSnapshot: Boolean(rest.lastSnapshot) });
+  res.json(publicHost(host));
+});
+
+// Processes and services the agent last reported, plus the scripts in its
+// script_dir — the Hosts page tabs and the check form's pickers.
+hostsRouter.get("/:id/inventory", async (req, res) => {
+  const host = await db.query.hosts.findFirst({ where: eq(hosts.id, req.params.id) });
+  if (!host) {
+    res.status(404).json({ error: "Host not found" });
+    return;
+  }
+  res.json({
+    processes: host.processInventory ?? null,
+    services: host.serviceInventory ?? null,
+    scripts: host.availableScripts ?? null,
+    containers: (host.lastSnapshot as { availableContainers?: string[] } | null)?.availableContainers ?? null,
+    updatedAt: host.inventoryUpdatedAt,
+    // Older agents only send names.
+    processNames: host.availableProcesses ?? null,
+    serviceNames: host.availableServices ?? null,
+  });
+});
+
+hostsRouter.get("/:id/addresses", async (req, res) => {
+  res.json(await addressHistory(req.params.id));
 });
 
 hostsRouter.post("/", async (req, res) => {
@@ -175,20 +213,39 @@ hostsRouter.get("/:id/suggestions", async (req, res) => {
   res.json(found.suggestions);
 });
 
-async function applySuggestions(hostId: string, keys: string[] | null, endpointId?: string) {
+// overrides: per-suggestion edits from the UI (name, interval, config).
+async function applySuggestions(hostId: string, keys: string[] | null, opts: { endpointId?: string; alertRule?: AlertRuleParams | null; overrides?: Record<string, { name?: string; intervalSeconds?: number; config?: Record<string, unknown> }> } = {}) {
   const found = await suggestionsFor(hostId);
   if (!found) return 0;
   const chosen = keys ? found.suggestions.filter((s) => keys.includes(s.key)) : found.suggestions;
   if (!chosen.length) return 0;
-  await db.insert(checks).values(
-    chosen.map((s) => ({ name: s.name, endpointId: endpointId ?? found.host.endpointId, hostId, type: s.type as typeof checks.$inferInsert.type, config: s.config, intervalSeconds: s.intervalSeconds ?? 60 }))
-  );
+  const created = await db
+    .insert(checks)
+    .values(
+      chosen.map((s) => {
+        const o = opts.overrides?.[s.key] ?? {};
+        return {
+          name: o.name?.trim() || s.name,
+          endpointId: opts.endpointId ?? found.host.endpointId,
+          hostId: s.hostScoped === false ? null : hostId,
+          type: s.type as typeof checks.$inferInsert.type,
+          config: { ...s.config, ...(o.config ?? {}) },
+          intervalSeconds: Number(o.intervalSeconds) >= 5 ? Number(o.intervalSeconds) : (s.intervalSeconds ?? 60),
+        };
+      })
+    )
+    .returning({ id: checks.id });
+  if (opts.alertRule) for (const c of created) await createAlertRule(c.id, opts.alertRule);
   return chosen.length;
 }
 
 hostsRouter.post("/:id/suggestions/apply", async (req, res) => {
   const keys = Array.isArray(req.body?.keys) ? req.body.keys.map(String) : null;
-  const created = await applySuggestions(req.params.id, keys, req.body?.endpointId ? String(req.body.endpointId) : undefined);
+  const created = await applySuggestions(req.params.id, keys, {
+    endpointId: req.body?.endpointId ? String(req.body.endpointId) : undefined,
+    alertRule: parseAlertRule(req.body?.alertRule),
+    overrides: req.body?.overrides && typeof req.body.overrides === "object" ? req.body.overrides : undefined,
+  });
   res.json({ created });
 });
 
@@ -240,9 +297,11 @@ hostsRouter.post("/bulk", async (req, res) => {
     case "disable_checks":
       affected = (await db.update(checks).set({ enabled: action === "enable_checks" }).where(hostChecks).returning({ id: checks.id })).length;
       break;
-    case "apply_suggestions":
-      for (const h of rows) affected += await applySuggestions(h.id, null);
+    case "apply_suggestions": {
+      const alertRule = parseAlertRule(req.body?.alertRule);
+      for (const h of rows) affected += await applySuggestions(h.id, null, { alertRule });
       break;
+    }
     case "wake":
       for (const h of rows) {
         if (!h.macAddress) {

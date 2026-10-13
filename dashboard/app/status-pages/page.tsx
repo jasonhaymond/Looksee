@@ -38,7 +38,7 @@ export default function StatusPagesAdmin() {
       ) : (
         <ul className="space-y-2">
           {pages.map((p) => (
-            <li key={p.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-3 text-sm">
+            <li key={p.id} className="flex flex-wrap items-center gap-3 rounded-xl surface p-3 text-sm">
               <div className="flex-1">
                 <div className="font-medium">
                   {p.title} {!p.published && <span className="text-xs text-[var(--warn)]">(unpublished)</span>}

@@ -7,6 +7,145 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-10-13
+
+### Upgrade notes
+
+A major version because signing in works differently: two-factor is mandatory and the
+sign-in API (`POST /api/auth/login`) now returns a second step instead of a session.
+
+- **Two-factor sign-in is now required.** The first sign-in after upgrading asks you to
+  scan a QR code with an authenticator app and save ten recovery codes. Have your phone
+  ready. Locked out? `npm run security:reset -- --2fa` in `engine/` on the server.
+- Set **`TRUST_PROXY`** in `engine/.env` to your reverse proxy's IP so blocks, the
+  allowlist and the security log see real client addresses (see the security guide).
+- Update agents to 4.0.0 for process/service inventory, script expected output, and the
+  script picker (**Hosts → select → Actions → Update agents**).
+- Two additive migrations (`0014`, `0015`); `update.sh` applies them.
+
+### Added
+
+- **Security** (System → Security, and the new [security guide](docs/security-guide.md)):
+  - Mandatory TOTP two-factor sign-in with QR enrollment, ten one-time recovery codes,
+    moving to a new authenticator, and password change (needs a current code; signs out
+    other sessions).
+  - Lockout after N failed passwords/codes per IP and per account; session lifetime and
+    idle timeout; minimum password length; a list of signed-in sessions with remote
+    sign-out.
+  - Optional **new-IP email confirmation** (a code emailed for sign-ins from an IP not
+    used before) and an optional **IP allowlist** (IPs/CIDRs, v4 and v6) for the sign-in
+    page and admin API, with agents/heartbeats/status pages exempt unless chosen. The
+    allowlist refuses to save without your current IP.
+  - **Attack detection**: a security event log (sign-ins, failures, lockouts, scanner
+    probes such as `/.env` and `/wp-login.php`, invalid agent keys, unknown heartbeat
+    tokens, rate-limit hits, settings changes) and editable **rules** — N events in M
+    minutes, per IP or overall → email/channel notification and/or an automatic IP block.
+    Six built-in rules (password guessing, scanners, agent-key guessing, heartbeat-token
+    guessing, new-IP sign-in, lockout/password change). Manual IP blocks.
+  - `npm run security:reset` (shell-only break-glass recovery), security headers on the
+    API and dashboard, `SameSite=Strict` session cookies, `TRUST_PROXY` setting.
+- **Locations**: group endpoints (networks) by physical place; location filters and
+  grouping on Checks, Hosts and Alert history; per-location status summary and one-click
+  maintenance; `{{location}}` in alert messages.
+- **Channels**: native **Slack**, **Microsoft Teams** (Workflows / Adaptive Card with an
+  "Open in Looksee" button) and **Telegram** channels; **message templates** for every
+  channel (triggered/resolved/reminder/escalated title and body, 12 variables, live
+  preview); **Send a test alert** for every channel type; Web Push notifications open the
+  check.
+- **Remediation hints**: failing checks show "Things to check" worked out from the failure
+  message and check type, also in alerts via `{{remediation}}`.
+- **Check page** (`/checks/<id>`): range picker, uptime/state changes/incidents/latency
+  (avg, p95, max)/value stats, status strip, response-time and value charts with hover
+  readouts, incidents, latest details and every result.
+- **Alert history page** with range, open/resolved, location/endpoint/host filters and
+  search.
+- **Add checks to many targets at once** (multi-select hosts or endpoints, with
+  `{{host}}`/`{{address}}`/`{{endpoint}}` placeholders), full alert-rule options when
+  creating checks, suggested checks and discovered devices, and **Browse** pickers fed by
+  the host's inventory (pick several services/processes/containers/scripts → one check
+  each).
+- **Duplicate** copies now keep the original's enabled state, alert rules and
+  dependencies, and can go to other endpoints or hosts.
+- **Host inventory** (agent 4.0): every process (PID, user, CPU, memory, command line with
+  credentials masked) and every service (state, start type), refreshed about every 5
+  minutes; new Processes and Services tabs.
+- **MAC addresses and IP change detection**: MAC column on host interfaces, MAC filled in
+  from the agent, MAC→IP history from agents, discovery and ARP checks (Hosts → IP
+  history), discovery recognizes known MACs, and a new **IP address change (by MAC)**
+  check type.
+- **Smarter suggested checks**: built from the host's services (running + automatic),
+  processes, containers (each by name), listening ports (network checks from Looksee for
+  HTTP/HTTPS + certificate, SSH, databases, RDP, SMB, MQTT, Proxmox, …), OS logs, and
+  database memory — grouped, with alert options.
+- **SNMP**: per-row rates on walk modes, a **full walk** mode that keeps every value, an
+  index filter, and a **Walk this device…** browser in the check form (runs on the site
+  collector for remote endpoints).
+- **Printer** SNMP templates: printer errors (jam, no paper, door open, offline, …, plus
+  the printer's own alert text) and failed/aborted print jobs (Job Monitoring MIB).
+- **Custom script expected output**: contains / doesn't contain / equals / regex and an
+  expected exit code, judged by the engine; the script field lists the scripts in the
+  agent's `script_dir`. Scripts still only run from `script_dir`.
+- **Light and dark themes** (System / Light / Dark toggle) with higher-contrast surfaces
+  and borders; every color is a theme token, checked against WCAG AA.
+- **Bulk actions in one grouped menu** on Checks, Hosts and Endpoints.
+- **In-app help** (Help in the top bar): the user guide, a new **check reference** (what
+  every check type does, how, its value, and the commands to check it by hand on
+  Linux/macOS/Windows), the security guide and the Windows agent guide, with search;
+  every page's "Learn more" and every check form link into it.
+- **Windows agent code signing** pipeline (`agent/sign-windows.sh`, run by
+  `build-all.sh`): Azure Artifact Signing, any HSM/cloud key via jsign, or a `.pfx`;
+  off until `agent/signing.env` is configured. New
+  [windows-agent-security.md](docs/windows-agent-security.md) covers Smart App Control,
+  SmartScreen, Defender, ASR, WDAC/AppLocker, EDRs and the firewall.
+
+### Changed
+
+- Add-widget form: widget cards and a searchable, filterable picker (several tiles at
+  once); the list no longer refreshes or jumps to the top while open.
+- Alert messages use the channel's templates; the default text names where the check is
+  and what to check, and links to the check page.
+
+### Fixed
+
+- **SNMP interface traffic was always blank** (and custom Counter64 OIDs failed):
+  net-snmp returns Counter64 values as raw bytes, which were read as NaN. They're now
+  decoded, so `ifHCInOctets`/`ifHCOutOctets` rates appear from the second run.
+- Pages no longer scroll sideways on phones because of hidden tooltips; the status
+  strip fits narrow screens; missing favicon request.
+
+### Security
+
+- Full security and dependency audit — [docs/security-audit-2026-10.md](docs/security-audit-2026-10.md).
+  Fixed: critical `proxy-addr` IP spoofing (Express 4.22.3) and Next.js cache-poisoning/SSRF
+  advisories (16.4.0), high `nodemailer` (10.1.0) and `sharp` advisories; production
+  dependencies now report 0 known vulnerabilities. Agent moved off EOL Go 1.22 to 1.26+
+  with gopsutil v4; govulncheck clean.
+- Review fixes in the new security features: each authenticator code works once; account
+  lockout doesn't apply from known sign-in IPs (no lock-out-the-admin denial of service);
+  rules never auto-block allowlisted or known sign-in IPs; heartbeat tokens are masked in
+  the security log; credentials in process command lines are masked by the agent.
+- The production server's Node.js 20 is end-of-life: the 4.0 upgrade guide now moves it to
+  Node 24 LTS.
+
+### Verified
+
+- Engine suite: 179 tests (29 new: TOTP replay, lockout from a known IP, no self-block, token masking, two-factor enrollment/recovery codes/IP-bound
+  challenges, lockout and rule-driven blocking, scanner and bad-key detection, allowlist
+  self-lockout refusal, Counter64 decoding, script expected output, remediation,
+  templates, Slack/Teams payloads through a real HTTP receiver, locations, batch create
+  with placeholders, duplicate with rules, check stats, IP-change detection, smart
+  suggestions). Go: vet + tests, including command-line redaction.
+- A real 4.0.0 Windows agent reported 321 processes and 320 services, its scripts and
+  MACs, and the engine recorded its IP sightings. The Windows binary was signed and
+  timestamped with a throwaway certificate through `sign-windows.sh` and read back by
+  `Get-AuthenticodeSignature`.
+- Every changed page checked in a real browser at desktop and mobile widths in dark and
+  light themes (screenshots), with no console errors and no horizontal scrolling at
+  390 px.
+- Not yet run against real accounts: Azure Artifact Signing and jsign keystores, Slack,
+  Teams and Telegram (payload shapes verified against a local receiver), and SNMP
+  against a real pfSense/Aruba (Counter64 decoding verified with unit tests).
+
 ## [3.2.0] - 2026-10-08
 
 ### Added

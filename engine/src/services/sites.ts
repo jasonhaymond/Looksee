@@ -43,7 +43,7 @@ export async function runsOnCollector(check: typeof checks.$inferSelect): Promis
   return Boolean(await siteCollectorFor(check.endpointId));
 }
 
-export async function queueCollectorJob(endpointId: string, kind: "wake", payload: Record<string, unknown>) {
+export async function queueCollectorJob(endpointId: string, kind: "wake" | "snmp_walk", payload: Record<string, unknown>) {
   const [job] = await db.insert(collectorJobs).values({ endpointId, kind, payload }).returning();
   return job;
 }

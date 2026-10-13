@@ -4,6 +4,7 @@ import request from "supertest";
 import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { app } from "../src/app.js";
+import { loginWith2fa } from "./helpers.js";
 import { db } from "../src/db/index.js";
 import { users, logs } from "../src/db/schema.js";
 import { logger } from "../src/lib/logger.js";
@@ -16,8 +17,7 @@ const marker = crypto.randomUUID();
 beforeAll(async () => {
   const passwordHash = await bcrypt.hash(password, 10);
   await db.insert(users).values({ email, passwordHash });
-  const loginRes = await request(app).post("/api/auth/login").send({ email, password });
-  cookie = loginRes.headers["set-cookie"]![0];
+  cookie = await loginWith2fa(email, password);
 
   logger.debug("test", `debug entry ${marker}`);
   logger.error("test", `error entry ${marker}`, `Human-readable translation ${marker}`);

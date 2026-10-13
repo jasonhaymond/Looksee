@@ -11,7 +11,7 @@ function CopyText({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <span className="flex items-center gap-2">
-      <code className="flex-1 break-all rounded bg-black/30 p-1.5 text-xs">{text}</code>
+      <code className="flex-1 break-all rounded bg-[var(--code-bg)] p-1.5 text-xs">{text}</code>
       <button
         type="button"
         onClick={async () => {
@@ -27,9 +27,27 @@ function CopyText({ text }: { text: string }) {
   );
 }
 
+// "Things to check" for a failing check, worked out by the engine from the
+// failure message and check type.
+export function Remediation({ check }: { check: Check }) {
+  const hints = check.remediation ?? [];
+  const st = displayStatus(check);
+  if (!hints.length || (st !== "down" && st !== "warn")) return null;
+  return (
+    <div className={`rounded-md border p-2 text-xs ${st === "down" ? "border-[var(--down)]/50 bg-[var(--down)]/10" : "border-[var(--warn)]/50 bg-[var(--warn)]/10"}`}>
+      <div className="mb-1 font-medium text-[var(--text)]">Things to check</div>
+      <ul className="list-disc space-y-0.5 pl-4 text-[var(--text)]">
+        {hints.map((h) => (
+          <li key={h}>{h}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // Structured result details (interface tables, hop lists, containers,
 // matched log lines) shown as a table when they're a list of records.
-function Details({ value }: { value: unknown }) {
+export function Details({ value }: { value: unknown }) {
   if (value == null) return null;
   const rows = Array.isArray(value)
     ? value
@@ -65,7 +83,7 @@ function Details({ value }: { value: unknown }) {
       </div>
     );
   }
-  return <pre className="max-h-48 overflow-auto rounded bg-black/30 p-2 text-xs">{JSON.stringify(value, null, 2)}</pre>;
+  return <pre className="max-h-48 overflow-auto rounded bg-[var(--code-bg)] p-2 text-xs">{JSON.stringify(value, null, 2)}</pre>;
 }
 
 export function displayStatus(c: Check): string {
@@ -103,13 +121,17 @@ export function CheckDetail({
   const upCount = results?.filter((r) => r.status === "up").length ?? 0;
 
   return (
-    <div className="space-y-3 border-t border-[var(--border)] bg-[var(--bg)]/40 p-3">
-      <div className="flex flex-wrap gap-1">
+    <div className="space-y-3 border-t border-[var(--border)] bg-[var(--bg)] p-3">
+      <div className="flex flex-wrap items-center gap-1">
         {(["overview", "edit", "alerts"] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={`rounded-md px-3 py-1 text-xs ${tab === t ? "bg-[var(--border)] text-[var(--text)]" : "text-[var(--muted)] hover:text-[var(--text)]"}`}>
+          <button key={t} onClick={() => setTab(t)} className={`rounded-md px-3 py-1 text-xs ${tab === t ? "bg-[var(--panel-2)] text-[var(--text)] ring-1 ring-[var(--border)]" : "text-[var(--muted)] hover:text-[var(--text)]"}`}>
             {t === "overview" ? "Overview" : t === "edit" ? "Edit" : "Alerts"}
           </button>
         ))}
+        <span className="flex-1" />
+        <a href={`/checks/${check.id}`} className="rounded-md px-2 py-1 text-xs text-[var(--muted)] underline hover:text-[var(--text)]">
+          Full history, charts &amp; incidents →
+        </a>
       </div>
 
       {tab === "overview" && (
@@ -136,6 +158,7 @@ export function CheckDetail({
             </div>
           </div>
           {check.lastMessage && <p className="rounded-md bg-[var(--panel)] p-2 text-xs">{check.lastMessage}</p>}
+          <Remediation check={check} />
           <p className="text-xs text-[var(--muted)]">
             {typeLabel(check.type)} · every {check.intervalSeconds}s{check.retryIntervalSeconds ? ` (retry ${check.retryIntervalSeconds}s)` : ""}
             {host ? ` · host ${host.name}` : ""}

@@ -1,6 +1,6 @@
 import { and, isNotNull, lt } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { checkResults, events, flowRecords, hostMetrics } from "../db/schema.js";
+import { checkResults, events, flowRecords, hostMetrics, ipBlocks, loginChallenges, securityEvents, sessions } from "../db/schema.js";
 
 const days = (env: string | undefined, fallback: number) => {
   const n = Number(env);
@@ -17,4 +17,8 @@ export async function pruneData() {
   await db.delete(hostMetrics).where(lt(hostMetrics.recordedAt, ago(days(process.env.HOST_METRICS_RETENTION_DAYS, 30))));
   await db.delete(events).where(lt(events.receivedAt, ago(days(process.env.EVENT_RETENTION_DAYS, 30))));
   await db.delete(flowRecords).where(lt(flowRecords.bucket, ago(days(process.env.FLOW_RETENTION_DAYS, 7))));
+  await db.delete(securityEvents).where(lt(securityEvents.createdAt, ago(days(process.env.SECURITY_EVENT_RETENTION_DAYS, 180))));
+  await db.delete(sessions).where(lt(sessions.expiresAt, new Date()));
+  await db.delete(loginChallenges).where(lt(loginChallenges.expiresAt, new Date()));
+  await db.delete(ipBlocks).where(and(isNotNull(ipBlocks.until), lt(ipBlocks.until, ago(1))));
 }

@@ -19,7 +19,7 @@ export function NoteWidget({ widget, editMode, onChanged }: { widget: Widget; ed
 
   if (editing) {
     return (
-      <div className="no-drag flex h-full flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+      <div className="no-drag flex h-full flex-col gap-2 surface rounded-lg p-3">
         <textarea
           autoFocus
           value={text}
@@ -27,7 +27,7 @@ export function NoteWidget({ widget, editMode, onChanged }: { widget: Widget; ed
           className="min-h-0 flex-1 resize-none rounded-md border border-[var(--border)] bg-transparent p-2 text-sm outline-none"
         />
         <div className="flex gap-2 text-xs">
-          <button onClick={handleSave} className="rounded-md bg-[var(--up)] px-2 py-1 font-medium text-black">
+          <button onClick={handleSave} className="rounded-md bg-[var(--accent)] px-2 py-1 font-medium text-[var(--on-accent)]">
             Save
           </button>
           <button
@@ -47,7 +47,7 @@ export function NoteWidget({ widget, editMode, onChanged }: { widget: Widget; ed
   return (
     <div
       onClick={() => editMode && setEditing(true)}
-      className={`h-full overflow-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3 text-sm whitespace-pre-wrap ${editMode ? "no-drag cursor-text hover:border-[var(--muted)]" : ""}`}
+      className={`h-full overflow-auto surface rounded-lg p-3 text-sm whitespace-pre-wrap ${editMode ? "no-drag cursor-text hover:border-[var(--muted)]" : ""}`}
     >
       {widget.config.text || <span className="text-[var(--muted)]">{editMode ? "Click to add a note…" : "(empty note)"}</span>}
     </div>

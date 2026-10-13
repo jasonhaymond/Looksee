@@ -9,6 +9,15 @@ import { applyThresholds, type Status } from "../services/thresholds.js";
 import { evaluateChange, evaluateHostMetric, evaluateReboot, type Snapshot } from "../services/hostMetrics.js";
 import { logger } from "../lib/logger.js";
 import { collectorManifest } from "../services/sites.js";
+import { recordFromSnapshot } from "../services/addresses.js";
+import { evaluateScriptOutput } from "../services/scriptOutput.js";
+
+// Inventory rows the 4.0 agent sends every few cycles; anything else in the
+// array is dropped so a malformed report can't bloat the hosts table.
+function cleanInventory(raw: unknown, keys: string[], max = 5000): Record<string, unknown>[] | null {
+  if (!Array.isArray(raw)) return null;
+  return raw.slice(0, max).filter((r) => r && typeof r === "object").map((r) => Object.fromEntries(keys.filter((k) => (r as Record<string, unknown>)[k] !== undefined).map((k) => [k, (r as Record<string, unknown>)[k]])));
+}
 
 export const agentRouter = Router();
 agentRouter.use(requireAgentAuth);
@@ -86,6 +95,12 @@ agentRouter.post("/report", async (req, res) => {
   if (Array.isArray(body.availableServices)) hostUpdate.availableServices = body.availableServices.map(String);
   if (typeof body.version === "string" && body.version) hostUpdate.agentVersion = body.version;
   if (body.inventory && typeof body.inventory === "object") hostUpdate.inventory = body.inventory;
+  const procs = cleanInventory(body.processInventory, ["pid", "name", "user", "cpuPercent", "memoryMb", "command", "started"]);
+  const svcs = cleanInventory(body.serviceInventory, ["name", "displayName", "state", "startType", "description"]);
+  if (procs) hostUpdate.processInventory = procs;
+  if (svcs) hostUpdate.serviceInventory = svcs;
+  if (procs || svcs) hostUpdate.inventoryUpdatedAt = new Date();
+  if (Array.isArray(body.availableScripts)) hostUpdate.availableScripts = body.availableScripts.map(String).slice(0, 500);
   // The agent's side of running a site collector (download/start failures);
   // the collector clears it once it's up and polling.
   if (typeof body.collectorError === "string" && body.collectorError) hostUpdate.collectorError = body.collectorError.slice(0, 1000);
@@ -98,6 +113,7 @@ agentRouter.post("/report", async (req, res) => {
     hostUpdate.lastSnapshot = { ...extended, availableContainers: Array.isArray(body.availableContainers) ? body.availableContainers.map(String) : undefined };
   }
   await db.update(hosts).set(hostUpdate).where(eq(hosts.id, hostId));
+  if (extended && host) await recordFromSnapshot(host, extended).catch(() => undefined);
 
   if (metrics && typeof metrics === "object") {
     await db.insert(hostMetrics).values({
@@ -185,6 +201,13 @@ async function applyAgentState(check: typeof checks.$inferSelect, result: Measur
   const state = (check.state as Record<string, unknown>) ?? {};
   const hold = Number(config.holdMinutes ?? 15) * 60_000;
   const holdStatus: Status = String(config.severity ?? "warn") === "down" ? "down" : "warn";
+
+  // Custom script expected output: judged here (engine side, like every
+  // threshold) from the output and exit code the 4.0+ agent includes.
+  if (check.type === "agent_script") {
+    const judged = evaluateScriptOutput(config, result);
+    if (judged) return judged;
+  }
 
   // D6: checksum drift. An explicit expected checksum wins; otherwise the
   // first value seen becomes the baseline.

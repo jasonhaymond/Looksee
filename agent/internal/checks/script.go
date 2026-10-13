@@ -43,6 +43,8 @@ func ParseScriptOutput(out string, wantNumber bool) (msg string, value *float64)
 
 var scriptName = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
+const maxScriptOutput = 4096
+
 // F7. Only scripts sitting directly in the agent's configured script_dir
 // can run, named by file name — the engine can choose which approved
 // script runs, never what it contains. Without script_dir set, script
@@ -76,7 +78,16 @@ func runScript(c Cfg, scriptDir string) Result {
 	if msg == "" {
 		msg = execx.FirstLine(res.Stderr)
 	}
-	r := Result{Message: msg, Value: value}
+	// The full output and exit code go to the engine, which judges an
+	// expected-output setting (it applies every threshold, see CLAUDE.md).
+	output := res.Stdout
+	if strings.TrimSpace(output) == "" {
+		output = res.Stderr
+	}
+	if len(output) > maxScriptOutput {
+		output = output[:maxScriptOutput]
+	}
+	r := Result{Message: msg, Value: value, Details: map[string]any{"exitCode": res.ExitCode, "output": output}}
 	switch res.ExitCode {
 	case 0:
 		r.Status = "up"

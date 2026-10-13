@@ -70,7 +70,7 @@ export default function EventsPage() {
       {rows && rows.length === 0 ? (
         <EmptyState>Nothing received yet matching these filters.</EmptyState>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--panel)]/40">
+        <div className="overflow-x-auto rounded-xl surface">
           <table className="w-full text-xs">
             <thead className="text-[var(--muted)]">
               <tr>

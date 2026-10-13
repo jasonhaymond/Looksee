@@ -5,7 +5,8 @@ import { api, type DiscoveryScan, type Endpoint } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
 import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
-import { Button, Checkbox, EmptyState, Label, inputClass, relativeTime, useToast } from "../components/ui";
+import { AlertOptions, Button, Checkbox, EmptyState, Label, Modal, alertRulePayload, emptyAlertOptions, inputClass, relativeTime, useToast } from "../components/ui";
+import type { Channel } from "../lib/api";
 import { usePageAuth } from "../components/usePageAuth";
 
 // Per device: create a host? which suggested checks (by index)?
@@ -24,6 +25,12 @@ export default function DiscoveryPage() {
   const [scanFrom, setScanFrom] = useState("");
   const [picks, setPicks] = useState<Record<string, Pick>>({});
   const [error, setError] = useState<string | null>(null);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [alert, setAlert] = useState(emptyAlertOptions());
+  const [alertOpen, setAlertOpen] = useState(false);
+  useEffect(() => {
+    api.channels().then(setChannels).catch(() => undefined);
+  }, []);
   const toast = useToast();
 
   useEffect(() => {
@@ -74,7 +81,7 @@ export default function DiscoveryPage() {
       <PageHelp anchor="discovery">Sweeps a subnet (ping plus a few common ports — many devices ignore ping), then looks up names, MAC addresses and SNMP info. Tick what you want and add it in one go. A scan sees only the network it runs from: pick a remote site&apos;s collector under “Scan from” to scan that site.</PageHelp>
 
       <form
-        className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-3"
+        className="mb-4 flex flex-wrap items-end gap-3 rounded-xl surface p-3"
         onSubmit={async (e) => {
           e.preventDefault();
           setError(null);
@@ -134,7 +141,7 @@ export default function DiscoveryPage() {
               {devices.map((d) => {
                 const p = picks[d.ip] ?? { host: false, checks: new Set<number>() };
                 return (
-                  <div key={d.ip} className="rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-3 text-sm">
+                  <div key={d.ip} className="rounded-xl surface p-3 text-sm">
                     <div className="flex flex-wrap items-center gap-3">
                       <span className="font-mono font-medium">{d.ip}</span>
                       <span>{d.hostname ?? d.snmp?.sysName ?? ""}</span>
@@ -164,7 +171,7 @@ export default function DiscoveryPage() {
             </div>
           )}
           {scan.status === "done" && devices.length > 0 && (
-            <div className="sticky bottom-3 mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--up)]/50 bg-[var(--panel)] p-2 shadow-2xl">
+            <div className="sticky bottom-3 mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--accent)]/60 bg-[var(--panel-2)] p-2 shadow-2xl">
               <span className="px-2 text-sm">{chosen.length} device(s) selected</span>
               <label className="flex items-center gap-2 text-sm">
                 into
@@ -176,12 +183,14 @@ export default function DiscoveryPage() {
                   ))}
                 </select>
               </label>
+              <Button onClick={() => setAlertOpen(true)}>{alertRulePayload(alert) ? `Alerts: ${alert.channelIds.length + alert.escalationChannelIds.length} channel(s)` : "Alerts: none"}</Button>
               <Button
                 variant="primary"
                 disabled={!chosen.length || !endpointId}
                 onClick={async () => {
                   const res = await api.addDiscovered(scan.id, {
                     endpointId,
+                    alertRule: alertRulePayload(alert),
                     devices: chosen.map((d) => ({ ip: d.ip, name: d.hostname ?? d.snmp?.sysName ?? d.ip, mac: d.mac, createHost: picks[d.ip].host, checks: d.suggestedChecks.filter((_, i) => picks[d.ip].checks.has(i)) })),
                   });
                   toast.show(`Added ${res.hostsCreated} host(s) and ${res.checksCreated} check(s).`);
@@ -196,6 +205,16 @@ export default function DiscoveryPage() {
             </div>
           )}
         </>
+      )}
+      {alertOpen && (
+        <Modal title="Alerts for the checks you add" onClose={() => setAlertOpen(false)} wide>
+          <AlertOptions channels={channels} value={alert} onChange={setAlert} />
+          <div className="mt-3 flex justify-end">
+            <Button variant="primary" onClick={() => setAlertOpen(false)}>
+              Done
+            </Button>
+          </div>
+        </Modal>
       )}
       {toast.node}
     </main>

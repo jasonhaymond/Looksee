@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shirou/gopsutil/v3/process"
+	"github.com/shirou/gopsutil/v4/process"
 
 	"looksee-agent/internal/execx"
 	"looksee-agent/internal/metrics"

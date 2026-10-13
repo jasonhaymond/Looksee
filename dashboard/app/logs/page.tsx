@@ -47,7 +47,7 @@ function LogRow({ entry }: { entry: LogEntry }) {
             </button>
           )}
           {expanded && (
-            <div className="mt-1 space-y-1 rounded bg-black/30 p-1.5 font-mono text-xs">
+            <div className="mt-1 space-y-1 rounded bg-[var(--code-bg)] p-1.5 font-mono text-xs">
               <p className="break-words">{entry.message}</p>
               {entry.metadata && <pre className="overflow-x-auto whitespace-pre-wrap break-words">{JSON.stringify(entry.metadata, null, 2)}</pre>}
             </div>
@@ -88,7 +88,7 @@ export default function LogsPage() {
   if (!authChecked) return null;
 
   return (
-    <main className="mx-auto max-w-3xl p-6">
+    <main className="mx-auto max-w-4xl p-4 sm:p-6">
       <TopNav active="/logs" />
       <h2 className="mb-4 inline-flex items-center text-lg font-medium">
         Logs

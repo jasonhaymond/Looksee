@@ -71,17 +71,35 @@ type Discovery struct {
 	Processes  []string
 	Services   []string
 	Containers []string
+	// Full inventory (4.0+): resource use per process, state and start type
+	// per service, and the scripts available to custom script checks.
+	ProcessInventory []metrics.ProcessInfo
+	ServiceInventory []metrics.ServiceInfo
+	Scripts          []string
+	ScriptsListed    bool
 }
 
 type reportBody struct {
-	Metrics             metrics.Snapshot `json:"metrics"`
-	Results             []checks.Result  `json:"results,omitempty"`
-	AvailableProcesses  []string         `json:"availableProcesses,omitempty"`
-	AvailableServices   []string         `json:"availableServices,omitempty"`
-	AvailableContainers []string         `json:"availableContainers,omitempty"`
-	Inventory           map[string]any   `json:"inventory,omitempty"`
-	Version             string           `json:"version,omitempty"`
-	CollectorError      string           `json:"collectorError,omitempty"`
+	Metrics             metrics.Snapshot      `json:"metrics"`
+	Results             []checks.Result       `json:"results,omitempty"`
+	AvailableProcesses  []string              `json:"availableProcesses,omitempty"`
+	AvailableServices   []string              `json:"availableServices,omitempty"`
+	AvailableContainers []string              `json:"availableContainers,omitempty"`
+	ProcessInventory    []metrics.ProcessInfo `json:"processInventory,omitempty"`
+	ServiceInventory    []metrics.ServiceInfo `json:"serviceInventory,omitempty"`
+	AvailableScripts    []string              `json:"availableScripts,omitempty"`
+	Inventory           map[string]any        `json:"inventory,omitempty"`
+	Version             string                `json:"version,omitempty"`
+	CollectorError      string                `json:"collectorError,omitempty"`
+}
+
+// An empty script_dir is still worth reporting (it clears an old list),
+// but only on cycles that actually listed it.
+func scriptsOrEmpty(d Discovery) []string {
+	if d.ScriptsListed && d.Scripts == nil {
+		return []string{}
+	}
+	return d.Scripts
 }
 
 func (c *Client) SendReport(snap metrics.Snapshot, results []checks.Result, discovery Discovery, inventory map[string]any, version, collectorError string) error {
@@ -91,6 +109,9 @@ func (c *Client) SendReport(snap metrics.Snapshot, results []checks.Result, disc
 		AvailableProcesses:  discovery.Processes,
 		AvailableServices:   discovery.Services,
 		AvailableContainers: discovery.Containers,
+		ProcessInventory:    discovery.ProcessInventory,
+		ServiceInventory:    discovery.ServiceInventory,
+		AvailableScripts:    scriptsOrEmpty(discovery),
 		Inventory:           inventory,
 		Version:             version,
 		CollectorError:      collectorError,

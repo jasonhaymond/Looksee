@@ -2,8 +2,10 @@
 
 A single static binary that reports host metrics and runs the host-side checks a
 Looksee engine assigns to it. No runtime dependency — Go compiles to one self-contained
-executable per platform. Version 3.2.0 (versioned in lockstep with the engine and
-dashboard; see [CHANGELOG.md](../CHANGELOG.md)).
+executable per platform. Version 4.0.0 (versioned in lockstep with the engine and
+dashboard; see [CHANGELOG.md](../CHANGELOG.md)). Running it on Windows alongside Smart
+App Control, Defender, ASR, WDAC/AppLocker or an EDR, and signing it, are covered in
+[windows-agent-security.md](../docs/windows-agent-security.md).
 
 ## Contents
 
@@ -18,7 +20,7 @@ dashboard; see [CHANGELOG.md](../CHANGELOG.md)).
 9. [Updating](#updating)
 10. [Site collector](#site-collector)
 
-Related: [user guide](../docs/user-guide.md) · [deployment guide](../docs/deployment-guide.md) · [README](../README.md)
+Related: [user guide](../docs/user-guide.md) · [check reference](../docs/check-reference.md) · [Windows agent & security software](../docs/windows-agent-security.md) · [deployment guide](../docs/deployment-guide.md) · [README](../README.md)
 
 ## The fast path: one command on the target host
 
@@ -91,6 +93,14 @@ throughput/errors/drops/link state/speed, TCP connection states and listening po
 | 30 min | Drive health | `smartctl` (smartmontools 7+) | `smartctl`, else Storage reliability counters | `smartctl` |
 | 6 h | Pending updates | apt, dnf/yum, pacman | Windows Update | `softwareupdate` |
 | 6 h | Inventory (model, serial, CPU, RAM, OS) | DMI | WMI | `sysctl` |
+| ~5 min | Process inventory (PID, user, CPU, memory, command line) | /proc | process API | process API |
+| ~5 min | Service inventory (state, start type) | `systemctl list-units` + `list-unit-files` | `Win32_Service` | `launchctl list` |
+| ~5 min | Scripts available to custom script checks | `script_dir` | `script_dir` | `script_dir` |
+
+Process command lines are **masked before they leave the host**: values after arguments
+that look like credentials (`--password=…`, `-token …`, `--api-key …`, `--passphrase …`,
+mysql-style `-pSECRET`) and passwords in URLs (`https://user:pass@…`) become `***`.
+Inventory is sent every 10th report (about every 5 minutes at the default interval).
 
 **Checks it runs on request**: OS service (with systemd restart count), process (count,
 CPU, memory), failed systemd units / stopped automatic Windows services, scheduled task
@@ -156,15 +166,31 @@ contents:
    On Windows, `.ps1` scripts run through PowerShell.
 3. Add `script_dir: /etc/looksee-agent/scripts` to `looksee-agent.yaml` and restart the
    agent.
-4. In the dashboard, add a **Custom script** check with just the file name
-   (`check_queue.sh`) and any arguments.
+4. In the dashboard, add a **Custom script** check: **Browse** lists the scripts the
+   agent found in `script_dir` (agent 4.0+), or type the file name (`check_queue.sh`).
+   Add any arguments.
+
+**Checking output instead of exit codes (agent 4.0+).** Set *Expected output* on the
+check — contains, doesn't contain, equals, or a regex — and optionally an *expected exit
+code*. The agent sends the script's output (first 4 KB) and exit code; the engine judges
+it, and a mismatch is down (or warn). To check an existing command's output, put a
+one-line wrapper in `script_dir`, e.g. `/etc/looksee-agent/scripts/zpool-health.sh`:
+
+```bash
+#!/bin/sh
+exec zpool status -x
+```
+
+then expect it to *contain* `all pools are healthy`. On Windows, a `.ps1` wrapper
+(e.g. `Get-Service Spooler | Select-Object -ExpandProperty Status`) works the same way.
+Scripts run as the agent's user (`looksee-agent` on Linux, `SYSTEM` on Windows).
 
 Without `script_dir` set, script checks are refused on that host. Names containing a
 path (`../`) are always refused.
 
 ## Build
 
-Requires Go 1.22+. From this directory, for every supported platform in one command:
+Requires Go 1.26+. From this directory, for every supported platform in one command:
 
 ```sh
 ./build-all.sh
@@ -178,6 +204,11 @@ otherwise it 404s with a reminder to do exactly this.
 
 No local Go install? `build-all.sh` detects that automatically and builds inside the
 `golang` Docker image instead — no flag needed.
+
+**Signing.** `build-all.sh` finishes by running `sign-windows.sh`, which
+Authenticode-signs the Windows binaries when `signing.env` is configured (Azure Artifact
+Signing, an HSM/cloud key via jsign, or a `.pfx`) and does nothing otherwise. Setup and
+certificate options: [windows-agent-security.md → Signing the agent](../docs/windows-agent-security.md#signing-the-agent).
 
 For a single platform without the full matrix:
 

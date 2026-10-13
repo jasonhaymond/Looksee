@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 // v2's default export uses a newer composable prop API; /legacy gives the
 // flat v1-style props (cols, rowHeight, onDragStop, ...) this file uses.
@@ -37,6 +37,10 @@ export default function DashboardsPage() {
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
   const [activeDashboardId, setActiveDashboardId] = useState<string | null>(null);
   const [widgets, setWidgets] = useState<Widget[]>([]);
+  // Latest widgets for handlers that add several in a row (their closure
+  // would otherwise see the list from before the first add).
+  const widgetsRef = useRef<Widget[]>([]);
+  widgetsRef.current = widgets;
   const [editMode, setEditMode] = useState(false);
   const [showAddWidget, setShowAddWidget] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -175,14 +179,14 @@ export default function DashboardsPage() {
     // Drop the new widget below whatever's already there rather than at
     // (0,0) — compaction (default RGL behavior) then settles it into the
     // first real gap.
-    const y = widgets.reduce((max, w) => Math.max(max, w.y + w.h), 0);
+    const y = widgetsRef.current.reduce((max, w) => Math.max(max, w.y + w.h), 0);
     // Section headers span the full 12-col grid and are a single short row
     // tall — a divider, not a data tile — while every other widget keeps
     // the existing default tile size.
     const [w, h] = type === "section_header" ? [12, 1] : [4, 3];
     const created = await api.createWidget(activeDashboardId, { type, config, x: 0, y, w, h });
+    widgetsRef.current = [...widgetsRef.current, created];
     setWidgets((prev) => [...prev, created]);
-    setShowAddWidget(false);
   }
 
   async function handleDuplicateDashboard() {
@@ -304,7 +308,7 @@ export default function DashboardsPage() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl p-6">
+    <main className="mx-auto max-w-5xl p-4 sm:p-6">
       <TopNav active="/" />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">

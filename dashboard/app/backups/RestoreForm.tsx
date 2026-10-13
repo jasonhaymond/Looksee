@@ -56,7 +56,7 @@ export function RestoreForm({ archive, onStarted }: { archive: Archive; onStarte
         <button
           onClick={handleConfirm}
           disabled={confirmText !== archive.name}
-          className="rounded-md bg-[var(--down)] px-3 py-1 font-medium text-black disabled:opacity-40"
+          className="rounded-md bg-[var(--danger-bg)] px-3 py-1 font-medium text-[var(--on-danger)] disabled:opacity-40"
         >
           Restore now
         </button>

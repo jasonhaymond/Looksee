@@ -36,11 +36,11 @@ export function PushEnableButton() {
     }
   }
 
-  if (status === "enabled") return <span className="text-xs text-[var(--up)]">Push notifications enabled</span>;
+  if (status === "enabled") return <span className="whitespace-nowrap text-xs text-[var(--up)]" title="Push notifications are on in this browser">Push on</span>;
 
   return (
-    <button onClick={enable} disabled={status === "enabling"} className="text-xs text-[var(--muted)] hover:text-[var(--text)]">
-      {status === "enabling" ? "Enabling..." : status === "error" ? "Failed — try again" : "Enable push notifications"}
+    <button onClick={enable} disabled={status === "enabling"} className="whitespace-nowrap text-xs text-[var(--muted)] hover:text-[var(--text)]" title="Get alerts as notifications in this browser or installed app">
+      {status === "enabling" ? "Enabling..." : status === "error" ? "Failed — try again" : "Enable push"}
     </button>
   );
 }

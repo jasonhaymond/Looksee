@@ -2,6 +2,7 @@ import { Router } from "express";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { discoveryScans, events, endpoints, hosts, checks } from "../db/schema.js";
+import { createAlertRule, parseAlertRule } from "../services/alertRuleFactory.js";
 import { requireAuth } from "../middleware/auth.js";
 import { MAX_SCAN_ADDRESSES, expandCidr, runDiscoveryScan } from "../services/discovery.js";
 
@@ -178,6 +179,7 @@ insightsRouter.post("/discovery/scans/:id/add", async (req, res) => {
     return;
   }
   const devices: { ip: string; name?: string; mac?: string | null; createHost?: boolean; checks?: { type: string; name: string; config: Record<string, unknown> }[] }[] = Array.isArray(req.body?.devices) ? req.body.devices : [];
+  const alertRule = parseAlertRule(req.body?.alertRule);
   let hostsCreated = 0;
   let checksCreated = 0;
   for (const d of devices) {
@@ -188,7 +190,8 @@ insightsRouter.post("/discovery/scans/:id/add", async (req, res) => {
       hostsCreated++;
     }
     for (const c of d.checks ?? []) {
-      await db.insert(checks).values({ endpointId, hostId, name: c.name, type: c.type as typeof checks.$inferInsert.type, config: c.config ?? {} });
+      const [created] = await db.insert(checks).values({ endpointId, hostId, name: c.name, type: c.type as typeof checks.$inferInsert.type, config: c.config ?? {} }).returning({ id: checks.id });
+      if (alertRule) await createAlertRule(created.id, alertRule);
       checksCreated++;
     }
   }

@@ -46,32 +46,78 @@ export function openSnmpSession(config: Config): snmp.Session {
   return snmp.createSession(host, str(config, "community", "public"), { ...options, version: str(config, "version") === "1" ? snmp.Version1 : snmp.Version2c });
 }
 
+// net-snmp hands Counter64 values (ifHCInOctets and friends) back as the
+// raw big-endian bytes, not a number — decoding them is what makes 64-bit
+// interface counters and custom Counter64 OIDs read as numbers at all.
+export function decodeVarbindValue(vb: { type?: number; value?: unknown }): unknown {
+  if (vb.type === snmp.ObjectType.Counter64 && Buffer.isBuffer(vb.value)) {
+    let n = 0n;
+    for (const byte of vb.value) n = (n << 8n) | BigInt(byte);
+    return Number(n);
+  }
+  return vb.value;
+}
+
+const COUNTER_TYPES = new Set<number>([snmp.ObjectType.Counter, snmp.ObjectType.Counter64]);
+const TYPE_NAMES: Record<number, string> = {
+  [snmp.ObjectType.Integer]: "Integer",
+  [snmp.ObjectType.OctetString]: "OctetString",
+  [snmp.ObjectType.OID]: "OID",
+  [snmp.ObjectType.IpAddress]: "IpAddress",
+  [snmp.ObjectType.Counter]: "Counter32",
+  [snmp.ObjectType.Gauge]: "Gauge32",
+  [snmp.ObjectType.TimeTicks]: "TimeTicks",
+  [snmp.ObjectType.Opaque]: "Opaque",
+  [snmp.ObjectType.Counter64]: "Counter64",
+  [snmp.ObjectType.Boolean]: "Boolean",
+  [snmp.ObjectType.Null]: "Null",
+};
+
 function snmpGet(session: snmp.Session, oids: string[]): Promise<snmp.Varbind[]> {
   return new Promise((resolve, reject) => {
-    session.get(oids, (err, vbs) => (err ? reject(err) : resolve(vbs ?? [])));
+    session.get(oids, (err, vbs) => (err ? reject(err) : resolve((vbs ?? []).map((vb) => ({ ...vb, value: decodeVarbindValue(vb) }) as snmp.Varbind))));
   });
 }
 
-// Every leaf under `oid`, keyed by the suffix after it (e.g. ".2" or "1.5").
-export function snmpWalk(session: snmp.Session, oid: string): Promise<Map<string, unknown>> {
+export type WalkRow = { oid: string; suffix: string; type: string; value: unknown; counter: boolean };
+
+// Every leaf under `oid` with its type, in device order. maxRows stops a
+// whole-device walk of a big switch from running away.
+export function snmpWalkRows(session: snmp.Session, oid: string, maxRows = 10_000): Promise<WalkRow[]> {
   return new Promise((resolve, reject) => {
-    const out = new Map<string, unknown>();
+    const rows: WalkRow[] = [];
     session.subtree(
       oid,
       20,
       (vbs) => {
         for (const vb of vbs) {
           if (snmp.isVarbindError(vb)) continue;
-          out.set(vb.oid.slice(oid.length + 1), vb.value);
+          if (rows.length >= maxRows) return true;
+          rows.push({ oid: vb.oid, suffix: vb.oid.slice(oid.length + 1), type: vb.type != null ? (TYPE_NAMES[vb.type] ?? String(vb.type)) : "unknown", value: decodeVarbindValue(vb), counter: vb.type != null && COUNTER_TYPES.has(vb.type) });
         }
       },
-      (err) => (err ? reject(err) : resolve(out))
+      (err) => (err ? reject(err) : resolve(rows))
     );
   });
 }
 
-const toNum = (v: unknown) => (Buffer.isBuffer(v) ? Number(v.toString()) : typeof v === "bigint" ? Number(v) : Number(v));
+// Every leaf under `oid`, keyed by the suffix after it (e.g. ".2" or "1.5").
+export async function snmpWalk(session: snmp.Session, oid: string): Promise<Map<string, unknown>> {
+  return new Map((await snmpWalkRows(session, oid)).map((r) => [r.suffix, r.value]));
+}
+
+export const toNum = (v: unknown) => (Buffer.isBuffer(v) ? Number(v.toString()) : typeof v === "bigint" ? Number(v) : v == null || v === "" ? NaN : Number(v));
 const toStr = (v: unknown) => (Buffer.isBuffer(v) ? v.toString("utf-8").replace(/\0/g, "") : String(v ?? ""));
+
+// How a walk shows a value: printable text as text, binary (MAC
+// addresses, bitmasks) as colon-separated hex.
+export function displayValue(v: unknown): string {
+  if (Buffer.isBuffer(v)) {
+    const printable = v.length > 0 && [...v].every((b) => b === 0 || b === 9 || b === 10 || b === 13 || (b >= 32 && b < 127));
+    return printable ? toStr(v) : v.toString("hex").replace(/(..)(?!$)/g, "$1:");
+  }
+  return String(v ?? "");
+}
 
 // Column -> index -> value, from a walk of a table's entry OID.
 function columns(walk: Map<string, unknown>): Map<string, Map<string, unknown>> {
@@ -85,6 +131,25 @@ function columns(walk: Map<string, unknown>): Map<string, Map<string, unknown>> 
   }
   return cols;
 }
+
+// hrPrinterDetectedErrorState bits, in order (RFC 2790/3805).
+const PRINTER_ERROR_BITS: [string, "warn" | "down"][] = [
+  ["low paper", "warn"],
+  ["no paper", "down"],
+  ["low toner", "warn"],
+  ["no toner", "down"],
+  ["door open", "down"],
+  ["jammed", "down"],
+  ["offline", "down"],
+  ["service requested", "down"],
+  ["input tray missing", "down"],
+  ["output tray missing", "down"],
+  ["marker supply missing", "down"],
+  ["output tray nearly full", "warn"],
+  ["output tray full", "down"],
+  ["input tray empty", "warn"],
+  ["overdue preventive maintenance", "warn"],
+];
 
 type PresetResult = { value: number | null; message: string; details?: unknown; status?: "up" | "warn" | "down" };
 
@@ -136,6 +201,66 @@ export const SNMP_PRESETS: Record<string, (s: snmp.Session, c: Config, ctx: Prob
     const low = known.reduce((a, b) => (b.percent < a.percent ? b : a));
     return { value: low.percent, message: `Lowest supply: ${low.name} ${low.percent}%`, details: supplies };
   },
+  // HOST-RESOURCES hrPrinterDetectedErrorState is a bitmask (bit 0 = the
+  // first byte's high bit); the Printer-MIB alert table adds the printer's
+  // own wording ("Paper jam in tray 2").
+  async printer_status(s) {
+    const errorState = await snmpWalk(s, "1.3.6.1.2.1.25.3.5.1.2").catch(() => new Map<string, unknown>());
+    const printerStatus = await snmpWalk(s, "1.3.6.1.2.1.25.3.5.1.1").catch(() => new Map<string, unknown>());
+    const alerts = columns(await snmpWalk(s, "1.3.6.1.2.1.43.18.1.1").catch(() => new Map<string, unknown>()));
+    if (!errorState.size && !printerStatus.size && !alerts.size) return { value: null, message: "Device doesn't expose the Printer MIB / hrPrinterTable" };
+    const conditions: { name: string; severity: "warn" | "down" }[] = [];
+    for (const raw of errorState.values()) {
+      const bytes = Buffer.isBuffer(raw) ? raw : Buffer.alloc(0);
+      PRINTER_ERROR_BITS.forEach(([name, severity], bit) => {
+        const byte = bytes[Math.floor(bit / 8)] ?? 0;
+        if (byte & (0x80 >> bit % 8)) conditions.push({ name, severity });
+      });
+    }
+    const alertRows: { severity: string; description: string; code: number }[] = [];
+    for (const [idx, sev] of alerts.get("2") ?? []) {
+      const level = toNum(sev);
+      alertRows.push({ severity: level === 3 ? "critical" : level === 4 || level === 5 ? "warning" : "other", description: toStr(alerts.get("8")?.get(idx)), code: toNum(alerts.get("7")?.get(idx)) });
+    }
+    const state = toNum([...printerStatus.values()][0]);
+    const stateName = ({ 1: "other", 2: "unknown", 3: "idle", 4: "printing", 5: "warming up" } as Record<number, string>)[state] ?? "unknown";
+    const critical = conditions.filter((c) => c.severity === "down").map((c) => c.name);
+    const warnings = conditions.filter((c) => c.severity === "warn").map((c) => c.name);
+    const critAlerts = alertRows.filter((a) => a.severity === "critical" && a.description).map((a) => a.description);
+    const status: PresetResult["status"] = critical.length || critAlerts.length ? "down" : warnings.length || alertRows.some((a) => a.severity === "warning") ? "warn" : "up";
+    const parts = [...new Set([...critical, ...critAlerts, ...warnings, ...alertRows.filter((a) => a.severity === "warning").map((a) => a.description)])].filter(Boolean);
+    return { value: conditions.length + alertRows.length, status, message: parts.length ? `${stateName}: ${parts.slice(0, 4).join("; ")}` : `Printer ${stateName}, no errors`, details: { conditions, alerts: alertRows } };
+  },
+  // RFC 2707 Job Monitoring MIB (jmJobTable). Not every printer implements
+  // it; those that do keep finished jobs for a while, so a job is counted
+  // once — the first time it's seen aborted or stopped.
+  async printer_jobs(s, c, ctx) {
+    const jobs = columns(await snmpWalk(s, "1.3.6.1.4.1.2699.1.1.1.3.1.1").catch(() => new Map<string, unknown>()));
+    const states = jobs.get("2");
+    if (!states?.size) return { value: null, message: "Printer doesn't expose the Job Monitoring MIB (RFC 2707) — use the printer status template instead" };
+    const seen = new Set((ctx.state.failedJobs as string[] | undefined) ?? []);
+    const firstRun = ctx.state.failedJobs === undefined;
+    const includeCanceled = bool(c, "countCanceled");
+    const failedNow: { job: string; state: string; owner: string }[] = [];
+    let active = 0;
+    for (const [idx, raw] of states) {
+      const st = toNum(raw);
+      if (st >= 3 && st <= 6) active++;
+      const failed = st === 8 || st === 6 || (includeCanceled && st === 7);
+      if (failed) failedNow.push({ job: idx, state: st === 8 ? "aborted" : st === 6 ? "stopped" : "canceled", owner: toStr(jobs.get("9")?.get(idx)) });
+    }
+    const fresh = firstRun ? [] : failedNow.filter((j) => !seen.has(j.job));
+    const state = { failedJobs: failedNow.map((j) => j.job).slice(-500), lastFailureAt: fresh.length ? new Date().toISOString() : (ctx.state.lastFailureAt as string | undefined), lastFailure: fresh.length ? fresh.map((j) => `${j.job} ${j.state}${j.owner ? ` (${j.owner})` : ""}`).join(", ") : ctx.state.lastFailure };
+    const hold = numOr(c, "holdMinutes", 15) * 60_000;
+    const recent = state.lastFailureAt && Date.now() - new Date(state.lastFailureAt).getTime() < hold;
+    return {
+      value: fresh.length,
+      status: recent ? (str(c, "severity", "warn") === "down" ? "down" : "warn") : "up",
+      message: recent ? `Failed print job(s): ${state.lastFailure}` : `${active} active job(s), no new failures`,
+      details: failedNow.slice(0, 50),
+      state,
+    };
+  },
   async ups_battery(s) {
     const [vb] = await snmpGet(s, ["1.3.6.1.2.1.33.1.2.4.0"]);
     return { value: toNum(vb.value), message: `Battery ${toNum(vb.value)}%` };
@@ -177,6 +302,67 @@ export const SNMP_PRESETS: Record<string, (s: snmp.Session, c: Config, ctx: Prob
   },
 };
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+function aggregate(values: number[], how: string): number {
+  if (how === "sum") return values.reduce((a, b) => a + b, 0);
+  if (how === "min") return Math.min(...values);
+  if (how === "max") return Math.max(...values);
+  if (how === "count") return values.length;
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+// Walk modes. With "as a rate", each row's counter is turned into a per-
+// second rate on its own (against that row's previous reading) before the
+// rows are combined — so "busiest port" or "sum of all ports" is right even
+// when one counter resets. walk_all keeps every row in the result details,
+// which is what the full-walk view of a check shows.
+async function walkCheck(session: snmp.Session, oid: string, mode: string, config: Config, ctx: ProbeContext, start: number, scale: number, unit: string): Promise<ProbeOutcome> {
+  const rows = await snmpWalkRows(session, oid, mode === "walk_all" ? numOr(config, "maxRows", 2000) : 10_000);
+  const latencyMs = Date.now() - start;
+  if (!rows.length) return down(`Nothing under ${oid}`);
+  const filter = str(config, "indexFilter");
+  let re: RegExp | null = null;
+  try {
+    re = filter ? new RegExp(filter) : null;
+  } catch {
+    return warn(`Invalid row filter regex: ${filter}`);
+  }
+  const picked = re ? rows.filter((r) => re!.test(r.suffix)) : rows;
+  const asRate = bool(config, "asRate");
+  const now = Date.now();
+  const prev = (ctx.state.rows ?? {}) as Record<string, number>;
+  const prevAt = ctx.state.at as number | undefined;
+  const elapsed = prevAt ? (now - prevAt) / 1000 : 0;
+  const raw: Record<string, number> = {};
+  const details: { oid: string; type: string; value: string; rate?: number | null }[] = [];
+  const numbers: number[] = [];
+  for (const r of picked) {
+    const n = toNum(r.value);
+    const numeric = !Number.isNaN(n) && !Buffer.isBuffer(r.value);
+    let shown: number | null = numeric ? n * scale : null;
+    if (numeric && asRate) {
+      raw[r.suffix] = n;
+      const p = prev[r.suffix];
+      // A lower reading means the counter wrapped or the device restarted:
+      // no rate for that row this time, rather than a huge negative one.
+      shown = p != null && elapsed > 0 && n >= p ? ((n - p) / elapsed) * scale : null;
+    }
+    if (shown != null) numbers.push(shown);
+    details.push({ oid: r.oid, type: r.type, value: displayValue(r.value), ...(asRate ? { rate: shown != null ? round2(shown) : null } : {}) });
+  }
+  const state = asRate ? { rows: raw, at: now } : undefined;
+  const how = mode === "walk_all" ? str(config, "aggregate", "count") : mode.replace("walk_", "");
+  if (how === "count") return { status: "up", latencyMs, message: `${picked.length} value(s) under ${oid}`, value: picked.length, details: mode === "walk_all" ? details : undefined, state };
+  if (!numbers.length) {
+    if (asRate && !prevAt) return { status: "up", latencyMs, message: "Collecting a baseline for the rate", skip: true, state };
+    return { status: "warn", latencyMs, message: `No numeric values under ${oid}`, details: mode === "walk_all" ? details : undefined, state };
+  }
+  const value = aggregate(numbers, how);
+  const label = how === "avg" ? "average" : how;
+  return { status: "up", latencyMs, message: `${label} of ${numbers.length} row(s): ${round2(value)}${unit}`, value, details: mode === "walk_all" ? details : details.slice(0, 200), state };
+}
+
 function close(s: snmp.Session) {
   try {
     s.close();
@@ -209,27 +395,20 @@ export async function probeSnmp(config: Config, ctx: ProbeContext): Promise<Prob
       return { status: r.status ?? "up", latencyMs, message: r.message, value: r.value, details: r.details, state: r.state };
     }
 
+    const scale = numOr(config, "scale", 1);
+    const unit = str(config, "unit");
+    if (mode !== "get") return await walkCheck(session, oid, mode, config, ctx, start, scale, unit);
+
     let value: number;
-    if (mode === "get") {
-      const [vb] = await snmpGet(session, [oid]);
-      if (!vb) return down("No response");
-      if (snmp.isVarbindError(vb)) return down(snmp.varbindError(vb));
-      value = toNum(vb.value);
-      if (Number.isNaN(value)) {
-        const text = toStr(vb.value);
-        const expect = str(config, "expectString");
-        if (expect) return { status: text.includes(expect) ? "up" : "down", latencyMs: Date.now() - start, message: text };
-        return { status: "warn", latencyMs: Date.now() - start, message: `Returned a non-numeric value: ${text}` };
-      }
-    } else {
-      const values = [...(await snmpWalk(session, oid)).values()].map(toNum).filter((n) => !Number.isNaN(n));
-      if (!values.length) return down(`Nothing under ${oid}`);
-      value =
-        mode === "walk_sum" ? values.reduce((a, b) => a + b, 0)
-        : mode === "walk_min" ? Math.min(...values)
-        : mode === "walk_max" ? Math.max(...values)
-        : mode === "walk_count" ? values.length
-        : values.reduce((a, b) => a + b, 0) / values.length;
+    const [vb] = await snmpGet(session, [oid]);
+    if (!vb) return down("No response");
+    if (snmp.isVarbindError(vb)) return down(snmp.varbindError(vb));
+    value = toNum(vb.value);
+    if (Number.isNaN(value)) {
+      const text = toStr(vb.value);
+      const expect = str(config, "expectString");
+      if (expect) return { status: text.includes(expect) ? "up" : "down", latencyMs: Date.now() - start, message: text };
+      return { status: "warn", latencyMs: Date.now() - start, message: `Returned a non-numeric value: ${text}` };
     }
     let state: Record<string, unknown> | undefined;
     // Counters (octets, packets) are only meaningful as a rate.
@@ -240,11 +419,26 @@ export async function probeSnmp(config: Config, ctx: ProbeContext): Promise<Prob
       if (prev.raw == null || prev.at == null || value < prev.raw) return { status: "up", latencyMs: now - start, message: "Collecting a baseline for the rate", skip: true, state };
       value = (value - prev.raw) / ((now - prev.at) / 1000);
     }
-    const scale = numOr(config, "scale", 1);
     value = value * scale;
-    return { status: "up", latencyMs: Date.now() - start, message: `${Math.round(value * 100) / 100}${str(config, "unit")}`, value, state };
+    return { status: "up", latencyMs: Date.now() - start, message: `${Math.round(value * 100) / 100}${unit}`, value, state };
   } catch (err) {
     return down(errMsg(err));
+  } finally {
+    close(session);
+  }
+}
+
+export type BrowseRow = { oid: string; type: string; value: string };
+
+// The walk browser in the check form: every value under an OID (default:
+// the whole MIB-2 tree), shown as text, capped so a big device can't
+// produce an unbounded response.
+export async function browseSnmp(config: Config, maxRows = 5000): Promise<{ rows: BrowseRow[]; truncated: boolean }> {
+  const session = openSnmpSession(config);
+  session.on("error", () => undefined);
+  try {
+    const rows = await snmpWalkRows(session, str(config, "oid", "1.3.6.1.2.1") || "1.3.6.1.2.1", maxRows + 1);
+    return { rows: rows.slice(0, maxRows).map((r) => ({ oid: r.oid, type: r.type, value: displayValue(r.value) })), truncated: rows.length > maxRows };
   } finally {
     close(session);
   }

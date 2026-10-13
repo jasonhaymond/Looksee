@@ -192,6 +192,18 @@ func (a *agent) runOnce(cycle int) {
 			a.discovery.Services = names
 		}
 		a.discovery.Containers = checks.ListContainers(a.cfg.DockerSocket)
+		if procs, err := metrics.ListProcesses(); err != nil {
+			log.Printf("process inventory: %v", err)
+		} else {
+			a.discovery.ProcessInventory = procs
+		}
+		if svcs, err := metrics.ListServices(); err != nil {
+			log.Printf("service inventory: %v", err)
+		} else {
+			a.discovery.ServiceInventory = svcs
+		}
+		a.discovery.Scripts = metrics.ListScripts(a.cfg.ScriptDir)
+		a.discovery.ScriptsListed = a.cfg.ScriptDir != ""
 	}
 	discovery := report.Discovery{}
 	if cycle%discoveryEvery == 0 {

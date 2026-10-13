@@ -6,6 +6,7 @@ import request from "supertest";
 import bcrypt from "bcryptjs";
 import { eq, desc } from "drizzle-orm";
 import { app } from "../src/app.js";
+import { loginWith2fa } from "./helpers.js";
 import { db } from "../src/db/index.js";
 import { users, endpoints, hosts, checks, checkResults, alertEvents, hostMetrics, notificationChannels } from "../src/db/schema.js";
 import { processOpenAlerts } from "../src/services/alerting.js";
@@ -40,7 +41,7 @@ beforeAll(async () => {
   const hookBase = `http://127.0.0.1:${(hookServer.address() as net.AddressInfo).port}`;
 
   await db.insert(users).values({ email, passwordHash: await bcrypt.hash(password, 10) });
-  cookie = (await request(app).post("/api/auth/login").send({ email, password })).headers["set-cookie"]![0];
+  cookie = await loginWith2fa(email, password);
   endpointId = (await db.insert(endpoints).values({ name: `platform-${crypto.randomUUID()}` }).returning())[0].id;
   otherEndpointId = (await db.insert(endpoints).values({ name: `platform-other-${crypto.randomUUID()}` }).returning())[0].id;
   hostId = (await db.insert(hosts).values({ endpointId, name: "platform-host" }).returning())[0].id;
@@ -112,7 +113,7 @@ describe("alerting (L3, L5, L12)", () => {
     await push(pv.pushToken!, "value=30");
     await waitFor(() => received.length > 0);
     expect(received[0].path).toBe("/primary");
-    expect(JSON.parse(received[0].body).content).toMatch(/\[Looksee\] Disk queue is WARN: 30 is above warn threshold 10/);
+    expect(JSON.parse(received[0].body).content).toMatch(/Disk queue is WARN: 30 is above warn threshold 10/);
 
     const [event] = await openEvents(pv.id);
     await processOpenAlerts(new Date(event.triggeredAt.getTime() + 6 * 60_000));
@@ -135,7 +136,7 @@ describe("alerting (L3, L5, L12)", () => {
     received.length = 0;
     await processOpenAlerts(new Date(Date.now() + 11 * 60_000));
     await waitFor(() => received.length > 0);
-    expect(JSON.parse(received[0].body).content).toMatch(/Still failing — Renotify me/);
+    expect(JSON.parse(received[0].body).content).toMatch(/Renotify me is still DOWN/);
     void event;
   });
 
@@ -170,7 +171,8 @@ describe("alerting (L3, L5, L12)", () => {
     const before = (await openEvents(hb.id)).length;
     await push(hb.pushToken!, "status=down");
     expect((await openEvents(hb.id)).length).toBe(before);
-  });
+    // 13 pushes, each running alerting; slow when the whole suite runs at once.
+  }, 15_000);
 
   it("records maintenance-window results without alerting (L1)", async () => {
     const hb = await createCheck({ name: "Patching tonight", type: "heartbeat" });

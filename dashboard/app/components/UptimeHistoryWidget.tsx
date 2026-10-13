@@ -32,7 +32,7 @@ export function UptimeHistoryWidget({ widget, check, onChanged }: { widget: Widg
 
   if (!check) {
     return (
-      <p className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3 text-xs text-[var(--muted)]">
+      <p className="surface rounded-lg p-3 text-xs text-[var(--muted)]">
         Check not found — it may have been deleted.
       </p>
     );
@@ -41,7 +41,7 @@ export function UptimeHistoryWidget({ widget, check, onChanged }: { widget: Widg
   const rangeLabel = RANGE_OPTIONS.find((o) => o.hours === rangeHours)?.label ?? `${rangeHours}h`;
 
   return (
-    <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+    <div className="h-full surface rounded-lg p-3">
       <div className="flex items-center justify-between gap-2">
         <h3 className="truncate font-medium">{check.name}</h3>
         <RangeSelect hours={rangeHours} onChange={handleRangeChange} />

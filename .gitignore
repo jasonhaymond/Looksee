@@ -11,6 +11,7 @@ engine/.backup-ssh/
 
 # agent build output + local config (holds a real agent key)
 agent/bin/
+agent/signing.env
 agent/looksee-agent
 agent/looksee-agent.exe
 agent/looksee-agent.yaml

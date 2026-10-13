@@ -4,21 +4,23 @@ import { db } from "../db/index.js";
 import { sessions } from "../db/schema.js";
 
 export const SESSION_COOKIE_NAME = "looksee_session";
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const DEFAULT_TTL_HOURS = 720;
 
-export function sessionCookieOptions() {
+export function sessionCookieOptions(hours = DEFAULT_TTL_HOURS) {
   return {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
-    maxAge: SESSION_TTL_MS,
+    // strict: the session cookie is never sent on a request started from
+    // another site, which closes off cross-site request forgery outright.
+    sameSite: "strict" as const,
+    maxAge: hours * 3_600_000,
   };
 }
 
-export async function createSession(userId: string) {
+export async function createSession(userId: string, opts: { hours?: number; ip?: string | null; userAgent?: string | null } = {}) {
   const token = crypto.randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  await db.insert(sessions).values({ token, userId, expiresAt });
+  const expiresAt = new Date(Date.now() + (opts.hours ?? DEFAULT_TTL_HOURS) * 3_600_000);
+  await db.insert(sessions).values({ token, userId, expiresAt, ip: opts.ip ?? null, userAgent: opts.userAgent?.slice(0, 300) ?? null, lastSeenAt: new Date() });
   return { token, expiresAt };
 }
 
@@ -26,9 +28,10 @@ export async function deleteSessionByToken(token: string) {
   await db.delete(sessions).where(eq(sessions.token, token));
 }
 
-// Not scheduled anywhere yet — cheap enough to call opportunistically (e.g.
-// from a future admin "housekeeping" action) once there's an admin UI action
-// to hang it off; expired sessions are already rejected on read regardless.
 export async function pruneExpiredSessions() {
   await db.delete(sessions).where(lt(sessions.expiresAt, new Date()));
 }
+
+// Sessions are listed and revoked by a hash of the token, so the Security
+// page never handles a live session token.
+export const sessionId = (token: string) => crypto.createHash("sha256").update(token).digest("hex").slice(0, 16);

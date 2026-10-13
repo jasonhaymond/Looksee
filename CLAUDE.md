@@ -37,11 +37,23 @@ global doc governs.
   thing for every check type.
 - **Agent script checks only run files in the agent's own `script_dir`.** The engine may
   choose which approved script runs, never send code to run. Don't add a "run this
-  command" check type.
+  command" check type. Re-confirmed in 4.0 when "custom command with expected output"
+  was requested: it was built as expected-output matching on approved scripts (judged by
+  the engine), not as remote commands.
+- **Two-factor sign-in is mandatory** (4.0, Jason's request). Never add a way to turn it
+  off in the app; the only bypass is the shell-only `npm run security:reset -- --2fa`.
+- **Location → Endpoint → Host → Check.** A location (physical place) groups endpoints
+  (networks); hosts and checks get their location only through their endpoint — don't add
+  a location column to hosts or checks.
+- **Every color is a theme token** in `dashboard/app/globals.css` (light and dark), checked
+  for WCAG AA. Components never hard-code a color; status always carries a text label.
+- **The in-app help is `docs/`**, rendered at build time (`dashboard/app/help/`). Edit the
+  markdown, not the app; a new check type needs an entry with `<a id="<type>"></a>` in
+  `docs/check-reference.md` (the check form links to it).
 - **Event/flow receivers stay on unprivileged ports with a private-source allowlist** by
   default, so the engine never needs root and isn't an open ingestion endpoint.
 
-- **Lockfiles must satisfy the server's npm (npm 10, Node 20).** `scripts/update.sh` uses
+- **Lockfiles must satisfy the server's npm (npm 10; npm 11 once the server moves to Node 24 — npm 10 lockfiles work with both).** `scripts/update.sh` uses
   `npm ci`, which refuses a lockfile it considers out of sync — and npm 11 (the dev
   machine) writes lockfiles npm 10 rejects (3.0.4: vitest's nested `esbuild` peer was
   left out). After any dependency change, regenerate with

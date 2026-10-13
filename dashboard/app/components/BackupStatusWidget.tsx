@@ -27,7 +27,7 @@ export function BackupStatusWidget() {
   }, []);
 
   return (
-    <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+    <div className="h-full surface rounded-lg p-3">
       <h3 className="font-medium">Backups</h3>
       {lastRun === undefined ? (
         <p className="mt-2 text-xs text-[var(--muted)]">Loading…</p>

@@ -3,20 +3,26 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v3.2.0 — 56 check types across the engine and agent (reachability, web,
+**Status**: v4.0.0 — 57 check types across the engine and agent (reachability, web,
 real-browser, DNS/DNSSEC, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
-app integrations, SNMP templates and interface tables, traps/syslog, Redfish/IPMI,
-Proxmox, VMware, Hyper-V, Docker, 60+ host metrics, files and folder watchdog, logs,
-event log/journal, scripts, backups, heartbeats/pushed values, anomaly detection),
-maintenance windows, dependencies, flap detection, escalation, SLA reports, public status
-pages, network discovery, NetFlow/sFlow top talkers, multi-site monitoring (site
-collectors that report over outbound HTTPS, and direct push by public IP), and a
-management UI with filters, grouping and multi-select bulk actions on checks, hosts and
-endpoints. Built and verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md) for
-exactly what was tested how); the homelab server runs the 3.x line. Current
-version: **v3.2.0** — see
-[`CHANGELOG.md`](CHANGELOG.md) for the full history, [Deploying](#deploying) for a first
-deployment, and [`docs/user-guide.md`](docs/user-guide.md) for day-to-day usage.
+app integrations, SNMP templates/walks/interface tables, printers, traps/syslog,
+Redfish/IPMI, Proxmox, VMware, Hyper-V, Docker, 60+ host metrics, files and folder
+watchdog, logs, event log/journal, scripts with expected output, backups,
+heartbeats/pushed values, IP change by MAC, anomaly detection), locations and multi-site
+monitoring (site collectors and direct push), email/Slack/Teams/Telegram/webhook/push
+alerts with message templates and remediation hints, per-check history pages and alert
+history, host process/service inventory, smart suggested checks, maintenance windows,
+dependencies, escalation, SLA reports, public status pages, discovery, NetFlow/sFlow top
+talkers, light/dark themes, in-app help, and a security layer (required two-factor
+sign-in, lockouts, IP allowlist, new-IP email confirmation, attack detection with
+auto-blocking). Built and verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md)
+for exactly what was tested how); the homelab server runs the 3.x line.
+
+**Current version: v4.0.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#400---2026-10-13)
+(upgrading from 3.2 requires setting up two-factor at your first sign-in — see the
+upgrade notes there). See [Deploying](#deploying) for a first deployment and
+[`docs/user-guide.md`](docs/user-guide.md) for day-to-day usage (also built into the
+app under **Help**).
 
 ## Tech stack
 
@@ -45,6 +51,7 @@ npm install
 npm run db:generate    # only needed after changing src/db/schema.ts
 npm run db:migrate
 npm run db:create-admin   # interactive — creates the one admin account
+                          # (two-factor is set up at the first sign-in)
 npm run dev             # http://localhost:4100
 ```
 
@@ -95,6 +102,10 @@ Backups section for exactly what's been proven vs. still needs a first real run.
 - [`CLAUDE.md`](CLAUDE.md) — locked project-specific decisions
 - [`docs/deployment-guide.md`](docs/deployment-guide.md) — first deployment and updating
 - [`docs/migration-guide.md`](docs/migration-guide.md) — moving an existing deployment to a new server
-- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: every check type, bulk actions, hosts, discovery, heartbeats, alerting/escalation, maintenance, SLA reports, traps/syslog, top talkers, status pages, dashboards
+- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: checks (adding to many hosts, browsing what the agent found, duplicating, check pages), hosts and inventory, locations and endpoints, multiple sites, discovery, heartbeats, channels and templates, alerting and alert history, maintenance, reports, traps/syslog, top talkers, status pages, dashboards, security, themes
+- [`docs/check-reference.md`](docs/check-reference.md) — every check type: what it watches, how it works, its value, and how to check the same thing by hand
+- [`docs/security-guide.md`](docs/security-guide.md) — two-factor, lockouts, IP allowlist, new-IP confirmation, attack detection, hardening checklist, recovery
+- [`docs/security-audit-2026-10.md`](docs/security-audit-2026-10.md) — the 4.0.0 security and dependency audit: findings, fixes, open items
+- [`docs/windows-agent-security.md`](docs/windows-agent-security.md) — the agent with Smart App Control, SmartScreen, Defender, ASR, WDAC/AppLocker and EDRs; signing the agent
 - [`CHANGELOG.md`](CHANGELOG.md) — version history
 - [`agent/README.md`](agent/README.md) — building and running the Go agent

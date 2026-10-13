@@ -65,3 +65,23 @@ func TestCollectorRates(t *testing.T) {
 		t.Fatal("expected at least one disk")
 	}
 }
+
+func TestRedactCommand(t *testing.T) {
+	cases := map[string]string{
+		`mysqld --user=mysql --password=hunter2 --port=3306`: `mysqld --user=mysql --password=*** --port=3306`,
+		`app -token abc123 -v`:                               `app -token *** -v`,
+		`node server.js --api-key "s3cret value" --x`:        `node server.js --api-key *** --x`,
+		`curl https://bob:pa55@example.com/x`:                `curl https://bob:***@example.com/x`,
+		`mysql -uroot -pSup3r`:                               `mysql -uroot -p***`,
+		`ssh -p 22 host`:                                     `ssh -p 22 host`,
+		`C:\Windows\system32\svchost.exe -k netsvcs -p`:      `C:\Windows\system32\svchost.exe -k netsvcs -p`,
+		`backup --passphrase-file /etc/pass.txt`:             `backup --passphrase-file /etc/pass.txt`,
+		`borg --passphrase hunter2 list`:                     `borg --passphrase *** list`,
+		`/usr/sbin/sshd -D`:                                  `/usr/sbin/sshd -D`,
+	}
+	for in, want := range cases {
+		if got := RedactCommand(in); got != want {
+			t.Errorf("RedactCommand(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -69,7 +69,7 @@ export default function MaintenancePage() {
       ) : (
         <ul className="space-y-2">
           {windows.map((w) => (
-            <li key={w.id} className="rounded-xl border border-[var(--border)] bg-[var(--panel)]/40 p-3 text-sm">
+            <li key={w.id} className="rounded-xl surface p-3 text-sm">
               <div className="flex flex-wrap items-center gap-3">
                 <StatusBadge status={w.active ? "maintenance" : w.enabled ? "unknown" : "disabled"} />
                 <span className="font-medium">{w.name}</span>
