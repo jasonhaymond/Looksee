@@ -1,3 +1,27 @@
+// The database layout: every Postgres table and enum Looksee uses.
+//
+// Where this sits: this file is the single source of truth for the schema.
+// Drizzle (the database library the engine uses, an "ORM" — it turns these
+// TypeScript definitions into SQL) reads it two ways: at runtime, so queries
+// elsewhere in the engine are type-checked against real column names; and at
+// development time, when `npx drizzle-kit generate` compares it with the last
+// migration and writes the next SQL migration into engine/drizzle/. Servers
+// only ever apply those committed migrations (`npm run db:migrate`), never
+// this file directly.
+//
+// Reading the definitions: `pgTable("name", { field: type("column") })` is one
+// table; the TypeScript field name (camelCase) maps to the column name in
+// quotes (snake_case). `jsonb` is a Postgres column holding structured JSON.
+// `.references(() => other.id, { onDelete: "cascade" })` is a foreign key:
+// deleting the referenced row also deletes this one ("set null" clears the
+// link instead). `pgEnum` is a Postgres type that only accepts the listed
+// words. Every timestamp is stored `withTimezone`, i.e. as an absolute
+// instant (shown as UTC), never as a local wall-clock time.
+//
+// Security-relevant columns (password hashes, TOTP secrets, agent keys,
+// channel/backup/SMTP secrets) are noted where they're defined; the routes
+// that expose these tables are responsible for never returning them.
+
 import {
   pgTable,
   pgEnum,
@@ -22,7 +46,12 @@ import { CHECK_TYPES, ENGINE_CHECK_TYPES } from "./checkTypes.js";
 // there is the one edit needed for the database side too.
 export const checkType = pgEnum("check_type", CHECK_TYPES);
 
+// A check's result: "warn" is degraded-but-working; "unknown" means the
+// check couldn't tell (agent silent, collector offline, misconfigured).
 export const checkStatus = pgEnum("check_status", ["up", "down", "warn", "unknown"]);
+
+// Re-exported so the rest of the engine can import check-type groupings from
+// the schema module alongside the tables.
 
 export {
   AGENT_CHECK_TYPES,
@@ -36,7 +65,7 @@ export {
 // scheduler runs it", which is exactly ENGINE_CHECK_TYPES.
 export const AGENTLESS_CHECK_TYPES = ENGINE_CHECK_TYPES as string[];
 
-
+// The kinds of notification destination an alert can be sent to.
 export const channelType = pgEnum("channel_type", [
   "email",
   "webhook",
@@ -47,8 +76,11 @@ export const channelType = pgEnum("channel_type", [
   "teams",
 ]);
 
+// An alert incident is open ("triggered") until its check recovers.
 export const alertEventStatus = pgEnum("alert_event_status", ["triggered", "resolved"]);
 
+// The admin account(s). Looksee is single-admin by design (see CLAUDE.md).
+// Passwords are stored only as bcrypt hashes, never in plain text.
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
@@ -63,6 +95,8 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Signed-in browser sessions. The token is the random value in the
+// httpOnly session cookie; deleting the row signs that browser out.
 export const sessions = pgTable("sessions", {
   token: text("token").primaryKey(),
   userId: uuid("user_id")
@@ -151,6 +185,8 @@ export const securityRules = pgTable("security_rules", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Addresses refused before any route runs (middleware/securityGate.ts), added
+// by hand or automatically by a security rule.
 export const ipBlocks = pgTable("ip_blocks", {
   id: uuid("id").primaryKey().defaultRandom(),
   // An IP or CIDR.
@@ -444,6 +480,8 @@ export const alertRules = pgTable("alert_rules", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Which channels each alert rule notifies (a rule can notify many channels,
+// and a channel can serve many rules).
 export const alertRuleChannels = pgTable("alert_rule_channels", {
   id: uuid("id").primaryKey().defaultRandom(),
   alertRuleId: uuid("alert_rule_id")
@@ -473,9 +511,10 @@ export const alertEvents = pgTable("alert_events", {
   escalatedAt: timestamp("escalated_at", { withTimezone: true }),
 }, (t) => [index("alert_events_rule_idx").on(t.alertRuleId, t.triggeredAt)]);
 
-// L1. Either a one-off window (startsAt..endsAt) or a weekly recurrence
-// (daysOfWeek + startTime + durationMinutes, in the engine's local time).
-// scope "all" ignores targetIds.
+// L1. Either a one-off window (startsAt..endsAt, two absolute instants) or a
+// weekly recurrence (daysOfWeek + startTime + durationMinutes, read on the
+// wall clock of timeZone — see services/maintenance.ts). scope "all" ignores
+// targetIds; otherwise targetIds lists endpoint, host or check IDs.
 export const maintenanceWindows = pgTable("maintenance_windows", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -486,10 +525,16 @@ export const maintenanceWindows = pgTable("maintenance_windows", {
   daysOfWeek: jsonb("days_of_week").$type<number[]>(),
   startTime: text("start_time"),
   durationMinutes: integer("duration_minutes"),
+  // IANA zone of the browser that saved a weekly window (e.g.
+  // "America/Los_Angeles"), so "Sunday 02:00" means 02:00 there. Null for
+  // windows saved before zones were recorded: they use the server's zone,
+  // as they always did.
+  timeZone: text("time_zone"),
   enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Where an inbound event came from.
 export const eventSource = pgEnum("event_source", ["snmp_trap", "syslog"]);
 
 // Inbound SNMP traps and syslog messages (H3/H5). trap_match/syslog_match
@@ -538,6 +583,8 @@ export const macIpHistory = pgTable("mac_ip_history", {
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("mac_ip_history_mac_ip_idx").on(t.mac, t.ip), index("mac_ip_history_host_idx").on(t.hostId)]);
 
+// On-demand network discovery runs (Discovery page): which range was swept
+// and what answered.
 export const discoveryScans = pgTable("discovery_scans", {
   id: uuid("id").primaryKey().defaultRandom(),
   // Scans in an endpoint with a collector run there (status "queued" until
@@ -597,6 +644,7 @@ export const smtpSettings = pgTable("smtp_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Whether a backup_runs row records a backup or a restore, and how it ended.
 export const backupRunKind = pgEnum("backup_run_kind", ["backup", "restore"]);
 export const backupRunStatus = pgEnum("backup_run_status", ["running", "success", "error"]);
 
@@ -625,6 +673,7 @@ export const backupRuns = pgTable("backup_runs", {
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
 
+// The kinds of widget a dashboard canvas can hold.
 export const widgetType = pgEnum("widget_type", [
   "status_tile",
   "group_summary",
@@ -641,6 +690,7 @@ export const widgetType = pgEnum("widget_type", [
   "status_summary",
 ]);
 
+// Named dashboard canvases (the tabs on the home page).
 export const dashboards = pgTable("dashboards", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -669,6 +719,9 @@ export const dashboardWidgets = pgTable("dashboard_widgets", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Browsers/phones that asked for push notifications. endpoint is the push
+// service URL for that device; p256dh and auth are the keys alerts are
+// encrypted with, so only that device can read them.
 export const webPushSubscriptions = pgTable("web_push_subscriptions", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id")
@@ -680,6 +733,7 @@ export const webPushSubscriptions = pgTable("web_push_subscriptions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Severity of an engine log entry, lowest to highest.
 export const logLevel = pgEnum("log_level", ["debug", "info", "warn", "error"]);
 
 // Server-side structured logging — separate from pm2's stdout capture, this

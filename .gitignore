@@ -26,3 +26,7 @@ dashboard/next-env.d.ts
 
 .DS_Store
 Thumbs.db
+
+# Security gate reports describe unpatched weaknesses; never commit them
+# (this repository is public).
+security-reports/

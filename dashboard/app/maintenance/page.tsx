@@ -1,24 +1,67 @@
+// The Maintenance page (/maintenance): lists maintenance windows and
+// schedules new ones.
+//
+// Where this sits: during a window, checks keep running and recording
+// results, but no alerts go out and SLA reports skip that time. Windows are
+// stored by the engine (engine/src/routes/maintenance.ts), which also decides
+// when each is active (engine/src/services/maintenance.ts). Maintenance can
+// also be started from multi-selections on the Checks, Hosts and Endpoints
+// pages and from a location.
+//
+// Time zones: one-off windows are sent as exact instants, so they're right
+// wherever the server is. Weekly windows ("every Sunday at 02:00") are saved
+// with this browser's time zone, so 02:00 means 02:00 where you are.
+//
+// "use client" makes this a React component that runs in the browser. Access
+// is enforced by the engine (every maintenance route needs a session); the
+// sign-in check here only decides whether to send you to the login page.
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type Check, type Endpoint, type Host, type MaintenanceWindow } from "../lib/api";
+import { browserTimeZone } from "../lib/localTime";
 import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { Button, EmptyState, Label, Modal, StatusBadge, inputClass, useToast } from "../components/ui";
 
+// Day names in JavaScript's numbering (0 = Sunday), as stored in daysOfWeek.
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+/**
+ * A one-line description of when a window runs. One-off windows are shown in
+ * this browser's local time. A weekly window names its time zone only when it
+ * differs from yours (or, for windows saved before zones were recorded, says
+ * it follows the server's clock), so "at 02:00" is never ambiguous.
+ *
+ * @param w the window
+ * @returns e.g. "Every Sun at 02:00 for 120 min (Europe/Berlin time)"
+ */
 function describe(w: MaintenanceWindow) {
   if (w.startsAt && w.endsAt) return `${new Date(w.startsAt).toLocaleString()} → ${new Date(w.endsAt).toLocaleString()}`;
-  if (w.daysOfWeek?.length) return `Every ${w.daysOfWeek.map((d) => DAYS[d]).join(", ")} at ${w.startTime} for ${w.durationMinutes} min`;
+  if (w.daysOfWeek?.length) {
+    const zone = !w.timeZone ? " (server's time)" : w.timeZone !== browserTimeZone() ? ` (${w.timeZone} time)` : "";
+    return `Every ${w.daysOfWeek.map((d) => DAYS[d]).join(", ")} at ${w.startTime}${zone} for ${w.durationMinutes} min`;
+  }
   return "—";
 }
 
+/**
+ * Formats a Date for a datetime-local input ("2026-10-13T14:05"), which
+ * expects local wall-clock time with no zone. toISOString() is always UTC, so
+ * the time-zone offset is subtracted first to land on local time.
+ */
 const toLocalInput = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 
+/**
+ * The page: loads windows and the endpoints/hosts/checks they can target,
+ * and shows each window with its state and actions (end now, turn on/off,
+ * delete), plus the "Schedule maintenance" dialog.
+ */
 export default function MaintenancePage() {
   const router = useRouter();
+  // useState holds values that re-draw the page when they change.
   const [authChecked, setAuthChecked] = useState(false);
   const [windows, setWindows] = useState<MaintenanceWindow[]>([]);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
@@ -28,6 +71,8 @@ export default function MaintenancePage() {
   const [loaded, setLoaded] = useState(false);
   const toast = useToast();
 
+  // Fetches everything the page shows in parallel. useCallback keeps the same
+  // function between re-draws so the effect below doesn't re-run needlessly.
   const load = useCallback(async () => {
     const [w, e, h, c] = await Promise.all([api.maintenance(), api.endpoints(), api.hosts(), api.checks()]);
     setWindows(w);
@@ -37,6 +82,8 @@ export default function MaintenancePage() {
     setLoaded(true);
   }, []);
 
+  // useEffect runs after the page appears: check the session first, and send
+  // a signed-out visitor to the login page.
   useEffect(() => {
     api
       .me()
@@ -49,6 +96,7 @@ export default function MaintenancePage() {
     if (authChecked) load();
   }, [authChecked, load]);
 
+  // The name of one of a window's targets, looked up in the list matching its scope.
   const targetName = (w: MaintenanceWindow, id: string) =>
     (w.scope === "endpoint" ? endpoints : w.scope === "host" ? hosts : checks).find((x) => x.id === id)?.name ?? "(deleted)";
 
@@ -75,11 +123,13 @@ export default function MaintenancePage() {
                 <span className="font-medium">{w.name}</span>
                 <span className="text-xs text-[var(--muted)]">{w.active ? "active now" : w.enabled ? "scheduled" : "ended / off"}</span>
                 <span className="flex-1" />
+                {/* Only a running one-off window can be ended early. */}
                 {w.active && w.startsAt && (
                   <Button className="!py-0.5 text-xs" onClick={async () => (await api.endMaintenance(w.id), toast.show("Maintenance ended."), load())}>
                     End now
                   </Button>
                 )}
+                {/* Weekly windows are paused and resumed instead. */}
                 {!w.startsAt && (
                   <Button className="!py-0.5 text-xs" onClick={async () => (await api.updateMaintenance(w.id, { enabled: !w.enabled }), load())}>
                     {w.enabled ? "Turn off" : "Turn on"}
@@ -103,10 +153,20 @@ export default function MaintenancePage() {
   );
 }
 
+/**
+ * The "Schedule maintenance" dialog: a one-time window (start and end in
+ * local time) or a weekly one (days, local start time, duration), applied to
+ * everything or to chosen endpoints, hosts or checks.
+ *
+ * @param endpoints, hosts, checks the things a window can be limited to
+ * @param onClose called when the dialog is cancelled
+ * @param onSaved called after the engine accepts the new window
+ */
 function AddWindow({ endpoints, hosts, checks, onClose, onSaved }: { endpoints: Endpoint[]; hosts: Host[]; checks: Check[]; onClose: () => void; onSaved: () => void }) {
   const now = new Date();
   const [name, setName] = useState("");
   const [kind, setKind] = useState<"once" | "weekly">("once");
+  // Defaults: a one-off window starting now and lasting two hours.
   const [startsAt, setStartsAt] = useState(toLocalInput(now));
   const [endsAt, setEndsAt] = useState(toLocalInput(new Date(now.getTime() + 2 * 3_600_000)));
   const [days, setDays] = useState<number[]>([0]);
@@ -116,13 +176,16 @@ function AddWindow({ endpoints, hosts, checks, onClose, onSaved }: { endpoints: 
   const [targets, setTargets] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // The choices shown for the selected scope ("everything" has none).
   const list = scope === "endpoint" ? endpoints : scope === "host" ? hosts : scope === "check" ? checks : [];
+  const zone = browserTimeZone();
 
   return (
     <Modal title="Schedule maintenance" onClose={onClose} wide>
       <form
         className="space-y-3 text-sm"
         onSubmit={async (e) => {
+          // Stops the browser's default full-page form submission.
           e.preventDefault();
           setError(null);
           try {
@@ -130,12 +193,16 @@ function AddWindow({ endpoints, hosts, checks, onClose, onSaved }: { endpoints: 
               name,
               scope,
               targetIds: scope === "all" ? [] : targets,
+              // A datetime-local value has no zone; `new Date(...)` reads it as
+              // local time, and toISOString() sends that exact instant in UTC.
+              // A weekly window instead carries this browser's zone name.
               ...(kind === "once"
                 ? { startsAt: new Date(startsAt).toISOString(), endsAt: new Date(endsAt).toISOString() }
-                : { daysOfWeek: days, startTime, durationMinutes: Number(duration) }),
+                : { daysOfWeek: days, startTime, durationMinutes: Number(duration), timeZone: zone }),
             });
             onSaved();
           } catch (err) {
+            // The engine's validation message (e.g. "endsAt must be after startsAt").
             setError(err instanceof Error ? err.message : "Failed");
           }
         }}
@@ -171,7 +238,7 @@ function AddWindow({ endpoints, hosts, checks, onClose, onSaved }: { endpoints: 
               ))}
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Label label="Start time (engine's local time)">
+              <Label label="Start time" help={`Your local time (${zone}). The window follows this time zone even if the server's clock is set differently.`}>
                 <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className={inputClass} />
               </Label>
               <Label label="Duration (minutes)">
@@ -184,6 +251,7 @@ function AddWindow({ endpoints, hosts, checks, onClose, onSaved }: { endpoints: 
           <select
             value={scope}
             onChange={(e) => {
+              // Changing the scope clears targets chosen from the previous list.
               setScope(e.target.value as MaintenanceWindow["scope"]);
               setTargets([]);
             }}

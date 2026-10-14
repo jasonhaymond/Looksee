@@ -6,7 +6,8 @@ you lock yourself out. Everything here is configured on **System → Security** 
 noted.
 
 Related: [deployment-guide.md](deployment-guide.md) (server setup, reverse proxy,
-firewall), [windows-agent-security.md](windows-agent-security.md) (the agent and Windows
+firewall), [vpn-access.md](vpn-access.md) (reaching Looksee only through a VPN),
+[windows-agent-security.md](windows-agent-security.md) (the agent and Windows
 security software), [user-guide.md](user-guide.md), [README](../README.md).
 
 ## Contents
@@ -126,7 +127,8 @@ URLs**, in which case every agent's and site's public IP must be listed too.
 `/api/health` is always reachable.
 
 **Dynamic home IP?** Allow your ISP's range, or better, connect through a VPN
-(WireGuard/Tailscale/OpenVPN on pfSense) and allow only the VPN's range.
+(WireGuard/Tailscale/OpenVPN on pfSense) and allow only the VPN's range — see
+[vpn-access.md](vpn-access.md).
 
 ## Attack detection, notifications and blocking
 
@@ -226,18 +228,23 @@ Recommended, roughly in order of value:
 
    ```caddy
    looksee.example.com {
-     @outsider {
-       not remote_ip 203.0.113.10 10.0.0.0/8 100.64.0.0/10
-       not path /api/agent/* /api/collector/* /api/hb/* /api/public/* /install/* /status/* /api/health /_next/*
+     route {
+       @outsider {
+         not remote_ip 203.0.113.10 10.0.0.0/8 100.64.0.0/10
+         not path /api/agent/* /api/collector/* /api/hb/* /install/* /status/* /api/public/* /_next/* /api/health /icon.svg /manifest.json /sw.js
+       }
+       respond @outsider 403
+       # ...the handle blocks from the deployment guide, inside this route...
      }
-     respond @outsider 403
-     # ...the handle blocks from the deployment guide...
    }
    ```
 
-   (Replace the addresses with your public IP, LAN and VPN ranges.) Looksee's own
-   allowlist does the same inside the app; doing it at the proxy too means the app is
-   never even reached.
+   The `route { }` wrapper matters: without it Caddy runs `handle` before `respond`
+   and nothing is blocked. (Replace the addresses with your public IP, LAN and VPN
+   ranges.) Looksee's own allowlist does the same inside the app; doing it at the proxy
+   too means the app is never even reached. The full step-by-step — VPN reachability,
+   split DNS, verifying, putting agents behind the VPN too, rolling back — is in
+   **[vpn-access.md](vpn-access.md)**.
 2. **Set `TRUST_PROXY`** and firewall port 4100/3100 to the proxy only (above).
 3. **Turn on new-IP email confirmation** once SMTP is tested.
 4. **Add HSTS and tidy headers at Caddy:**

@@ -3,7 +3,7 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v4.1.0 — 57 check types across the engine and agent (reachability, web,
+**Status**: v4.2.0 — 57 check types across the engine and agent (reachability, web,
 real-browser, DNS/DNSSEC, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
 app integrations, SNMP templates/walks/interface tables, printers, traps/syslog,
 Redfish/IPMI, Proxmox, VMware, Hyper-V, Docker, 60+ host metrics, files and folder
@@ -19,8 +19,9 @@ confirmation, attack detection with auto-blocking, and an outbound watchdog for
 Looksee's own outages). Built and verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md)
 for exactly what was tested how); the homelab server runs the 3.x line.
 
-**Current version: v4.1.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#410---2026-10-13)
-(4.1 adds passkeys and the watchdog; upgrading from 3.x to 4.x requires setting up
+**Current version: v4.2.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#420---2026-10-13)
+(4.2 shows every time in your local time zone and adds the VPN-only access guide; 4.1
+added passkeys and the watchdog; upgrading from 3.x to 4.x requires setting up
 two-factor at your first sign-in — see the 4.0.0 upgrade notes there). See [Deploying](#deploying) for a first deployment and
 [`docs/user-guide.md`](docs/user-guide.md) for day-to-day usage (also built into the
 app under **Help**).
@@ -106,6 +107,7 @@ Backups section for exactly what's been proven vs. still needs a first real run.
 - [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: checks (adding to many hosts, browsing what the agent found, duplicating, check pages), hosts and inventory, locations and endpoints, multiple sites, discovery, heartbeats, channels and templates, alerting and alert history, maintenance, reports, traps/syslog, top talkers, status pages, dashboards, security, themes
 - [`docs/check-reference.md`](docs/check-reference.md) — every check type: what it watches, how it works, its value, and how to check the same thing by hand
 - [`docs/security-guide.md`](docs/security-guide.md) — two-factor, lockouts, IP allowlist, new-IP confirmation, attack detection, hardening checklist, recovery
+- [`docs/vpn-access.md`](docs/vpn-access.md) — reaching Looksee only through a VPN (admin only, or agents too), with split DNS, Caddy rules, verification and rollback — not applied to production yet
 - [`docs/security-audit-2026-10.md`](docs/security-audit-2026-10.md) — the 4.0.0 security and dependency audit: findings, fixes, open items
 - [`docs/windows-agent-security.md`](docs/windows-agent-security.md) — the agent with Smart App Control, SmartScreen, Defender, ASR, WDAC/AppLocker and EDRs; signing the agent
 - [`CHANGELOG.md`](CHANGELOG.md) — version history

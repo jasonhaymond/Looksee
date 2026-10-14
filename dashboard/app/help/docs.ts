@@ -11,6 +11,7 @@ export const DOCS = [
   { slug: "checks", file: "check-reference.md", title: "Check reference" },
   { slug: "windows-agent", file: "windows-agent-security.md", title: "Windows agent & security software" },
   { slug: "security", file: "security-guide.md", title: "Security guide" },
+  { slug: "vpn", file: "vpn-access.md", title: "VPN-only access" },
 ] as const;
 
 const REPO = "https://github.com/jasonhaymond/Looksee/blob/main";

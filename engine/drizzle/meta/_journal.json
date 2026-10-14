@@ -127,6 +127,13 @@
       "when": 1791909308319,
       "tag": "0017_v4_1_watchdog",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791939520583,
+      "tag": "0018_v4_2_maintenance_time_zone",
+      "breakpoints": true
     }
   ]
 }

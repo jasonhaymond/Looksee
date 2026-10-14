@@ -1,7 +1,33 @@
-import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
+// The dashboard's only way of talking to the Looksee engine: one typed
+// function per engine API route, plus the TypeScript types describing what
+// each route sends back.
+//
+// Where this sits: every page and component imports `api` from here (e.g.
+// `api.checks()` → GET /api/checks) instead of calling fetch() itself, so the
+// engine's address, cookies, error handling and response clean-up live in one
+// place. The routes themselves are in engine/src/routes/.
+//
+// Security: requests carry the session cookie (`credentials: "include"`); the
+// engine decides what each request may do — nothing here is a security
+// boundary. Secrets the engine never returns (channel tokens, passwords)
+// simply don't appear in these types.
+//
+// Time zones: every response passes through localizeResponse (lib/localTime.ts),
+// which rewrites UTC timestamps embedded in message text into the viewer's
+// own time zone. Plain timestamp fields (createdAt, lastCheckedAt, ...) stay
+// ISO strings; pages format those with `new Date(x).toLocaleString()`, which
+// is already local.
 
+import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
+import { browserTimeZone, localizeResponse } from "./localTime";
+
+// The engine's base URL. NEXT_PUBLIC_ variables are baked into the dashboard
+// when it's built (`next build`), not read at runtime, so changing it needs a
+// rebuild. In production it's the same origin as the dashboard (Caddy routes
+// /api/* to the engine).
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4100";
 
+/** An error response from the engine: its HTTP status and its error message. */
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -10,7 +36,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Calls one engine route and returns its parsed JSON body.
+ *
+ * @param path the route, e.g. "/api/checks?endpointId=..."
+ * @param options fetch options (method, body, extra headers)
+ * @returns the response body (with embedded times localized), or undefined
+ *          for a 204 No Content
+ * @throws ApiError with the engine's own error message on any non-2xx status
+ */
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  // `await` waits for the network request to finish before continuing.
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     credentials: "include",
@@ -21,9 +57,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new ApiError(res.status, body.error ?? `Request to ${path} failed (${res.status})`);
   }
   if (res.status === 204) return undefined as T;
-  return res.json();
+  return localizeResponse((await res.json()) as T);
 }
 
+// ---- Response and request shapes -------------------------------------------
+// TypeScript `type`s describe the JSON the engine sends; they have no effect
+// at runtime. Timestamps are ISO-8601 strings in UTC (e.g.
+// "2026-10-13T14:05:00.000Z"); `| null` means the field can be empty.
+
+// A check's latest result.
 export type Status = "up" | "down" | "warn" | "unknown";
 
 export type Endpoint = {
@@ -296,6 +338,9 @@ export type MaintenanceWindow = {
   daysOfWeek: number[] | null;
   startTime: string | null;
   durationMinutes: number | null;
+  // The zone a weekly window's startTime is read in (the browser that saved
+  // it); null = the server's zone, for windows saved before this existed.
+  timeZone?: string | null;
   enabled: boolean;
   active: boolean;
 };
@@ -304,6 +349,9 @@ export type PublicStatus = {
   title: string;
   description: string | null;
   overall: "operational" | "degraded" | "down";
+  // The zone the daily bars were cut in — the visitor's, or "UTC" if theirs
+  // wasn't usable.
+  timeZone?: string;
   generatedAt: string;
   checks: { name: string; status: Status; lastCheckedAt: string | null; uptime90: number | null; days: { day: string; uptime: number | null }[] }[];
 };
@@ -359,9 +407,19 @@ export type TrustedIp = { id: string; ip: string; firstSeenAt: string; lastSeenA
 export type SessionRow = { id: string; ip: string | null; userAgent: string | null; createdAt: string; lastSeenAt: string | null; expiresAt: string; current: boolean };
 export type DiscoveryScan = { id: string; cidr: string; endpointId: string | null; status: "queued" | "running" | "done" | "error"; results: DiscoveredDevice[]; error: string | null; startedAt: string; finishedAt: string | null };
 
+// ---- Request helpers -------------------------------------------------------
+
+/** fetch options for a POST with a JSON body. */
 const json = (body: unknown) => ({ method: "POST", body: JSON.stringify(body) });
+/** fetch options for a PATCH (partial update) with a JSON body. */
 const patch = (body: unknown) => ({ method: "PATCH", body: JSON.stringify(body) });
+/** fetch options for a DELETE. */
 const del = { method: "DELETE" };
+/**
+ * Builds a query string from an object, skipping empty values:
+ * qs({ limit: 50, q: "" }) → "?limit=50". URLSearchParams handles escaping,
+ * so user-typed search text can't break the URL.
+ */
 const qs = (params: Record<string, unknown>) => {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
@@ -369,7 +427,14 @@ const qs = (params: Record<string, unknown>) => {
   return s ? `?${s}` : "";
 };
 
+// ---- The API ---------------------------------------------------------------
+// One function per engine route. Each takes the route's inputs and returns a
+// promise of its response type; the route path in each line says which engine
+// file handles it (/api/checks → engine/src/routes/checks.ts, and so on).
+
 export const api = {
+  // Sign-in, two-factor, passkeys and password (routes/auth.ts), and the
+  // outbound watchdog (routes/watchdog.ts).
   login: (email: string, password: string) => request<LoginStep>("/api/auth/login", json({ email, password })),
   verifyLogin: (input: { challengeId: string; code?: string; emailCode?: string; recoveryCode?: string; passkey?: AuthenticationResponseJSON }) => request<{ id: string; email: string; recoveryCodes?: string[] }>("/api/auth/login/verify", json(input)),
   watchdog: () => request<WatchdogView>("/api/watchdog"),
@@ -384,6 +449,8 @@ export const api = {
   rotateTotp: (code: string) => request<{ challengeId: string; secret: string; uri: string }>("/api/auth/totp/rotate", json({ code })),
   confirmRotateTotp: (challengeId: string, code: string) => request<{ ok: true }>("/api/auth/totp/rotate/confirm", json({ challengeId, code })),
 
+  // System → Security: settings, the security log, rules, blocked and
+  // trusted IPs, sessions (routes/security.ts).
   securityOverview: () => request<SecurityOverview>("/api/security/overview"),
   updateSecuritySettings: (input: Partial<SecuritySettings>) => request<SecuritySettings>("/api/security/settings", patch(input)),
   testSecurityNotification: () => request<{ sent: true }>("/api/security/test-notification", { method: "POST" }),
@@ -400,6 +467,7 @@ export const api = {
   sessions: () => request<SessionRow[]>("/api/security/sessions"),
   revokeSession: (id: string) => request<{ revoked: number }>(`/api/security/sessions/${id}`, del),
 
+  // Locations (routes/locations.ts), sign-out/current user, and the health check.
   locations: () => request<Location[]>("/api/locations"),
   createLocation: (input: { name: string; description?: string | null; address?: string | null; endpointIds?: string[] }) => request<Location>("/api/locations", json(input)),
   updateLocation: (id: string, input: { name?: string; description?: string | null; address?: string | null; endpointIds?: string[] }) => request<Location>(`/api/locations/${id}`, patch(input)),
@@ -409,12 +477,15 @@ export const api = {
   me: () => request<{ id: string; email: string }>("/api/auth/me"),
   health: () => request<{ status: string; db: string; version: string; agentVersion: string | null }>("/api/health"),
 
+  // Endpoints = networks/sites (routes/endpoints.ts).
   endpoints: () => request<Endpoint[]>("/api/endpoints"),
   createEndpoint: (input: EndpointInput & { name: string }) => request<Endpoint>("/api/endpoints", json(input)),
   updateEndpoint: (id: string, input: EndpointInput) => request<Endpoint>(`/api/endpoints/${id}`, patch(input)),
   deleteEndpoint: (id: string) => request<void>(`/api/endpoints/${id}`, del),
   bulkEndpoints: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/endpoints/bulk", json({ ids, action, ...params })),
 
+  // Hosts, agent keys, inventory, suggested checks, Wake-on-LAN and host
+  // metrics (routes/hosts.ts).
   hosts: (endpointId?: string) => request<Host[]>(`/api/hosts${qs({ endpointId })}`),
   host: (id: string) => request<HostDetail>(`/api/hosts/${id}`),
   createHost: (input: { endpointId: string; name: string; hostname?: string; os?: string; macAddress?: string; tags?: string[] }) => request<Host>("/api/hosts", json(input)),
@@ -432,6 +503,8 @@ export const api = {
   bulkHosts: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/hosts/bulk", json({ ids, action, ...params })),
   hostMetrics: (hostId: string, limit = 30, since?: string) => request<HostMetric[]>(`/api/hosts/${hostId}/metrics${qs({ limit, since })}`),
 
+  // Checks: create (one or many targets), edit, run now, results, statistics,
+  // SNMP walks and bulk actions (routes/checks.ts).
   checks: (endpointId?: string) => request<Check[]>(`/api/checks${qs({ endpointId })}`),
   createCheck: (input: Partial<CheckInput> & { endpointId: string; type: string; name: string; alertRule?: AlertRulePayload | null }) => request<Check>("/api/checks", json(input)),
   createChecksBatch: (input: Partial<CheckInput> & { type: string; name: string; alertRule?: AlertRulePayload | null; targets: { endpointId?: string; hostId?: string }[] }) =>
@@ -448,6 +521,7 @@ export const api = {
   bulkChecks: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/checks/bulk", json({ ids, action, ...params })),
   checkResults: (checkId: string, limit = 50, since?: string) => request<CheckResult[]>(`/api/checks/${checkId}/results${qs({ limit, since })}`),
 
+  // Notification channels and their message templates (routes/channels.ts).
   channels: () => request<Channel[]>("/api/channels"),
   createChannel: (input: { name: string; type: string; config: Record<string, unknown>; templates?: Record<string, ChannelTemplate> }) => request<Channel>("/api/channels", json(input)),
   updateChannel: (id: string, input: { name?: string; config?: Record<string, unknown>; enabled?: boolean; templates?: Record<string, ChannelTemplate> }) => request<Channel>(`/api/channels/${id}`, patch(input)),
@@ -456,20 +530,24 @@ export const api = {
   testChannel: (id: string) => request<{ sent: true }>(`/api/channels/${id}/test`, { method: "POST" }),
   deleteChannel: (id: string) => request<void>(`/api/channels/${id}`, del),
 
+  // Outgoing email server settings (routes/smtp.ts).
   smtpSettings: () => request<{ settings: SmtpSettings }>("/api/smtp/settings"),
   updateSmtpSettings: (input: { host?: string | null; port?: number | null; user?: string | null; password?: string; from?: string | null }) =>
     request<{ settings: SmtpSettings }>("/api/smtp/settings", patch(input)),
   sendTestEmail: (to: string) => request<{ sent: boolean }>("/api/smtp/test", json({ to })),
 
+  // Alert rules per check and the alert history (routes/alertRules.ts).
   alertRules: (checkId: string) => request<AlertRule[]>(`/api/alert-rules${qs({ checkId })}`),
   createAlertRule: (input: AlertRuleInput & { checkId: string }) => request<AlertRule>("/api/alert-rules", json(input)),
   updateAlertRule: (id: string, input: AlertRuleInput) => request<AlertRule>(`/api/alert-rules/${id}`, patch(input)),
   deleteAlertRule: (id: string) => request<void>(`/api/alert-rules/${id}`, del),
   alertEvents: (params?: AlertEventQuery) => request<AlertEvent[]>(`/api/alert-rules/events${qs(params ?? {})}`),
 
+  // Browser push notifications (routes/push.ts).
   vapidPublicKey: () => request<{ publicKey: string }>("/api/push/vapid-public-key"),
   subscribePush: (subscription: PushSubscriptionJSON) => request<{ ok: true }>("/api/push/subscribe", json(subscription)),
 
+  // Borg backups and restore (routes/backups.ts), and the engine log viewer (routes/logs.ts).
   backupSettings: () => request<{ settings: BackupSettings; borgAvailable: boolean; borgVersion: string | null }>("/api/backups/settings"),
   updateBackupSettings: (input: { repoUrl?: string; passphrase?: string; schedule?: string | null; retentionCount?: number | null }) =>
     request<{ settings: BackupSettings }>("/api/backups/settings", patch(input)),
@@ -481,6 +559,7 @@ export const api = {
   restoreBackup: (input: { archiveName: string; confirmArchiveName: string; restoreDb: boolean; restoreConfig: boolean }) => request<{ started: true }>("/api/backups/restore", json(input)),
   logs: (params?: { level?: LogLevel; limit?: number }) => request<LogEntry[]>(`/api/logs${qs(params ?? {})}`),
 
+  // Dashboards and their widgets (routes/dashboards.ts).
   dashboards: () => request<Dashboard[]>("/api/dashboards"),
   createDashboard: (name: string) => request<Dashboard>("/api/dashboards", json({ name })),
   renameDashboard: (id: string, name: string) => request<Dashboard>(`/api/dashboards/${id}`, patch({ name })),
@@ -491,17 +570,23 @@ export const api = {
   updateWidget: (widgetId: string, input: Partial<Pick<Widget, "x" | "y" | "w" | "h" | "config">>) => request<Widget>(`/api/dashboards/widgets/${widgetId}`, patch(input)),
   deleteWidget: (widgetId: string) => request<void>(`/api/dashboards/widgets/${widgetId}`, del),
 
+  // Maintenance windows (routes/maintenance.ts).
   maintenance: () => request<MaintenanceWindow[]>("/api/maintenance"),
   createMaintenance: (input: Partial<MaintenanceWindow>) => request<MaintenanceWindow>("/api/maintenance", json(input)),
   updateMaintenance: (id: string, input: Partial<MaintenanceWindow>) => request<MaintenanceWindow>(`/api/maintenance/${id}`, patch(input)),
   endMaintenance: (id: string) => request<MaintenanceWindow>(`/api/maintenance/${id}/end`, { method: "POST" }),
   deleteMaintenance: (id: string) => request<void>(`/api/maintenance/${id}`, del),
 
+  // Status pages: managing them (routes/statusPages.ts) and the public view
+  // (routes/public.ts). The public view sends the visitor's time zone so each
+  // daily uptime bar covers the visitor's own calendar day.
   statusPages: () => request<StatusPage[]>("/api/status-pages"),
   createStatusPage: (input: Partial<StatusPage>) => request<StatusPage>("/api/status-pages", json(input)),
   updateStatusPage: (id: string, input: Partial<StatusPage>) => request<StatusPage>(`/api/status-pages/${id}`, patch(input)),
   deleteStatusPage: (id: string) => request<void>(`/api/status-pages/${id}`, del),
-  publicStatus: (slug: string) => request<PublicStatus>(`/api/public/status/${encodeURIComponent(slug)}`),
+  publicStatus: (slug: string) => request<PublicStatus>(`/api/public/status/${encodeURIComponent(slug)}${qs({ tz: browserTimeZone() })}`),
+
+  // Reports, received events (syslog/traps), top talkers and discovery (routes/insights.ts).
 
   slaReport: (days: number, endpointId?: string) => request<{ days: number; checks: SlaRow[] }>(`/api/insights/reports/sla${qs({ days, endpointId })}`),
   // Fetched as a blob (not a plain link) so the session cookie travels with

@@ -19,7 +19,7 @@ adjust package manager commands for another distro.
 5. [Firewall](#5-firewall)
 6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
 7. [Backups](#7-backups)
-8. [Updating](#8-updating) — including [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
+8. [Updating](#8-updating) — including [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
 9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Security notes](#11-security-notes)
@@ -323,6 +323,22 @@ protect against this server failing.
 ~/Looksee/scripts/update.sh
 ```
 
+### Upgrading to 4.2
+
+4.2 shows every time in the dashboard in your local time zone, and adds the
+[VPN-only access guide](vpn-access.md) (documentation only — nothing is locked down).
+The upgrade is the normal `update.sh` run. Its one migration adds a nullable
+`time_zone` column to `maintenance_windows`; nothing to configure.
+
+- **Existing weekly maintenance windows** keep running on the server's clock and show
+  *(server's time)* on the Maintenance page. To move one to your own time zone, delete
+  it and schedule it again. **Check:** the new window's line shows no zone note (it's
+  in your zone).
+- The agent version moves to 4.2.0 with no code changes, so `update.sh` rebuilds the
+  agent binaries and hosts show an update available; updating them is optional.
+
+Rolling back to 4.1 is code-only safe (4.1 ignores the new column).
+
 ### Upgrading to 4.1
 
 4.1 adds passkeys/security keys as a second factor, the outbound watchdog, and moves the
@@ -600,7 +616,9 @@ to this table).
 Looksee's own safeguards — required two-factor sign-in, lockouts, the optional IP
 allowlist and new-IP email confirmation, attack detection with auto-blocking, the
 security log, and recovery — are documented in the **[security guide](security-guide.md)**,
-along with a hardening checklist for an internet-facing server. Also built in: bcrypt
+along with a hardening checklist for an internet-facing server. To reach the dashboard
+(and optionally the agents) only through a VPN, see **[vpn-access.md](vpn-access.md)** —
+written up, not applied to production yet. Also built in: bcrypt
 password hashing, `httpOnly`/`secure`/`SameSite=Strict` session cookies, sign-in rate
 limiting, security headers, notification-channel configs never returned once saved,
 agent tokens scoped per host, and process command lines masked for credentials before

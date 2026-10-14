@@ -50,8 +50,9 @@ two-factor, IP restriction, attack alerts), [windows-agent-security.md](windows-
 17. [Dashboards and widgets](#dashboards-and-widgets)
 18. [Security](#security)
 19. [Watchdog](#watchdog)
-20. [Light and dark theme](#light-and-dark-theme)
-21. [Backups and logs](#backups-and-logs)
+20. [Times and time zones](#times-and-time-zones)
+21. [Light and dark theme](#light-and-dark-theme)
+22. [Backups and logs](#backups-and-logs)
 
 ## How Looksee is organized
 
@@ -691,8 +692,11 @@ an alert rule.
 recording results, but no alerts are sent and SLA reports leave that time out.
 
 1. Click **+ Schedule maintenance** and name it.
-2. Choose **One time** (start and end) or **Every week** (days, start time in the
-   engine's local time, duration in minutes).
+2. Choose **One time** (start and end) or **Every week** (days, start time, duration in
+   minutes). Times are in your own time zone: a weekly window remembers the zone of the
+   browser that scheduled it, so "Sunday 02:00" stays 02:00 where you are whatever the
+   server's clock is set to. A weekly window from another zone shows that zone's name
+   next to its time; one created before 4.2 says *(server's time)*.
 3. Choose what it applies to: everything, chosen endpoints, chosen hosts (including
    checks their agents run), or chosen checks.
 4. Click **Schedule**. While active it's marked **active now**, and affected checks show
@@ -826,6 +830,25 @@ The URLs contain the service's secret token, so they're never shown again once s
 
 Prefer a service that polls you instead (UptimeRobot, Better Stack)? Point an HTTPS
 monitor at `https://<your-looksee>/api/health` with the keyword `"status":"ok"`.
+
+## Times and time zones
+
+Every date and time in the dashboard is shown in **your device's time zone** — result
+times, alert history, logs, charts, and times inside check messages (for example
+"Host rebooted at …" or "last report …"). The engine stores everything in UTC, so the
+same moment shows correctly for anyone, wherever they are.
+
+- **Weekly maintenance windows** run in the time zone of the browser that scheduled them
+  (see [Maintenance](#maintenance)).
+- **Public status pages** cut each daily uptime bar at the visitor's own midnight; the
+  footer says *Days in your time zone*.
+- **Alerts sent by email or chat** are written by the server, which doesn't know your
+  zone. A time inside a check's message is in UTC and marked as such
+  (`2026-10-13 14:05 UTC` or `2026-10-13T14:05:00.000Z`). A template's `{{time}}`
+  variable uses the server's own clock setting.
+
+**Check:** on a check whose message contains a time, compare it with your clock — it
+should match your local time, not UTC.
 
 ## Light and dark theme
 

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-10-13
+
+Engine, dashboard and agent move to 4.2.0 together; the agent itself has no changes in
+this release (its version follows the lockstep rule).
+
+### Added
+- `docs/vpn-access.md` (also in-app at Help → VPN-only access): step-by-step guide to
+  reaching Looksee only through an OpenVPN/WireGuard VPN (pfSense menus, example
+  addresses) — admin only, agents
+  too, or nothing public — with split DNS, Caddy rules, verification and rollback. A
+  plan only; production stays public with required two-factor.
+- Weekly maintenance windows remember the time zone of the browser that scheduled them
+  (new nullable `maintenance_windows.time_zone` column, migration 0018), so "Sunday
+  02:00" means 02:00 where you are regardless of the server's clock. Older windows keep
+  using the server's zone and are labelled *(server's time)*.
+- User guide: *Times and time zones* section.
+
+### Changed
+- All times in the dashboard are shown in your local time zone, including times
+  embedded in check messages ("Host rebooted at …", "last report …", Proxmox backup
+  times) and in result details, which were shown in UTC. Converted in the browser, so
+  messages already stored are fixed too.
+- Public status pages cut each daily uptime bar at the visitor's midnight instead of
+  UTC midnight (`?tz=` on `/api/public/status/<slug>`, validated; unknown zones fall
+  back to UTC). Day boundaries are computed in the engine, so legacy zone names browsers
+  still report (`Asia/Calcutta`, `Europe/Kiev`, …) work even where Postgres doesn't know
+  them.
+- Proxmox backup check messages mark their time as UTC (`… 14:05 UTC`).
+
+### Fixed
+- The security guide's Caddy example for restricting the dashboard to known IPs never
+  blocked anything: Caddy runs `handle` before `respond`, so the rule needs a
+  `route { }` wrapper. Verified against Caddy 2.
+
 ## [4.1.0] - 2026-10-13
 
 ### Added
