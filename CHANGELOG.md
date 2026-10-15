@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-10-15
+
+Release tooling only — no change to the engine, dashboard or agent at runtime. Engine,
+dashboard and agent move to 4.3.0 together (lockstep).
+
+### Added
+- Security gate: `scripts/security-check.sh` (also `npm run security` in engine/) runs
+  every security check in one command — Semgrep, ESLint + eslint-plugin-security,
+  ShellCheck, PSScriptAnalyzer, go vet, npm audit, govulncheck, gitleaks (working tree,
+  staged diff, commits since the last release), typechecks, the engine test suite and
+  the agent's Go tests — prints PASS / FAIL / NOT RUN per check and saves a full report
+  to `security-reports/` (gitignored). Scanners run in pinned Docker images; a full run
+  takes about 8–9 minutes.
+- `scripts/security-check.sh --live <url>`: post-deploy checks of a running instance —
+  HTTPS and certificate, security headers, admin routes answer 401 without a session,
+  CORS refuses foreign origins, sign-in rate limiting.
+- ESLint configs for engine (ESLint 10) and dashboard (ESLint 9 — pinned, see README),
+  both with eslint-plugin-security; `npm run lint` in each.
+- `security-accepted-risks.json` (accepted dev-only dependency advisories, each with a
+  review date) and `.gitleaks.toml` (two reviewed test fixtures).
+
+### Changed
+- `scripts/update.sh` only deploys release tags — the newest by default — and refuses a
+  tag without a `Security review: approved <date>` line (`scripts/verify-release-tag.sh`).
+  Releases up to 4.1.0 predate the gate and need `--allow-unreviewed` plus typing the tag
+  name, interactively only. With `LOOKSEE_PUBLIC_URL` in the root `.env`, every update
+  ends with the post-deploy security checks. The server checkout is now on a tag
+  ("detached HEAD") after an update rather than on master.
+
+### Fixed
+- The DHCP probe test failed about one run in twenty on Windows: it guessed a random
+  high UDP port, and Windows reserves blocks of those for Hyper-V/WSL/Docker. It now asks
+  the operating system for free ports. (No change to the probe itself.)
+- The security tests could fail intermittently: their random test addresses sometimes
+  repeated one that an earlier test had deliberately gotten blocked. Each address is
+  now used only once per run. (No change to what the tests check.)
+
 ## [4.2.0] - 2026-10-13
 
 Engine, dashboard and agent move to 4.2.0 together; the agent itself has no changes in

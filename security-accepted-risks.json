@@ -1,0 +1,14 @@
+{
+  "_comment": "Dependency advisories the developer has explicitly accepted, read by scripts/security-check.sh (via scripts/lib/security-parse.mjs). An entry only applies to development-only dependencies — a production advisory always fails the gate — and only until its reviewBy date, after which the gate fails again and the advisory must be re-reviewed. Adding or extending an entry is a security decision: it must be approved by the developer and recorded in the release's security report. JSON has no comment syntax, hence this field.",
+  "accepted": [
+    {
+      "id": "GHSA-vfj7-8cjw-p6xm",
+      "package": "braces (via eslint-config-next → @next/eslint-plugin-next → fast-glob → micromatch)",
+      "severity": "high",
+      "reason": "Stack-exhaustion denial of service on deeply nested glob patterns. Development-only lint tooling, never installed in production (npm audit --omit=dev is clean). No fixed braces release exists; npm audit's suggested fix is a downgrade to eslint-config-next 14, which isn't viable.",
+      "acceptedBy": "Jason Haymond",
+      "acceptedOn": "2026-10-14",
+      "reviewBy": "2026-11-14"
+    }
+  ]
+}

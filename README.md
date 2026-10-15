@@ -3,7 +3,7 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v4.2.0 — 57 check types across the engine and agent (reachability, web,
+**Status**: v4.3.0 — 57 check types across the engine and agent (reachability, web,
 real-browser, DNS/DNSSEC, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
 app integrations, SNMP templates/walks/interface tables, printers, traps/syslog,
 Redfish/IPMI, Proxmox, VMware, Hyper-V, Docker, 60+ host metrics, files and folder
@@ -19,8 +19,9 @@ confirmation, attack detection with auto-blocking, and an outbound watchdog for
 Looksee's own outages). Built and verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md)
 for exactly what was tested how); the homelab server runs the 3.x line.
 
-**Current version: v4.2.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#420---2026-10-13)
-(4.2 shows every time in your local time zone and adds the VPN-only access guide; 4.1
+**Current version: v4.3.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#430---2026-10-15)
+(4.3 adds the release security gate and approval-checked deploys; 4.2 shows every time
+in your local time zone and adds the VPN-only access guide; 4.1
 added passkeys and the watchdog; upgrading from 3.x to 4.x requires setting up
 two-factor at your first sign-in — see the 4.0.0 upgrade notes there). See [Deploying](#deploying) for a first deployment and
 [`docs/user-guide.md`](docs/user-guide.md) for day-to-day usage (also built into the
@@ -84,7 +85,63 @@ generate its agent key, copy `agent/looksee-agent.example.yaml` to
 cd engine && npm test        # vitest + supertest against a real local Postgres
 cd dashboard && npm run build  # typecheck + production build
 cd agent && go test ./... && go build ./...   # (needs Go, or use the golang Docker image — see agent/README.md)
+cd engine && npm run lint    # ESLint (also dashboard: npm run lint)
 ```
+
+ESLint is pinned to 9.x in the dashboard: the React, import and accessibility plugins
+bundled by `eslint-config-next` only support up to ESLint 9. The engine uses ESLint 10.
+
+## Security gate and releasing
+
+AI-written code isn't trusted by default: every change goes through the security gate,
+and its results are shown to and approved by the developer, before anything is
+committed, tagged, pushed or deployed.
+
+```sh
+scripts/security-check.sh        # or, from engine/: npm run security
+```
+
+It needs Docker (the scanners run in pinned images), Node with `npm ci` done in
+`engine/` and `dashboard/`, and the local test database (`docker compose up -d
+postgres`). PowerShell 7 with PSScriptAnalyzer (`Install-Module PSScriptAnalyzer -Scope
+CurrentUser`) adds the PowerShell check. It runs:
+
+| Layer | Tools |
+|---|---|
+| Static analysis | Semgrep (OWASP Top 10, TypeScript, Node, Go, secrets), ESLint + eslint-plugin-security, ShellCheck, PSScriptAnalyzer, go vet |
+| Dependencies | npm audit (engine, dashboard), govulncheck (agent), npm outdated (information) |
+| Secrets | gitleaks — working tree, staged diff, commits since the last release |
+| Tests | engine Vitest suite incl. security tests (real Postgres), agent Go tests, TypeScript typechecks |
+| Manual | AI diff review: `/security-review` in Claude Code |
+
+**What success looks like:** a summary table of `PASS` / `FAIL` / `NOT RUN` lines ending
+in `RESULT: PASS`, and a full report under `security-reports/` (gitignored — reports
+describe unpatched weaknesses and this repository is public). New findings in files
+changed since the last release block; findings in unchanged files are listed as the
+existing baseline. A reviewed false positive is silenced in the code with a comment that
+says why; accepted dependency risks live in `security-accepted-risks.json` with a review
+date; the two reviewed test fixtures are allowlisted in `.gitleaks.toml`. Changing any of
+these is a security decision the developer approves.
+
+**Releasing a version:**
+
+1. Finish the batch of changes; bump the version (engine, dashboard and agent together)
+   and add the `CHANGELOG.md` entry.
+2. Run the gate, review the report with the developer, fix what they choose, re-run until
+   it passes, and get their explicit approval.
+3. Commit, re-run the gate on the commit (`scripts/security-check.sh` on a clean tree),
+   then tag with the approval recorded — the deploy script refuses tags without it:
+
+   ```sh
+   git tag -a vX.Y.Z -m "Looksee X.Y.Z — <summary>
+
+   Security review: approved YYYY-MM-DD, report security-reports/<file>.md, accepted risks: <n or none>"
+   git push origin master vX.Y.Z
+   ```
+
+4. Deploy with `scripts/update.sh` on the server ([deployment guide §8](docs/deployment-guide.md#8-updating)),
+   which checks the approval line and, with `LOOKSEE_PUBLIC_URL` set, runs the
+   post-deploy checks (`scripts/security-check.sh --live <url>`).
 
 ## Deploying
 

@@ -59,5 +59,16 @@ global doc governs.
   left out). After any dependency change, regenerate with
   `npx npm@10 install --package-lock-only` in `engine/` and `dashboard/`, and confirm
   `npx npm@10 ci --dry-run --ignore-scripts` passes in both before committing.
+- **Releases go through `scripts/security-check.sh`** (the security gate — see the
+  README's "Security gate and releasing"): run it once the developer says the batch is
+  complete, show them the summary and report, get explicit approval, then commit, re-run
+  on the clean commit, and tag with an annotated `Security review: approved <date>, …`
+  line. `scripts/update.sh` refuses to deploy a tag without that line. Don't weaken the
+  gate to get a pass: changes to `security-accepted-risks.json`, `.gitleaks.toml`,
+  scanner rules, inline `nosemgrep`/`eslint-disable` comments for security rules, or
+  test expectations need the developer's specific approval and a mention in the report.
+- **This repository is public.** Never put real internal addresses, VLAN/VPN ranges,
+  firewall rule/profile names or host names in committed docs — use example values
+  (docs/vpn-access.md uses a made-up 10.20.0.0/16 network).
 
 See [`spec.md`](spec.md) for the full architecture, data model, and v1 scope.

@@ -1,0 +1,22 @@
+# gitleaks configuration for the release security gate (scripts/security-check.sh).
+#
+# gitleaks scans files and commits for things that look like secrets (API keys,
+# private keys, tokens). This file keeps every built-in rule ([extend]
+# useDefault) and adds exactly two reviewed exceptions — test fixtures that
+# look like secrets but protect nothing. Each exception is as narrow as
+# possible: one file path, one literal value. Adding an exception is a
+# security decision; it must be approved by the developer and noted in the
+# release's security report.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Reviewed test fixtures, not real credentials (approved 2026-10-14)"
+# The private key of a throwaway self-signed certificate that the HTTPS
+# probe tests serve from a local test server (engine/test/prober.test.ts).
+# The regex matches exactly that one file path.
+paths = ['''engine/test/fixtures/self-signed\.key$''']
+# The RFC 6238 test-vector secret ("12345678901234567890" in base32) used as
+# a test user's authenticator secret in engine/test/security.test.ts.
+regexes = ['''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''']

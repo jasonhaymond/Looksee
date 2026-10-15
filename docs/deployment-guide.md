@@ -19,7 +19,7 @@ adjust package manager commands for another distro.
 5. [Firewall](#5-firewall)
 6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
 7. [Backups](#7-backups)
-8. [Updating](#8-updating) — including [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
+8. [Updating](#8-updating) — including [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
 9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Security notes](#11-security-notes)
@@ -323,6 +323,53 @@ protect against this server failing.
 ~/Looksee/scripts/update.sh
 ```
 
+This deploys the newest release (the highest `vX.Y.Z` tag on GitHub), but only if
+that release's tag records the developer's security-review approval (see [What
+`update.sh` does](#what-updatesh-does)). **What success looks like:** the last lines
+read `Engine is healthy on vX.Y.Z.` and `Update complete — vX.Y.Z is live.`
+
+**Post-deploy security checks (recommended).** Add the public address to the root
+`.env` once, and every update finishes by checking the live site from the outside —
+HTTPS and certificate, security headers, admin routes refusing anonymous requests, CORS,
+and sign-in rate limiting:
+
+```bash
+echo 'LOOKSEE_PUBLIC_URL=https://looksee.haymondtechnologies.com' >> ~/Looksee/.env
+```
+
+You can run the same checks by hand at any time:
+
+```bash
+~/Looksee/scripts/security-check.sh --live https://looksee.haymondtechnologies.com
+```
+
+**Check:** every line reads `PASS` and the last line is `RESULT: PASS`; the full report
+is saved under `~/Looksee/security-reports/`.
+
+### Upgrading to 4.3
+
+4.3 changes only the release tooling, but that includes `update.sh` itself:
+
+1. **Run the update as usual:** `~/Looksee/scripts/update.sh`. This first run still uses
+   the 4.2 script already on the server, which pulls the latest code; every later run
+   uses the new one, which deploys approved release tags only (see
+   [What `update.sh` does](#what-updatesh-does)). **Check:** `Update complete — engine
+   is healthy on v4.3.0.`
+2. **Turn on the post-deploy checks (recommended):**
+
+   ```bash
+   echo 'LOOKSEE_PUBLIC_URL=https://looksee.haymondtechnologies.com' >> ~/Looksee/.env
+   ~/Looksee/scripts/security-check.sh --live https://looksee.haymondtechnologies.com
+   ```
+
+   **Check:** the last line reads `RESULT: PASS`.
+3. From the next update on, `git status` on the server shows `HEAD detached at vX.Y.Z`
+   instead of `On branch master` — expected, since updates now check out release tags.
+
+The agent version moves to 4.3.0 with no code changes (lockstep), so the update rebuilds
+the agent binaries and hosts show an optional update. Rolling back to 4.2.0 is safe (no
+database changes in 4.3).
+
 ### Upgrading to 4.2
 
 4.2 shows every time in the dashboard in your local time zone, and adds the
@@ -459,23 +506,51 @@ checks, history and dashboards carry over unchanged. Afterwards:
 
 ### What `update.sh` does
 
-Takes a pre-update snapshot (to `~/looksee-backups/` by default, override with
-`LOOKSEE_BACKUP_DIR`, named after the version it was taken from — see below), pulls,
-reinstalls dependencies, migrates, rebuilds both engine and dashboard, rebuilds the agent
-binaries when `agent/VERSION` changed, rebuilds the site collector (fetching Node.js
-runtimes only when their pinned version changed), restarts both pm2 processes, and polls
-`/api/health` for up to 60s before declaring success. Refuses to run
-if there are uncommitted changes in the checkout.
+In order:
+
+1. Refuses to run if there are uncommitted changes in the checkout.
+2. Fetches release tags from GitHub and picks the newest (or the one you named).
+3. **Checks the release's security approval** (`scripts/verify-release-tag.sh`): every
+   release from 4.2.0 on is an annotated tag containing a line
+   `Security review: approved <date>, report …, accepted risks: …`, written when the
+   developer approved that release's security gate. A tag without it is refused before
+   anything changes. Releases up to 4.1.0 predate the gate — see
+   [Rolling back](#rolling-back).
+4. Takes a pre-update database snapshot (to `~/looksee-backups/` by default, override
+   with `LOOKSEE_BACKUP_DIR`, named after the version it was taken from — see below).
+5. Checks out the release tag. The checkout is then on a tag rather than a branch
+   ("detached HEAD") — that's expected; `git status` shows `HEAD detached at vX.Y.Z`.
+6. Reinstalls dependencies exactly as locked (`npm ci`), runs database migrations,
+   rebuilds engine and dashboard, rebuilds the agent binaries when `agent/VERSION`
+   changed, and rebuilds the site collector (fetching Node.js runtimes only when their
+   pinned version changed).
+7. Restarts both pm2 processes and polls `/api/health` for up to 60s, until the engine
+   answers healthy on the new version.
+8. Runs the post-deploy security checks against `LOOKSEE_PUBLIC_URL`, if set. If they
+   fail, the new version is already running; the script says so and exits with an
+   error so you can fix the item or roll back.
 
 ### Rolling back
 
 ```bash
-~/Looksee/scripts/update.sh v0.3.1
+~/Looksee/scripts/update.sh v4.2.0
 ```
 
-Same script, one optional argument: a git tag to check out instead of pulling latest.
+Same script, one optional argument: the release tag to deploy instead of the newest.
 This is the same command whether you're deploying the newest version or rolling back to
-an older one — it still takes its own pre-update snapshot first regardless of direction.
+an older one — it checks the approval and takes its own pre-update snapshot first
+regardless of direction.
+
+**Rolling back to 4.1.0 or earlier** (releases from before the security gate, which
+carry no approval line) needs an explicit override and typing the tag name to confirm:
+
+```bash
+~/Looksee/scripts/update.sh v4.1.0 --allow-unreviewed
+```
+
+It only works from an interactive terminal (a script or cron job can't answer the
+prompt). **What success looks like:** `WARNING: v4.1.0 has no recorded security-review
+approval`, then the prompt; after you type `v4.1.0` the update proceeds as usual.
 
 **This only rolls back code, and that part is always safe.** There are no down-migrations
 in this project. If nothing schema-relevant changed between the two versions, the older
