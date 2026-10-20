@@ -7,6 +7,7 @@ import { SiteSelect } from "../components/SiteSelect";
 import { PageHelp } from "../components/PageHelp";
 import { EmptyState, formatBytes, inputClass, relativeTime } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
+import { pollEvery } from "../lib/poll";
 
 const RANGES = [
   [15, "15 minutes"],
@@ -32,7 +33,7 @@ export default function FlowsPage() {
     if (!authed) return;
     const load = () => api.topFlows({ minutes, by, exporter: exporter || undefined, site: site || undefined, limit: 50 }).then(setRows);
     load();
-    const t = setInterval(load, 60_000);
+    const t = pollEvery(load, 60_000);
     return () => clearInterval(t);
   }, [authed, minutes, by, exporter, site]);
 

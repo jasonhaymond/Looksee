@@ -9,6 +9,7 @@ import { PageHelp } from "../components/PageHelp";
 import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Label, Modal, PromptDialog, StatusBadge, Tags, alertRulePayload, emptyAlertOptions, formatBytes, inputClass, relativeTime, useSelection, useToast, type BulkAction } from "../components/ui";
 import { displayStatus } from "../components/CheckDetail";
 import { collectorState } from "../components/collector";
+import { pollEvery } from "../lib/poll";
 
 // An agent that hasn't reported for 3 report intervals (90s by default) is
 // considered offline here; the agent_heartbeat check is the alerting version.
@@ -644,7 +645,7 @@ export default function HostsPage() {
   useEffect(() => {
     if (!authChecked) return;
     load();
-    const t = setInterval(load, 30_000);
+    const t = pollEvery(load, 30_000);
     return () => clearInterval(t);
   }, [authChecked, load]);
 

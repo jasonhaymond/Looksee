@@ -7,6 +7,7 @@ import { RestoreForm } from "./RestoreForm";
 import { TopNav } from "../components/TopNav";
 import { Tooltip } from "../components/Tooltip";
 import { PageHelp } from "../components/PageHelp";
+import { pollEvery } from "../lib/poll";
 
 const POLL_MS = 5_000;
 
@@ -28,7 +29,10 @@ export default function BackupsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  const loadAll = useCallback(async () => {
+  // Polled every few seconds for live status. The settings form is filled
+  // from the saved values only when asked (first load, after a save) —
+  // refilling it on every poll would wipe what the admin is typing.
+  const loadAll = useCallback(async (fillForm = false) => {
     const [settingsRes, statusRes, runsRes, archivesRes] = await Promise.all([
       api.backupSettings(),
       api.backupStatus(),
@@ -41,9 +45,11 @@ export default function BackupsPage() {
     setCurrentOp(statusRes.currentOperation);
     setRuns(runsRes.runs);
     setArchives(archivesRes.archives);
-    setRepoUrl(settingsRes.settings.repoUrl ?? "");
-    setSchedule(settingsRes.settings.schedule ?? "");
-    setRetentionCount(settingsRes.settings.retentionCount != null ? String(settingsRes.settings.retentionCount) : "");
+    if (fillForm) {
+      setRepoUrl(settingsRes.settings.repoUrl ?? "");
+      setSchedule(settingsRes.settings.schedule ?? "");
+      setRetentionCount(settingsRes.settings.retentionCount != null ? String(settingsRes.settings.retentionCount) : "");
+    }
   }, []);
 
   useEffect(() => {
@@ -57,8 +63,8 @@ export default function BackupsPage() {
 
   useEffect(() => {
     if (!authChecked) return;
-    loadAll();
-    const timer = setInterval(loadAll, POLL_MS);
+    loadAll(true);
+    const timer = pollEvery(() => loadAll(), POLL_MS);
     return () => clearInterval(timer);
   }, [authChecked, loadAll]);
 
@@ -75,7 +81,7 @@ export default function BackupsPage() {
       });
       setPassphrase("");
       setSaved(true);
-      loadAll();
+      loadAll(true);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save settings");
     }

@@ -9,6 +9,7 @@ import { PageHelp } from "../components/PageHelp";
 import { CheckForm, TypePicker } from "../components/CheckForm";
 import { CheckDetail, displayStatus } from "../components/CheckDetail";
 import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Modal, MultiPicker, PromptDialog, StatusBadge, Tags, alertRulePayload, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction } from "../components/ui";
+import { pollEvery } from "../lib/poll";
 
 const REFRESH_MS = 15_000;
 const STATUS_ORDER: Record<string, number> = { down: 0, warn: 1, unknown: 2, maintenance: 3, up: 4, disabled: 5 };
@@ -79,7 +80,7 @@ export default function ChecksPage() {
   useEffect(() => {
     if (!authChecked) return;
     load();
-    const t = setInterval(load, REFRESH_MS);
+    const t = pollEvery(load, REFRESH_MS);
     return () => clearInterval(t);
   }, [authChecked, load]);
 

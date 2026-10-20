@@ -21,6 +21,7 @@ import { AllHostsWidget } from "./components/AllHostsWidget";
 import { BackupStatusWidget } from "./components/BackupStatusWidget";
 import { ClockWidget } from "./components/ClockWidget";
 import { StatusSummaryWidget, TopTalkersWidget } from "./components/InsightWidgets";
+import { pollEvery } from "./lib/poll";
 
 const Grid = WidthProvider(GridLayout);
 const LAST_DASHBOARD_KEY = "looksee.lastDashboardId";
@@ -118,7 +119,7 @@ export default function DashboardsPage() {
   useEffect(() => {
     if (!authChecked) return;
     const ms = (activeDashboard?.refreshSeconds ?? 15) * 1000;
-    const timer = setInterval(loadStatusData, ms);
+    const timer = pollEvery(loadStatusData, ms);
     return () => clearInterval(timer);
   }, [authChecked, loadStatusData, activeDashboard?.refreshSeconds]);
 

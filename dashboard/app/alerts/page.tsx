@@ -8,6 +8,7 @@ import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { EmptyState, FilterChip, StatusBadge, inputClass } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
+import { pollEvery } from "../lib/poll";
 
 const RANGES: [string, string, number][] = [
   ["24h", "24 hours", 24],
@@ -47,7 +48,7 @@ export default function AlertsPage() {
   useEffect(() => {
     if (!authed) return;
     const t = setTimeout(load, 250);
-    const every = setInterval(load, 30_000);
+    const every = pollEvery(load, 30_000);
     return () => (clearTimeout(t), clearInterval(every));
   }, [authed, load]);
 

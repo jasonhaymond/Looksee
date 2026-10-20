@@ -5,6 +5,7 @@ import Link from "next/link";
 import { api, type Check, type Endpoint, type FlowRow, type Widget } from "../lib/api";
 import { StatusBadge, formatBytes } from "./ui";
 import { displayStatus } from "./CheckDetail";
+import { pollEvery } from "../lib/poll";
 
 const RANGES = [
   { minutes: 15, label: "15m" },
@@ -20,7 +21,7 @@ export function TopTalkersWidget({ widget, onChanged }: { widget: Widget; onChan
   useEffect(() => {
     const load = () => api.topFlows({ minutes, by, limit: 8 }).then(setRows).catch(() => setRows([]));
     load();
-    const t = setInterval(load, 60_000);
+    const t = pollEvery(load, 60_000);
     return () => clearInterval(t);
   }, [minutes, by]);
   const max = Math.max(1, ...(rows ?? []).map((r) => r.bytes));

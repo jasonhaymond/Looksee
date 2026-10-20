@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api, type AlertEvent, type Endpoint, type Widget } from "../lib/api";
 import { rangeToSince, DEFAULT_RANGE_HOURS, RANGE_OPTIONS } from "../lib/timeRange";
 import { RangeSelect } from "./RangeSelect";
+import { pollEvery } from "../lib/poll";
 
 const POLL_MS = 15_000;
 
@@ -19,7 +20,7 @@ export function AlertHistoryWidget({ widget, endpoint, onChanged }: { widget: Wi
   useEffect(() => {
     const load = () => api.alertEvents({ endpointId: widget.config.endpointId, since: rangeToSince(rangeHours), limit: 50 }).then(setEvents);
     load();
-    const timer = setInterval(load, POLL_MS);
+    const timer = pollEvery(load, POLL_MS);
     return () => clearInterval(timer);
   }, [widget.config.endpointId, rangeHours]);
 

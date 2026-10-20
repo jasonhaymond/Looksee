@@ -7,6 +7,7 @@ import { SiteSelect } from "../components/SiteSelect";
 import { PageHelp } from "../components/PageHelp";
 import { EmptyState, inputClass } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
+import { pollEvery } from "../lib/poll";
 
 const SEVERITY = ["emerg", "alert", "crit", "error", "warning", "notice", "info", "debug"];
 const SEV_COLOR = (s: number | null) => (s == null ? "var(--muted)" : s <= 3 ? "var(--down)" : s === 4 ? "var(--warn)" : "var(--muted)");
@@ -33,7 +34,7 @@ export default function EventsPage() {
     if (!authed) return;
     load();
     if (!live) return;
-    const t = setInterval(load, 10_000);
+    const t = pollEvery(load, 10_000);
     return () => clearInterval(t);
   }, [authed, load, live]);
 

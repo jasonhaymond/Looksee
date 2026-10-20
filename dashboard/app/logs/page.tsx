@@ -6,6 +6,7 @@ import { api, ApiError, type LogEntry, type LogLevel } from "../lib/api";
 import { TopNav } from "../components/TopNav";
 import { Tooltip } from "../components/Tooltip";
 import { PageHelp } from "../components/PageHelp";
+import { pollEvery } from "../lib/poll";
 
 const POLL_MS = 5_000;
 
@@ -81,7 +82,7 @@ export default function LogsPage() {
   useEffect(() => {
     if (!authChecked) return;
     loadAll();
-    const timer = setInterval(loadAll, POLL_MS);
+    const timer = pollEvery(loadAll, POLL_MS);
     return () => clearInterval(timer);
   }, [authChecked, loadAll]);
 

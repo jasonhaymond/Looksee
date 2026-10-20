@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api, type PublicStatus } from "../../lib/api";
 import { STATUS_COLOR } from "../../components/ui";
+import { pollEvery } from "../../lib/poll";
 
 // The banner text and color for the page's overall state.
 const OVERALL = {
@@ -67,7 +68,7 @@ export default function PublicStatusPage() {
         })
         .catch(() => setMissing(true));
     load();
-    const t = setInterval(load, 60_000);
+    const t = pollEvery(load, 60_000);
     return () => clearInterval(t);
   }, [slug]);
 

@@ -5,6 +5,7 @@ import { api, type Host, type HostMetric, type Widget } from "../lib/api";
 import { rangeToSince, DEFAULT_RANGE_HOURS } from "../lib/timeRange";
 import { RangeSelect } from "./RangeSelect";
 import { Sparkline } from "./Sparkline";
+import { pollEvery } from "../lib/poll";
 
 const POLL_MS = 15_000;
 const POINTS = 20;
@@ -31,7 +32,7 @@ export function HostMetricsWidget({ widget, host, onChanged }: { widget: Widget;
     if (!host) return;
     const load = () => api.hostMetrics(host.id, RANGE_LIMIT, rangeToSince(rangeHours)).then(setMetrics);
     load();
-    const timer = setInterval(load, POLL_MS);
+    const timer = pollEvery(load, POLL_MS);
     return () => clearInterval(timer);
   }, [host, rangeHours]);
 

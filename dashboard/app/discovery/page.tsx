@@ -8,6 +8,7 @@ import { PageHelp } from "../components/PageHelp";
 import { AlertOptions, Button, Checkbox, EmptyState, Label, Modal, alertRulePayload, emptyAlertOptions, inputClass, relativeTime, useToast } from "../components/ui";
 import type { Channel } from "../lib/api";
 import { usePageAuth } from "../components/usePageAuth";
+import { pollEvery } from "../lib/poll";
 
 // Per device: create a host? which suggested checks (by index)?
 type Pick = { host: boolean; checks: Set<number> };
@@ -48,7 +49,7 @@ export default function DiscoveryPage() {
   // Poll while the scan runs; results stream in as devices are found.
   useEffect(() => {
     if (!scan || (scan.status !== "running" && scan.status !== "queued")) return;
-    const t = setInterval(async () => setScan(await api.discoveryScan(scan.id)), 1500);
+    const t = pollEvery(async () => setScan(await api.discoveryScan(scan.id)), 1500);
     return () => clearInterval(t);
   }, [scan]);
 

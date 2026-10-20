@@ -11,6 +11,7 @@ import { AlertRuleManager } from "../../components/AlertRuleManager";
 import { displayStatus, Details, Remediation } from "../../components/CheckDetail";
 import { LineChart, StatusStrip } from "../../components/Charts";
 import { Button, EmptyState, StatusBadge, relativeTime, useToast } from "../../components/ui";
+import { pollEvery } from "../../lib/poll";
 
 const RANGES: [number, string][] = [
   [1, "1 hour"],
@@ -68,7 +69,7 @@ export default function CheckPage() {
   useEffect(() => {
     loadCheck();
     Promise.all([api.endpoints(), api.hosts(), api.checks(), api.channels()]).then(([endpoints, hosts, checks, channels]) => setCtx({ endpoints, hosts, checks, channels })).catch(() => undefined);
-    const t = setInterval(loadCheck, 15_000);
+    const t = pollEvery(loadCheck, 15_000);
     return () => clearInterval(t);
   }, [loadCheck]);
 

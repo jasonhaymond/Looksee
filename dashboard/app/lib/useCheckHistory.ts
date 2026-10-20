@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type CheckResult } from "./api";
 import { rangeToSince } from "./timeRange";
+import { pollEvery } from "./poll";
 
 const HISTORY_LIMIT = 50;
 // A time-windowed fetch can span far more than 50 results, so it uses a much
@@ -24,7 +25,7 @@ export function useCheckHistory(checkId: string, rangeHours?: number) {
         ? api.checkResults(checkId, RANGE_LIMIT, rangeToSince(rangeHours)).then(setResults)
         : api.checkResults(checkId, HISTORY_LIMIT).then(setResults);
     load();
-    const timer = setInterval(load, POLL_MS);
+    const timer = pollEvery(load, POLL_MS);
     return () => clearInterval(timer);
   }, [checkId, rangeHours]);
 

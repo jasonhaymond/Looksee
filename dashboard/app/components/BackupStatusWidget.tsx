@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type BackupRun, type CurrentOperation } from "../lib/api";
+import { pollEvery } from "../lib/poll";
 
 const POLL_MS = 15_000;
 
@@ -22,7 +23,7 @@ export function BackupStatusWidget() {
       setLastRun(runsRes.runs.find((r) => r.kind === "backup") ?? null);
     };
     load();
-    const timer = setInterval(load, POLL_MS);
+    const timer = pollEvery(load, POLL_MS);
     return () => clearInterval(timer);
   }, []);
 
