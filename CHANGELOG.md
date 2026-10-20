@@ -41,6 +41,21 @@ Work in progress toward 5.0.0 (on the `v5.0-dev` branch; not released or tagged)
 ### Fixed
 - Live refreshes pause while a field or dropdown is in use (also shipped in 4.3.1).
 
+## [4.3.1] - 2026-10-19
+
+Dashboard only. Engine, dashboard and agent move to 4.3.1 together (lockstep).
+
+### Fixed
+- Live data refreshes no longer disturb what you're doing on the page. A refresh is
+  skipped while a text field or dropdown has focus, or text is highlighted, and you've
+  tapped, clicked or typed in the last minute; the data catches up on the next tick
+  afterwards. Previously, on mobile browsers an open dropdown picker closed every time
+  the page refreshed, and highlighted text could lose its highlight
+  (`dashboard/app/lib/poll.ts`, used by every page and widget that refreshes on a timer).
+- Backups: the settings form (repository, schedule, retention) was refilled from the
+  saved values on every 5-second status refresh, wiping whatever was being typed. It's
+  now filled only when the page opens and after a save.
+
 ## [4.3.0] - 2026-10-15
 
 Release tooling only — no change to the engine, dashboard or agent at runtime. Engine,
