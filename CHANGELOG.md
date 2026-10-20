@@ -7,39 +7,137 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Work in progress toward 5.0.0 (on the `v5.0-dev` branch; not released or tagged).
+## [5.0.0] - 2026-10-20
+
+A major release: Looksee's building blocks are renamed and reorganized, and alerting,
+checks, SNMP and the agent gain a large set of features. Engine, dashboard and agent
+move to 5.0.0 together (lockstep). **Read the upgrade notes in the deployment guide
+(§8 → Upgrading to 5.0) before updating — rolling back to 4.x means restoring the
+pre-update database snapshot.**
 
 ### Changed
-- **Location → Site → Endpoint.** What was called an "endpoint" (a site) is now a
-  **site**, and what was a "host" is now an **endpoint** — everywhere: dashboard,
-  API routes, and the database (migration 0019 renames tables, columns, constraints,
-  indexes and enum values, and rewrites maintenance scopes, widget settings,
-  discovery records and notification templates — `{{endpoint}}` becomes `{{site}}`,
-  `{{host}}` becomes `{{endpoint}}`). What agents and site collectors send and
-  receive is unchanged, so deployed ones keep working. **Rolling back to 4.x after
-  this migration means restoring the pre-update database snapshot.**
-- Navigation is a left sidebar (a drawer on phones) with a live tree of locations,
-  sites, endpoints and checks, with status markers and problem counts. The top
-  navigation bar is gone.
+- **Location → Site → Endpoint → Check.** What was called an "endpoint" (a network) is
+  now a **site**, and what was a "host" (a machine) is now an **endpoint** —
+  everywhere: dashboard, API routes (`/api/sites`, `/api/endpoints`), and the database
+  (migration 0019 renames tables, columns, constraints, indexes and enum values, and
+  rewrites maintenance scopes, widget settings, discovery records and notification
+  templates — `{{endpoint}}` becomes `{{site}}`, `{{host}}` becomes `{{endpoint}}`;
+  `{{host}}` keeps working as an alias). An endpoint doesn't need the agent. What
+  agents and site collectors send and receive is unchanged, so 4.x agents keep working
+  (proved by a new test). The rename was tested on a production-sized copy (50 sites,
+  1,000 endpoints, 10,000 checks, 3 million results): about 6 seconds, identical row
+  counts before and after.
+- **Navigation is a left sidebar** (a drawer on phones) with a live tree of locations,
+  sites, endpoints, checks and groups — status markers, problem counts and a filter box.
+  The top navigation bar is gone. `/hosts` redirects to `/endpoints`.
+- **Linux agent installs grant the read access checks need by default** — the journal
+  and `/var/log` (groups `systemd-journal`, `adm`), SMART and read-only `/home` (the
+  privileged systemd drop-in), and the Docker socket when Docker is installed — while
+  the agent still runs as its own unprivileged user. `--minimal` grants none of it;
+  `--no-docker` leaves out Docker access, which is effectively root on that machine.
+  Existing agents keep their access when they update (see agent README → Privileges).
+- **Regular expressions typed into checks run on RE2** (the `re2js` package, new
+  dependency) instead of JavaScript's engine, so a pathological pattern can't freeze
+  the engine. RE2 has no look-ahead, look-behind or back-references; checks using them
+  now report the pattern as invalid (the deployment guide has a query to find them).
+- `scripts/restore.sh` empties the database completely before loading a snapshot, and
+  stops at the first error. Previously, loading an older snapshot over a newer schema
+  (such as a 4.3 snapshot over 5.0) left a broken mix of both — found by testing the
+  5.0 rollback for real. It also checks the file is readable before deleting anything,
+  and says which app version the restored data came from.
+- The in-app restore (System → Backups) refuses a database backup from a different
+  MAJOR.MINOR version and points to the scripted rollback; same-version and
+  config-only restores work as before.
+- Wording throughout follows the new terms; the check form's network target field is
+  labelled **Address**.
 
 ### Added
-- A page for every location, site, endpoint and group.
-- **Groups** of endpoints and checks: picked by hand, or by filter rules with a live
-  preview (migration 0020). Groups can be maintenance-window targets and bulk-action
-  selections; "Add to group" on the Checks and Endpoints lists.
-- Alert rules can be edited after they're created.
-- **Resolve** a failing check by hand, one at a time or in bulk (also from Alert
-  history). Trap/syslog checks then ignore events from before that moment.
-- Recovery without a new result: a **clear pattern** on trap/syslog checks, **recover
-  together with** another check, **auto-recover after N minutes** (trap, syslog and
-  pushed-value checks), and a per-check **recovery URL** that only accepts "up".
-- Trap/syslog checks can **ignore messages** containing given texts.
-- **Exclude results from statistics** — single results or a time range — so they
-  don't count against uptime, SLA reports or status pages; they can be counted again
-  later (migration 0021).
+- **Pages for every location, site, endpoint and group**, each listing everything under
+  it with its status.
+- **Groups** (migration 0020): any mix of locations, sites, endpoints and checks picked
+  by hand, or **filter groups** whose members match rules (name, tag, type, OS, status,
+  site, location…) with a live preview. Groups can be maintenance targets (following
+  membership while the window runs), receive alert rules, be run/enabled/disabled in
+  bulk, and scope exclusion lists. "Add to group" on every node page and on the Checks
+  and Endpoints lists.
+- **Alert rules can be edited** after they're created (all fields).
+- **Resolve** a failing check by hand — one at a time or in bulk, also from Alert
+  history — with an optional note; trap/syslog checks then ignore events from before
+  that moment.
+- **Recovery by event:** a *clears when text matches* pattern on trap/syslog checks,
+  *recovers together with* another check (chains), *recover on its own after N
+  minutes* (trap, syslog and pushed-value checks), and a per-check **recovery URL** that
+  only accepts "up".
+- **Exclusions:** per-check item exclusions (mounts, interfaces, disk devices, sensors,
+  services, containers, Hyper-V VMs, event IDs, message texts, packages — `*`/`?`
+  wildcards) and reusable **exclusion lists** (Alerting → Exclusions, migration 0022)
+  applied to all checks of a kind or to chosen groups; applied on the engine, the site
+  collector and the agent. Each check's page shows the exclusions it uses.
+- **Exclude results from statistics** — single results or a time range, with a reason —
+  so they don't count against uptime, SLA reports or status pages; they can be counted
+  again (migration 0021).
+- **Watchdog agents** (migration 0023): an endpoint's agent can alert by email and/or a
+  Telegram/Slack/Teams/webhook channel on its own when it can't reach Looksee, and when
+  it's back. Set up on the endpoint's Watchdog tab, with a test button; System →
+  Watchdog lists them. The agent keeps the settings it needs in a file only its own
+  account can read, and deletes it when the watchdog is turned off.
+- **Installed software** (agent 5.0, migration 0024): dpkg, rpm, apk, pacman, Windows
+  programs, macOS apps, global npm/pip packages, Node/Python/PHP runtimes and listed
+  lock files — sent when it changes and at least daily. Three new check types:
+  - **Upgradable packages** — the list of waiting packages; Ubuntu **phased updates**
+    left out by default (option to include; metric `updates.phased` counts them).
+  - **Installed software changed** — installed, removed, or changed version.
+  - **Vulnerable or unsupported software** — OSV.dev advisories and endoflife.date
+    support dates (cached 7 days / 1 day; package names and versions only, never
+    hostnames), with severities for warn/down and **accepted risks** that carry a reason.
+- **SNMP OID dictionary** (about 170 entries — standard MIBs, Printer-MIB, UPS-MIB and
+  printer vendor counters for HP, Brother, Canon, Ricoh, Xerox, Kyocera, Lexmark and
+  Konica Minolta, plus enterprise numbers for printer and network vendors): the walk
+  browser shows names, readable values and whose vendor OID it is, and can look an OID
+  up by name.
+- **SNMP calculations:** *Calculate* (a safe calculator — no code) on a check's value,
+  **Extra OIDs** read in the same poll and combined by name (`used / size * 100`,
+  `rate(…)` for counters), and `ref` for another check's latest value. New **Calculated
+  value** check type combines up to four other checks.
+- **SNMP templates** (Monitoring → SNMP templates, migration 0025): built-in sets for
+  printers (generic and 13 brands), UPS (standard and APC), Synology, Net-SNMP, Cisco,
+  Dell iDRAC and switches; your own templates (copy a built-in one or start fresh);
+  apply to a device in one step. Discovery suggests the template matching a device's
+  SNMP sysObjectID and opens it with the address filled in.
+- **Role and security templates** on an endpoint's Suggested checks tab: web, database,
+  DNS, mail, file, domain controller, hypervisor, Docker host, backup and print server
+  roles, and Windows/Linux/macOS security baselines; "looks like this" marks roles the
+  agent detected from running, enabled services.
+- **Smarter suggestions:** software checks, certificate checks for existing HTTPS checks,
+  detected-role checks, suggestions that tell endpoints apart correctly, and
+  **site suggestions** from a site's name, description, endpoints and existing checks.
+- **More check settings** with working defaults and an Advanced section: TCP send/expect
+  text and timeout, DNS timeout and tries, TLS server name and timeout, agent-online
+  severity, OS service *Should be: Stopped*, push-value auto-recovery, and advanced
+  options on traceroute, disk forecast, performance counters and the services overview.
+- `docs/check-settings.md` (also in-app under Help): every setting of every check type,
+  generated from the form's own definitions by `dashboard/scripts/check-settings-doc.ts`.
+- `docs/plans/check-expansion.md`: recommendations for further checks and templates.
+- Tests for every new feature (groups, recovery, exclusions, watchdog agents, software,
+  SNMP templates, role templates, calculations, 4.x agent compatibility, the restore
+  version guard, hardening).
+
+### Security
+- Hardening from the gate's static analysis: object keys taken from requests or stored
+  data are read and written through guards that refuse `__proto__`, `prototype` and
+  `constructor` (`lib/own.ts`); file paths built from input are confined to their
+  folder (`lib/safeFs.ts`); admin-typed patterns run on RE2. Remaining scanner
+  suppressions are listed, with reasons, in the 5.0.0 security report.
+- Watchdog SMTP mail rejects header injection and requires TLS 1.2+.
+- Known open item: SNMP v1/v2c community strings are still returned to the dashboard
+  like other settings (v3 keys are write-only) — see `docs/plans/check-expansion.md`.
 
 ### Fixed
 - Live refreshes pause while a field or dropdown is in use (also shipped in 4.3.1).
+- Role templates suggested checks for services that were installed but stopped; they
+  now consider only running, enabled services.
+- Suggested checks for different endpoints with the same check type could hide each
+  other; the suggestion key now includes the target.
 
 ## [4.3.1] - 2026-10-19
 

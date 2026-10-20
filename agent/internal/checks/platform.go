@@ -1,3 +1,7 @@
+// Platform checks: Hyper-V VMs, Windows performance counters, VPN tunnels
+// (WireGuard, OpenVPN), UPS state (NUT, apcupsd) and backup jobs (Borg,
+// restic, Veeam). VMs can be skipped with the ignore list or exclusions.
+
 package checks
 
 import (
@@ -37,14 +41,15 @@ func runHyperV(c Cfg) Result {
 		}
 	}
 	name := c.Str("vmName", "*")
-	ignore := splitList(c.Str("ignore", ""))
+	// VMs to skip: the check's older "ignore" setting plus its exclusions.
+	ignore := append(Cfg{"exclude": c.Str("ignore", "")}.Excludes(true), c.Excludes(true)...)
 	var stopped []string
 	matched := 0
 	for _, vm := range vms {
 		if name != "*" && !strings.EqualFold(vm.Name, name) {
 			continue
 		}
-		if ignore[strings.ToLower(vm.Name)] {
+		if nameExcluded(vm.Name, ignore) {
 			continue
 		}
 		matched++

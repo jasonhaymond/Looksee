@@ -1,3 +1,5 @@
+// Dashboard widget: one check's uptime per day over recent weeks.
+
 "use client";
 
 import type { Check, Widget } from "../lib/api";

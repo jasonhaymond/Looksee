@@ -1,3 +1,7 @@
+// The Logs page (/logs): the engine's own activity log with level filter,
+// refreshing live. "use client" makes this a React component that runs in the
+// browser; the engine refuses every call without a session.
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -64,10 +68,10 @@ export default function LogsPage() {
   const [level, setLevel] = useState<LogLevel | "">("");
   const [entries, setEntries] = useState<LogEntry[]>([]);
 
-  const loadAll = useCallback(async () => {
-    const rows = await api.logs({ level: level || undefined, limit: 200 });
+  const loadAll = useCallback(() =>
+    api.logs({ level: level || undefined, limit: 200 }).then((rows) => {
     setEntries(rows);
-  }, [level]);
+  }), [level]);
 
   useEffect(() => {
     api
@@ -94,7 +98,7 @@ export default function LogsPage() {
         <Tooltip text="Debug: verbose technical detail, mainly for troubleshooting. Info: routine events worth knowing about. Warn/Error: something needs attention — these are the ones with a plain-language explanation alongside the technical detail." />
       </h2>
       <PageHelp anchor="backups-and-logs">
-        The engine's own activity log — what it's doing and why. Filter by level below; warn/error entries include a plain-language explanation.
+        The engine&apos;s own activity log — what it&apos;s doing and why. Filter by level below; warn/error entries include a plain-language explanation.
       </PageHelp>
 
       <div className="mb-4 flex gap-1 text-sm">

@@ -451,3 +451,22 @@ describe("parsers", () => {
     expect(t.get("172.16.0.2")).toBe("0:1:2:3:4:5");
   });
 });
+
+describe("TCP port with send and expect", () => {
+  // Proves the advanced TCP settings: a greeting banner is matched, a
+  // command is sent and its reply matched, and a wrong or missing reply
+  // fails within the timeout instead of passing just because it connected.
+  it("matches banners and replies", async () => {
+    const banner = await tcpServer((sock) => sock.write("220 mail.example ESMTP\r\n"));
+    expect((await runProbe("tcp", { host: "127.0.0.1", port: banner, expectText: "ESMTP" })).status).toBe("up");
+    const redis = await tcpServer((sock) => sock.on("data", (d) => sock.write(d.toString().startsWith("PING") ? "+PONG\r\n" : "-ERR\r\n")));
+    const ok = await runProbe("tcp", { host: "127.0.0.1", port: redis, sendText: "PING\r\n", expectText: "+PONG" });
+    expect(ok.status).toBe("up");
+    expect(ok.message).toBe("+PONG");
+    const silent = await tcpServer(() => undefined);
+    const quiet = await runProbe("tcp", { host: "127.0.0.1", port: silent, expectText: "hello", timeoutSeconds: 1 });
+    expect(quiet.status).toBe("down");
+    expect(quiet.message).toMatch(/no reply containing "hello" within 1s/);
+    expect((await runProbe("tcp", { host: "127.0.0.1", port: silent })).status).toBe("up");
+  });
+});

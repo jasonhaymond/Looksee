@@ -1,9 +1,17 @@
+// Network discovery without database access (so the site collector can run
+// it too): expands a subnet, pings each address, checks common ports, reads
+// SNMP basics, and suggests checks for each device found.
+//
+// Limits: at most MAX_SCAN_ADDRESSES addresses per scan, a few at a time, so a
+// scan can't flood the network.
+
 import net from "node:net";
 import dns from "node:dns/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as snmp from "net-snmp";
 import { parseArpTable } from "./probes/protocols.js";
+import { isOid } from "./probes/mibs.js";
 
 // The network side of discovery, with no database access, so a site
 // collector runs the identical scan on its own LAN.
@@ -30,7 +38,7 @@ export const DISCOVERY_PORTS: Record<number, string> = {
 export const MAX_SCAN_ADDRESSES = 1024;
 
 export function expandCidr(cidr: string): string[] {
-  const m = cidr.trim().match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/);
+  const m = cidr.trim().match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\/(\d{1,2})$/);
   if (!m) throw new Error("Use IPv4 CIDR notation, e.g. 192.168.1.0/24");
   const bits = Number(m[2]);
   if (bits < 22 || bits > 32) throw new Error("Scan ranges are limited to /22 (1024 addresses) or smaller");
@@ -74,15 +82,30 @@ async function pingOnce(host: string): Promise<boolean> {
   }
 }
 
-function snmpSysInfo(host: string, community: string): Promise<{ sysName?: string; sysDescr?: string } | null> {
+/**
+ * Asks a device for its SNMP identity: sysName (1.3.6.1.2.1.1.5.0), sysDescr
+ * (…1.1.0) and sysObjectID (…1.2.0 — the vendor's product OID, e.g.
+ * 1.3.6.1.4.1.2435.2.3.9.1 for a Brother printer, used to suggest a matching
+ * SNMP template). One short v2c attempt; a device that doesn't answer is
+ * simply "no SNMP".
+ *
+ * @returns what was read, or null if the device didn't answer
+ */
+function snmpSysInfo(host: string, community: string): Promise<{ sysName?: string; sysDescr?: string; sysObjectId?: string } | null> {
   return new Promise((resolve) => {
     const session = snmp.createSession(host, community, { timeout: 1200, retries: 0, version: snmp.Version2c });
     session.on("error", () => undefined);
-    session.get(["1.3.6.1.2.1.1.5.0", "1.3.6.1.2.1.1.1.0"], (err, vbs) => {
+    session.get(["1.3.6.1.2.1.1.5.0", "1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.2.0"], (err, vbs) => {
       session.close();
       if (err || !vbs) return resolve(null);
-      const val = (i: number) => (vbs[i] && !snmp.isVarbindError(vbs[i]) ? String(vbs[i].value) : undefined);
-      resolve({ sysName: val(0), sysDescr: val(1)?.slice(0, 200) });
+      const val = (i: number) => {
+    const vb = vbs.at(i);
+    return vb && !snmp.isVarbindError(vb) ? String(vb.value) : undefined;
+  };
+      // sysObjectID is kept only if it really is a dotted OID (a device could
+      // answer with anything).
+      const oid = val(2)?.replace(/^\./, "");
+      resolve({ sysName: val(0), sysDescr: val(1)?.slice(0, 200), sysObjectId: oid && isOid(oid) ? oid : undefined });
     });
   });
 }
@@ -93,12 +116,16 @@ export type ScannedDevice = {
   mac: string | null;
   pingable: boolean;
   openPorts: { port: number; service: string }[];
-  snmp: { sysName?: string; sysDescr?: string } | null;
+  snmp: { sysName?: string; sysDescr?: string; sysObjectId?: string } | null;
 };
 
 export type DiscoveredDevice = ScannedDevice & {
   knownEndpointId: string | null;
   suggestedChecks: { type: string; name: string; config: Record<string, unknown> }[];
+  // SNMP templates whose "suggest for" OID prefix matches the device's
+  // sysObjectID (most specific first). Added by the engine, which knows the
+  // admin's own templates.
+  snmpTemplates?: { id: string; name: string }[];
 };
 
 export function suggestForDevice(d: ScannedDevice): DiscoveredDevice["suggestedChecks"] {
@@ -136,7 +163,7 @@ export async function scanNetwork(cidr: string, community: string, onProgress: (
   await pool(addresses, 64, async (ip) => {
     const [pingable, ...open] = await Promise.all([pingOnce(ip), ...Object.keys(DISCOVERY_PORTS).map((p) => tcpOpen(ip, Number(p)))]);
     const openPorts = Object.entries(DISCOVERY_PORTS)
-      .filter((_, i) => open[i])
+      .filter((_, i) => open.at(i))
       .map(([port, service]) => ({ port: Number(port), service }));
     if (!pingable && !openPorts.length) return;
     found.set(ip, { ip, hostname: null, mac: null, pingable, openPorts, snmp: null });

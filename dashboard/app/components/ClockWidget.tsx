@@ -1,16 +1,16 @@
+// Dashboard widget: the current date and time, ticking every second
+// (lib/useNow.ts).
+
 "use client";
 
-import { useEffect, useState } from "react";
+import { useNow } from "../lib/useNow";
 
 // Pure dashboard polish — no data dependency, just a live current-time tile.
 export function ClockWidget() {
-  const [now, setNow] = useState<Date | null>(null);
-
-  useEffect(() => {
-    setNow(new Date());
-    const timer = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  // Ticks every second (lib/useNow.ts); 0 during the server render, when
+  // nothing is shown so the server's and browser's times can't disagree.
+  const ms = useNow();
+  const now = ms ? new Date(ms) : null;
 
   return (
     <div className="flex h-full flex-col items-center justify-center surface rounded-lg p-3">

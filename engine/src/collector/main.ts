@@ -5,13 +5,12 @@
 // a single file (scripts/build-collector.sh) and run on a stock Node runtime.
 //
 // Only database-free engine modules may be imported here.
-import fs from "node:fs";
-import path from "node:path";
 import { runNetworkProbe } from "../services/probes/network.js";
 import { sendWakeOnLan } from "../services/probes/protocols.js";
 import { browseSnmp } from "../services/probes/snmp.js";
 import { type EventInput, type FlowRow, type ReceiverPorts, FlowAggregator, sourceAllowed, startListeners } from "../services/receivers/core.js";
 import { scanNetwork } from "../services/discoveryCore.js";
+import { readTextIn, writeTextIn } from "../lib/safeFs.js";
 
 declare const __COLLECTOR_VERSION__: string;
 const VERSION = typeof __COLLECTOR_VERSION__ === "string" ? __COLLECTOR_VERSION__ : "dev";
@@ -88,10 +87,10 @@ const problems = new Map<string, string>();
 
 // The last good config is kept on disk so a collector restarted while the
 // engine is unreachable keeps monitoring its site.
-const cachePath = path.join(STATE_DIR, "collector-config.json");
+const CACHE_FILE = "collector-config.json";
 function loadCachedConfig() {
   try {
-    config = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
+    config = JSON.parse(readTextIn(STATE_DIR, CACHE_FILE));
     log(`loaded cached config (${config?.checks.length ?? 0} checks)`);
   } catch {
     // first run
@@ -99,7 +98,7 @@ function loadCachedConfig() {
 }
 function saveCachedConfig(c: CollectorConfig) {
   try {
-    fs.writeFileSync(cachePath, JSON.stringify({ ...c, scans: [], jobs: [] }));
+    writeTextIn(STATE_DIR, CACHE_FILE, JSON.stringify({ ...c, scans: [], jobs: [] }));
   } catch {
     // best-effort
   }
@@ -207,7 +206,7 @@ async function runScan(scan: { id: string; cidr: string; community: string }) {
 
 async function runJob(job: { id: string; kind: string; payload: Record<string, unknown> }) {
   let ok = false;
-  let message = "";
+  let message: string;
   let data: unknown;
   try {
     if (job.kind === "wake") {

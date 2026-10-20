@@ -1,6 +1,14 @@
+// HTTP(S) checks: status codes, body text and patterns, JSON values,
+// redirects, response time, client certificates and custom headers.
+//
+// Body patterns run on RE2 (lib/userRegex.ts). "Skip TLS verification" exists
+// for internal certificates and is off by default.
+
 import http from "node:http";
 import https from "node:https";
 import { type Config, type ProbeOutcome, bool, down, errMsg, numOr, str } from "./types.js";
+import { own, setOwn } from "../../lib/own.js";
+import { compileUserRegex, type UserRegex } from "../../lib/userRegex.js";
 
 // "Name: value" per line, as typed into the check form's headers textarea.
 // Blank lines and lines without a colon are skipped rather than erroring,
@@ -12,7 +20,7 @@ export function parseHeaders(raw: string): Record<string, string> {
     if (idx === -1) continue;
     const name = line.slice(0, idx).trim();
     const value = line.slice(idx + 1).trim();
-    if (name) headers[name] = value;
+    if (name) setOwn(headers, name, value);
   }
   return headers;
 }
@@ -93,7 +101,7 @@ export function jsonPathGet(obj: unknown, path: string): unknown {
   let cur: unknown = obj;
   for (const t of tokens) {
     if (cur == null || typeof cur !== "object") return undefined;
-    cur = (cur as Record<string, unknown>)[t];
+    cur = own(cur as Record<string, unknown>, t);
   }
   return cur;
 }
@@ -156,9 +164,10 @@ export async function probeHttp(config: Config): Promise<ProbeOutcome> {
   if (notContains && res.body.includes(notContains)) return fail(`Response contained "${notContains}"`);
   const regex = str(config, "bodyRegex");
   if (regex) {
-    let re: RegExp;
+    // Runs on RE2 (lib/userRegex.ts): a hostile pattern can't stall the engine.
+    let re: UserRegex;
     try {
-      re = new RegExp(regex, "m");
+      re = compileUserRegex(regex, { multiline: true });
     } catch {
       return { status: "warn", latencyMs: res.latencyMs, message: `Invalid regex: ${regex}` };
     }

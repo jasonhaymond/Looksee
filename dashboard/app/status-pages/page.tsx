@@ -1,3 +1,7 @@
+// The Status pages admin (/status-pages): public status pages, which checks
+// each shows and in what order. "use client" makes this a React component that
+// runs in the browser; the engine refuses every call without a session.
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -12,11 +16,11 @@ export default function StatusPagesAdmin() {
   const [pages, setPages] = useState<StatusPage[]>([]);
   const [checks, setChecks] = useState<Check[]>([]);
   const [editing, setEditing] = useState<StatusPage | "new" | null>(null);
-  const load = useCallback(async () => {
-    const [p, c] = await Promise.all([api.statusPages(), api.checks()]);
+  const load = useCallback(() =>
+    Promise.all([api.statusPages(), api.checks()]).then(([p, c]) => {
     setPages(p);
     setChecks(c);
-  }, []);
+  }), []);
   useEffect(() => {
     if (authed) load();
   }, [authed, load]);
@@ -77,7 +81,7 @@ function Editor({ page, checks, onClose, onSaved }: { page: StatusPage | null; c
       const j = i + dir;
       if (j < 0 || j >= p.length) return p;
       const n = [...p];
-      [n[i], n[j]] = [n[j], n[i]];
+      n.splice(j, 0, ...n.splice(i, 1));
       return n;
     });
   return (

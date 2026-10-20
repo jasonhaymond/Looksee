@@ -1,3 +1,8 @@
+// The Checks page (/manage): every check, grouped and filtered, with bulk
+// actions (run, enable, maintenance, resolve, alert rules, add to group) and
+// the inline detail. "use client" makes this a React component that runs in
+// the browser; the engine refuses every call without a session.
+
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
@@ -10,6 +15,8 @@ import { CheckDetail, displayStatus } from "../components/CheckDetail";
 import { AddToGroupDialog } from "../components/NodeViews";
 import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Modal, MultiPicker, PromptDialog, StatusBadge, Tags, alertRulePayload, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction } from "../components/ui";
 import { pollEvery } from "../lib/poll";
+import { own } from "../lib/own";
+import { useStoredState } from "../lib/useStoredState";
 
 const REFRESH_MS = 15_000;
 const STATUS_ORDER: Record<string, number> = { down: 0, warn: 1, unknown: 2, maintenance: 3, up: 4, disabled: 5 };
@@ -28,23 +35,8 @@ type Dialog =
   | { kind: "group" }
   | null;
 
-/**
- * Reads a saved display preference from the browser (localStorage).
- *
- * @param key the storage key
- * @param fallback used when nothing is saved, storage is blocked, or the
- *        saved value isn't one of `allowed`
- * @param allowed the valid values, when the preference is one of a fixed set
- */
-function readPref<T extends string>(key: string, fallback: T, allowed?: readonly T[]): T {
-  try {
-    const v = localStorage.getItem(key) as T | null;
-    if (!v || (allowed && !allowed.includes(v))) return fallback;
-    return v;
-  } catch {
-    return fallback;
-  }
-}
+/** A saved grouping choice, or undefined when what's stored isn't one. */
+const parseGroupBy = (raw: string): GroupBy | undefined => (GROUP_BYS.some((g) => g === raw) ? (raw as GroupBy) : undefined);
 
 export default function ChecksPage() {
   const router = useRouter();
@@ -63,22 +55,23 @@ export default function ChecksPage() {
   const [endpointFilter, setEndpointFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
-  const [groupBy, setGroupBy] = useState<GroupBy>("site");
+  // How the list is grouped, remembered in this browser (lib/useStoredState.ts).
+  const [groupBy, setGroupBy] = useStoredState<GroupBy>("looksee.checks.groupBy.v5", "site", parseGroupBy, String);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<Dialog>(null);
   const [addType, setAddType] = useState<string | null>(null);
   const toast = useToast();
 
-  const load = useCallback(async () => {
-    const [c, e, h, ch, l] = await Promise.all([api.checks(), api.sites(), api.endpoints(), api.channels(), api.locations()]);
+  const load = useCallback(() =>
+    Promise.all([api.checks(), api.sites(), api.endpoints(), api.channels(), api.locations()]).then(([c, e, h, ch, l]) => {
     setChecks(c);
     setSites(e);
     setEndpoints(h);
     setChannels(ch);
     setLocations(l);
     setLoaded(true);
-  }, []);
+  }), []);
 
   useEffect(() => {
     api
@@ -87,7 +80,6 @@ export default function ChecksPage() {
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) router.push("/login");
       });
-    setGroupBy(readPref<GroupBy>("looksee.checks.groupBy.v5", "site", GROUP_BYS));
   }, [router]);
 
   useEffect(() => {
@@ -131,7 +123,7 @@ export default function ChecksPage() {
         case "site":
           return [c.siteId, siteName.get(c.siteId) ?? "Unknown site"];
         case "endpoint":
-          return c.endpointId ? [c.endpointId, endpointName.get(c.endpointId) ?? "Unknown host"] : ["", "No host (agentless)"];
+          return c.endpointId ? [c.endpointId, endpointName.get(c.endpointId) ?? "Unknown endpoint"] : ["", "No endpoint"];
         case "category":
           return [typeCategory(c.type), typeCategory(c.type)];
         case "status":
@@ -209,7 +201,7 @@ export default function ChecksPage() {
 
       <div className="mb-3 flex flex-wrap gap-1.5">
         {STATUS_FILTERS.map((s) => {
-          const n = s === "all" ? checks.length : s === "problems" ? (counts.down ?? 0) + (counts.warn ?? 0) : counts[s] ?? 0;
+          const n = s === "all" ? checks.length : s === "problems" ? (counts.down ?? 0) + (counts.warn ?? 0) : (own(counts, s) ?? 0);
           if (s !== "all" && s !== "problems" && n === 0) return null;
           return (
             <FilterChip key={s} active={statusFilter === s} onClick={() => setStatusFilter(s)}>
@@ -220,7 +212,7 @@ export default function ChecksPage() {
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-7">
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, type, host, message, tag…" className={`${inputClass} col-span-2`} aria-label="Search checks" />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, type, endpoint, site, message, tag…" className={`${inputClass} col-span-2`} aria-label="Search checks" />
         <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} className={inputClass} aria-label="Location filter">
           <option value="">All locations</option>
           {locations.map((l) => (
@@ -292,11 +284,6 @@ export default function ChecksPage() {
             value={groupBy}
             onChange={(e) => {
               setGroupBy(e.target.value as GroupBy);
-              try {
-                localStorage.setItem("looksee.checks.groupBy.v5", e.target.value);
-              } catch {
-                // preference only
-              }
             }}
             className="rounded-md border border-[var(--border)] bg-transparent px-2 py-1 text-sm"
           >
@@ -569,7 +556,7 @@ function DuplicateDialog({ checks, sites, endpoints, onClose, onSubmit }: { chec
         {mode === "sites" && (
           <>
             <MultiPicker items={sites.map((e) => ({ id: e.id, label: e.name }))} selected={siteIds} onChange={setSiteIds} placeholder="Search sites…" />
-            {endpointScoped && <p className="text-xs text-[var(--muted)]">Checks tied to a host keep it only when it&apos;s in the destination site; agent checks that need a host are skipped elsewhere — copy those to endpoints instead.</p>}
+            {endpointScoped && <p className="text-xs text-[var(--muted)]">Checks tied to an endpoint keep it only when it&apos;s in the destination site; agent checks that need an endpoint are skipped elsewhere — copy those to endpoints instead.</p>}
           </>
         )}
         {mode === "endpoints" && <MultiPicker items={endpoints.map((h) => ({ id: h.id, label: h.name, sub: h.hostname ?? undefined, group: siteName.get(h.siteId) }))} selected={endpointIds} onChange={setEndpointIds} placeholder="Search endpoints…" groupLabel="Site" />}

@@ -1,3 +1,6 @@
+// Next.js settings for the dashboard: security headers on every page, and
+// redirects for addresses that moved in 5.0 (so old bookmarks still work).
+
 import type { NextConfig } from "next";
 
 // Defense-in-depth headers on every dashboard page. The CSP only covers
@@ -15,6 +18,12 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
+  },
+  // 4.x called devices "hosts" and listed them at /hosts; 5.0 calls them
+  // endpoints. (4.x's /endpoints meant networks — now /sites — but that
+  // address is reused, so it can't be redirected.)
+  async redirects() {
+    return [{ source: "/hosts", destination: "/endpoints", permanent: false }];
   },
 };
 

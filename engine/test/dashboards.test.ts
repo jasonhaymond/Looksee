@@ -7,6 +7,7 @@ import { app } from "../src/app.js";
 import { loginWith2fa } from "./helpers.js";
 import { db } from "../src/db/index.js";
 import { users, sites, widgetType } from "../src/db/schema.js";
+import { own } from "../src/lib/own.js";
 
 const email = `test-dashboards-${crypto.randomUUID()}@example.com`;
 const password = "TestPass123";
@@ -106,7 +107,7 @@ describe("dashboards", () => {
       // Fails loudly (undefined config) rather than silently skipping if a
       // new enum value shows up with no entry above — forces this test to
       // be updated alongside the enum instead of quietly going stale.
-      const config = configByType[type];
+      const config = own(configByType, type);
       const res = await request(app).post(`/api/dashboards/${dashboardId}/widgets`).set("Cookie", cookie).send({ type, config });
       expect(res.status, `${type} should be accepted`).toBe(201);
       expect(res.body.type).toBe(type);

@@ -13,6 +13,7 @@ import (
 	"looksee-agent/internal/checks"
 	"looksee-agent/internal/collector"
 	"looksee-agent/internal/metrics"
+	"looksee-agent/internal/watchdog"
 )
 
 type Client struct {
@@ -39,6 +40,14 @@ type Config struct {
 	UpdateAvailable bool           `json:"updateAvailable"`
 	// Non-nil while this host is a site collector (engine 3.2.0+).
 	Collector *collector.Spec `json:"collector"`
+	// Non-nil while this endpoint is a watchdog agent (engine 5.0+): how
+	// to alert when the engine can't be reached.
+	Watchdog *watchdog.Spec `json:"watchdog"`
+	// Lock files whose dependencies to include in the software report
+	// (engine 5.0+; from the endpoint's software checks).
+	SoftwareScan *struct {
+		Lockfiles []string `json:"lockfiles"`
+	} `json:"softwareScan"`
 }
 
 func (c *Client) FetchConfig() (Config, error) {
@@ -91,6 +100,8 @@ type reportBody struct {
 	Inventory           map[string]any        `json:"inventory,omitempty"`
 	Version             string                `json:"version,omitempty"`
 	CollectorError      string                `json:"collectorError,omitempty"`
+	WatchdogStatus      *watchdog.Status      `json:"watchdogStatus,omitempty"`
+	Software            *metrics.Software     `json:"software,omitempty"`
 }
 
 // An empty script_dir is still worth reporting (it clears an old list),
@@ -102,7 +113,7 @@ func scriptsOrEmpty(d Discovery) []string {
 	return d.Scripts
 }
 
-func (c *Client) SendReport(snap metrics.Snapshot, results []checks.Result, discovery Discovery, inventory map[string]any, version, collectorError string) error {
+func (c *Client) SendReport(snap metrics.Snapshot, results []checks.Result, discovery Discovery, inventory map[string]any, version, collectorError string, watchdogStatus *watchdog.Status, software *metrics.Software) error {
 	body, err := json.Marshal(reportBody{
 		Metrics:             snap,
 		Results:             results,
@@ -115,6 +126,8 @@ func (c *Client) SendReport(snap metrics.Snapshot, results []checks.Result, disc
 		Inventory:           inventory,
 		Version:             version,
 		CollectorError:      collectorError,
+		WatchdogStatus:      watchdogStatus,
+		Software:            software,
 	})
 	if err != nil {
 		return err

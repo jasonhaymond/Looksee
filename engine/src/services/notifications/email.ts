@@ -1,3 +1,9 @@
+// Sends alert and test emails through the SMTP server set on the Channels
+// page (or, as a fallback, the SMTP_* environment variables).
+//
+// Security: the SMTP password is stored server-side only and never sent to the
+// dashboard; it is sent to watchdog agents only (services/watchdogAgents.ts).
+
 import nodemailer from "nodemailer";
 import { eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
@@ -6,7 +12,7 @@ import { smtpSettings } from "../../db/schema.js";
 // DB settings (the admin-UI path, see routes/smtp.ts) win per-field over the
 // env vars — the env vars are a fallback for an existing .env-based setup,
 // not removed, since this used to be the only way to configure it.
-async function resolveSettings() {
+export async function resolveSettings() {
   const [row] = await db.select().from(smtpSettings).where(eq(smtpSettings.id, 1)).limit(1);
   return {
     host: row?.host || process.env.SMTP_HOST,

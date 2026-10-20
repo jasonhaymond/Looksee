@@ -1,3 +1,16 @@
+// The Express application: every API route, the security middleware in
+// front of them, and the error handler behind them.
+//
+// Where this sits: index.ts imports this and starts the HTTP server; the tests
+// import it directly (supertest) without opening a port. Express is the web
+// framework; "middleware" are functions that run on every request before (or
+// after) the route that answers it.
+//
+// Security: securityGate runs first on every request (IP blocks, the optional
+// allowlist), security headers are added to every response, request bodies are
+// size-limited, CORS only allows the configured dashboard origin, and each
+// router applies its own sign-in check (requireAuth / requireAgentAuth).
+
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -26,6 +39,8 @@ import { collectorRouter } from "./routes/collector.js";
 import { locationsRouter } from "./routes/locations.js";
 import { groupsRouter } from "./routes/groups.js";
 import { treeRouter } from "./routes/tree.js";
+import { exclusionsRouter } from "./routes/exclusions.js";
+import { snmpTemplatesRouter } from "./routes/snmpTemplates.js";
 import { securityRouter } from "./routes/security.js";
 import { watchdogRouter } from "./routes/watchdog.js";
 import { notFoundHandler, securityGate, securityHeaders } from "./middleware/securityGate.js";
@@ -60,6 +75,8 @@ app.use("/api/sites", sitesRouter);
 app.use("/api/locations", locationsRouter);
 app.use("/api/groups", groupsRouter);
 app.use("/api/tree", treeRouter);
+app.use("/api/exclusion-lists", exclusionsRouter);
+app.use("/api/snmp-templates", snmpTemplatesRouter);
 app.use("/api/security", securityRouter);
 app.use("/api/watchdog", watchdogRouter);
 app.use("/api/endpoints", endpointsRouter);

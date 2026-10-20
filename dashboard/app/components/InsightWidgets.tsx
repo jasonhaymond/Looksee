@@ -1,3 +1,6 @@
+// Dashboard widgets for insights: top talkers from flow data and a status
+// summary across all checks.
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -6,6 +9,7 @@ import { api, type Check, type Site, type FlowRow, type Widget } from "../lib/ap
 import { StatusBadge, formatBytes } from "./ui";
 import { displayStatus } from "./CheckDetail";
 import { pollEvery } from "../lib/poll";
+import { own } from "../lib/own";
 
 const RANGES = [
   { minutes: 15, label: "15m" },
@@ -83,10 +87,10 @@ export function StatusSummaryWidget({ checks, site }: { checks: Check[]; site: S
       <div className="mb-2 font-medium">{site ? site.name : "All sites"}</div>
       <div className="mb-2 flex flex-wrap gap-3 text-sm">
         {["down", "warn", "up", "maintenance", "unknown"].map((s) =>
-          counts[s] ? (
+          own(counts, s) ? (
             <span key={s} className="inline-flex items-center gap-1.5">
               <StatusBadge status={s} compact />
-              <strong>{counts[s]}</strong>
+              <strong>{own(counts, s)}</strong>
               <span className="text-xs text-[var(--muted)]">{s}</span>
             </span>
           ) : null

@@ -1,3 +1,5 @@
+// Dashboard widget: a free-text note (shown as plain text, never as HTML).
+
 "use client";
 
 import { useState } from "react";

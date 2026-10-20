@@ -1,3 +1,10 @@
+// Security events and responses: settings, the event log (failed logins,
+// lockouts, scans, allowlist denials…), rules that notify or block an address
+// automatically, IP blocks, and recognising known exploit/scanner paths.
+//
+// Blocks never apply to the admin's own known addresses, so a rule can't lock
+// the admin out.
+
 import type { Request } from "express";
 import { and, eq, gt, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -7,6 +14,7 @@ import { logger } from "../lib/logger.js";
 import { sendEmail } from "./notifications/email.js";
 import { deliverText } from "./alerting.js";
 import { dashboardUrl } from "./notifications/templates.js";
+import { own } from "../lib/own.js";
 
 export type SecuritySettings = typeof securitySettings.$inferSelect;
 
@@ -91,7 +99,7 @@ const maskPath = (p: string) => p.replace(/(\/api\/hb\/)[^/?#]+/i, "$1…");
 
 export async function recordSecurityEvent(kind: string, input: EventInput = {}) {
   const ip = input.ip ?? (input.req ? clientIp(input.req) : null);
-  const meta = SECURITY_EVENT_KINDS[kind] ?? { severity: "info" };
+  const meta = own(SECURITY_EVENT_KINDS, kind) ?? { severity: "info" };
   try {
     await db.insert(securityEvents).values({
       kind,
@@ -127,7 +135,7 @@ async function evaluateRules(kind: string, ip: string | null, detail?: string) {
     if (rule.cooldownMinutes > 0 && Date.now() - last < rule.cooldownMinutes * 60_000) continue;
     lastFired.set(key, Date.now());
     await db.update(securityRules).set({ lastFiredAt: new Date() }).where(eq(securityRules.id, rule.id));
-    const what = SECURITY_EVENT_KINDS[kind]?.label ?? kind;
+    const what = own(SECURITY_EVENT_KINDS, kind)?.label ?? kind;
     let action = "";
     if (rule.blockMinutes && ip && !(await isBlocked(ip))) {
       // Never auto-block an address you've told Looksee is yours — five
@@ -197,5 +205,13 @@ export async function adminEmail(): Promise<string | undefined> {
 }
 
 // Known exploit/scanner paths — nothing in Looksee lives at any of these,
-// so a request for one is a probe, not a typo.
-export const SCAN_PATTERNS = /(\/\.env|\/\.git|\/wp-(login|admin|content|includes)|xmlrpc\.php|\/phpmyadmin|\/pma\/|\/cgi-bin|\/actuator|\/server-status|\/vendor\/phpunit|\/boaform|\/HNAP1|\/\.aws|\/config\.json$|\/admin\.php|\/shell|\/\.DS_Store|\.\.\/|%2e%2e|\/etc\/passwd|\/owa\/|\/remote\/fgt_lang|\/geoserver|\/solr\/|\/console\/|\/manager\/html|\.php$|\.asp$|\.aspx$|\.jsp$)/i;
+// so a request for one is a probe, not a typo. Compared as plain text
+// (lower-case), so checking costs the same whatever a request sends.
+const SCAN_CONTAINS = ["/.env", "/.git", "/wp-login", "/wp-admin", "/wp-content", "/wp-includes", "xmlrpc.php", "/phpmyadmin", "/pma/", "/cgi-bin", "/actuator", "/server-status", "/vendor/phpunit", "/boaform", "/hnap1", "/.aws", "/admin.php", "/shell", "/.ds_store", "../", "%2e%2e", "/etc/passwd", "/owa/", "/remote/fgt_lang", "/geoserver", "/solr/", "/console/", "/manager/html"];
+const SCAN_ENDS = ["/config.json", ".php", ".asp", ".aspx", ".jsp"];
+
+/** Whether a requested URL is a known exploit/scanner path. */
+export function looksLikeScan(url: string): boolean {
+  const u = url.toLowerCase();
+  return SCAN_CONTAINS.some((s) => u.includes(s)) || SCAN_ENDS.some((s) => u.endsWith(s));
+}

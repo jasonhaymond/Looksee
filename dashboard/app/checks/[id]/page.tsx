@@ -1,3 +1,10 @@
+// A check's own page (/checks/<id>): status, history chart and results (with
+// exclude / count again), incidents, settings, alert rules, recovery and what
+// the check ignores.
+//
+// "use client" makes this a React component that runs in the browser; the
+// engine refuses every call without a session.
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -9,9 +16,11 @@ import { CheckForm } from "../../components/CheckForm";
 import { AlertRuleManager } from "../../components/AlertRuleManager";
 import { displayStatus, Details, Remediation } from "../../components/CheckDetail";
 import { RecoveryUrl, ResolveButton } from "../../components/CheckRecovery";
+import { ExclusionsApplied } from "../../components/ExclusionsApplied";
 import { LineChart, StatusStrip } from "../../components/Charts";
 import { Button, EmptyState, Label, Modal, StatusBadge, inputClass, relativeTime, useToast } from "../../components/ui";
 import { pollEvery } from "../../lib/poll";
+import { useNow } from "../../lib/useNow";
 
 const RANGES: [number, string][] = [
   [1, "1 hour"],
@@ -51,21 +60,27 @@ export default function CheckPage() {
   const [ctx, setCtx] = useState<{ sites: Site[]; endpoints: Endpoint[]; checks: Check[]; channels: Channel[] } | null>(null);
   const [running, setRunning] = useState(false);
   const toast = useToast();
+  // The current time, for "open for N min" (lib/useNow.ts).
+  const now = useNow();
 
-  const loadCheck = useCallback(async () => {
-    try {
-      setCheck(await api.check(id));
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) router.push("/login");
-      else setMissing(true);
-    }
-  }, [id, router]);
+  const loadCheck = useCallback(
+    () =>
+      api
+        .check(id)
+        .then(setCheck)
+        .catch((err) => {
+          if (err instanceof ApiError && err.status === 401) router.push("/login");
+          else setMissing(true);
+        }),
+    [id, router]
+  );
 
-  const loadHistory = useCallback(async () => {
+  const loadHistory = useCallback(() => {
     const since = new Date(Date.now() - hours * 3_600_000).toISOString();
-    const [s, r] = await Promise.all([api.checkStats(id, hours), api.checkResults(id, 2000, since)]);
-    setStats(s);
-    setResults(r);
+    return Promise.all([api.checkStats(id, hours), api.checkResults(id, 2000, since)]).then(([s, r]) => {
+      setStats(s);
+      setResults(r);
+    });
   }, [id, hours]);
 
   useEffect(() => {
@@ -148,6 +163,7 @@ export default function CheckPage() {
         </p>
         <Remediation check={check} />
         <RecoveryUrl check={check} onChanged={loadCheck} />
+        <ExclusionsApplied check={check} />
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -220,7 +236,7 @@ export default function CheckPage() {
                       <StatusBadge status={i.resolvedAt ? "up" : i.severity} compact />
                       <span className="font-medium">{i.resolvedAt ? "Resolved" : "Open"}</span>
                       <span className="text-xs text-[var(--muted)]">
-                        {new Date(i.triggeredAt).toLocaleString()} · {Math.round(((i.resolvedAt ? new Date(i.resolvedAt).getTime() : Date.now()) - new Date(i.triggeredAt).getTime()) / 60_000)} min
+                        {new Date(i.triggeredAt).toLocaleString()} · {Math.round(((i.resolvedAt ? new Date(i.resolvedAt).getTime() : now) - new Date(i.triggeredAt).getTime()) / 60_000)} min
                       </span>
                     </div>
                     {i.message && <p className="text-xs text-[var(--muted)]">{i.message}</p>}

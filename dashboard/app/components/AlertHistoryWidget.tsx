@@ -1,3 +1,6 @@
+// Dashboard widget: the latest alert incidents, refreshed on a timer (paused
+// while you're using a field — lib/poll.ts).
+
 "use client";
 
 import { useEffect, useState } from "react";

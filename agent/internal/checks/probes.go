@@ -1,3 +1,7 @@
+// Network probes the agent can run for the engine ("run from this endpoint's
+// agent"): ping, TCP, HTTP(S), DNS and TLS certificate — for targets only
+// reachable from inside the endpoint's network.
+
 package checks
 
 import (
@@ -163,7 +167,7 @@ func probeHTTP(c Cfg) Result {
 	follow := c.Bool("followRedirects", true)
 	client := &http.Client{
 		Timeout:   time.Duration(c.Num("timeoutSeconds", 10)) * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: c.Bool("insecureSkipVerify", false)}},
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: c.Bool("insecureSkipVerify", false)}},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if !follow {
 				return http.ErrUseLastResponse
@@ -311,7 +315,11 @@ func probeSSL(c Cfg) Result {
 	}
 	port := strconv.Itoa(int(c.Num("port", 443)))
 	start := time.Now()
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", net.JoinHostPort(host, port), &tls.Config{ServerName: host, InsecureSkipVerify: true})
+	// InsecureSkipVerify: this check inspects the certificate (expiry, chain)
+	// itself, so it must connect even when the certificate isn't trusted;
+	// nothing secret is sent. TLS 1.2 is the oldest version accepted (Go's
+	// default, stated explicitly).
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", net.JoinHostPort(host, port), &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12, InsecureSkipVerify: true})
 	if err != nil {
 		return down(err.Error())
 	}

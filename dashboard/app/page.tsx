@@ -1,9 +1,15 @@
+// The Dashboards page (/): your widget canvases — switch, create, rename, edit
+// layout (drag/resize on desktop), add widgets — refreshing at each
+// dashboard's own rate. "use client" makes this a React component that runs in
+// the browser; the engine refuses every call without a session.
+
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-// v2's default export uses a newer composable prop API; /legacy gives the
-// flat v1-style props (cols, rowHeight, onDragStop, ...) this file uses.
+// react-grid-layout v2's default export uses a newer composable prop API;
+// /legacy gives the flat v1-style props (cols, rowHeight, onDragStop, ...)
+// this file uses.
 import GridLayout, { WidthProvider } from "react-grid-layout/legacy";
 import type { LayoutItem } from "react-grid-layout";
 import { api, ApiError, type Site, type Check, type CheckResult, type Dashboard, type Widget, type WidgetType, type Endpoint } from "./lib/api";
@@ -29,10 +35,20 @@ const LAST_DASHBOARD_KEY = "looksee.lastDashboardId";
 // desktop-first "arrange it" workflow; viewing status works fine either way.
 const DESKTOP_BREAKPOINT_PX = 640;
 
+/** Subscribes to the screen crossing the desktop width (matchMedia). */
+function subscribeDesktop(onChange: () => void) {
+  const mq = window.matchMedia(`(min-width: ${DESKTOP_BREAKPOINT_PX}px)`);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+/** Whether the screen is desktop-wide right now. */
+const isDesktopNow = () => window.matchMedia(`(min-width: ${DESKTOP_BREAKPOINT_PX}px)`).matches;
+
 export default function DashboardsPage() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
-  const [isDesktop, setIsDesktop] = useState<boolean | null>(null);
+  // Wide enough for the drag-and-drop grid? (null during the server render)
+  const isDesktop = useSyncExternalStore(subscribeDesktop, isDesktopNow, () => null);
 
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
   const [activeDashboardId, setActiveDashboardId] = useState<string | null>(null);
@@ -40,7 +56,9 @@ export default function DashboardsPage() {
   // Latest widgets for handlers that add several in a row (their closure
   // would otherwise see the list from before the first add).
   const widgetsRef = useRef<Widget[]>([]);
-  widgetsRef.current = widgets;
+  useEffect(() => {
+    widgetsRef.current = widgets;
+  }, [widgets]);
   const [editMode, setEditMode] = useState(false);
   const [showAddWidget, setShowAddWidget] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -60,38 +78,36 @@ export default function DashboardsPage() {
       });
   }, [router]);
 
-  useEffect(() => {
-    const mq = window.matchMedia(`(min-width: ${DESKTOP_BREAKPOINT_PX}px)`);
-    setIsDesktop(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-
   // Ensures at least one dashboard always exists, and remembers the last one
   // viewed across visits (a fresh install has none — this is what a
   // brand-new user lands on instead of an empty error state).
-  const loadDashboards = useCallback(async () => {
-    let list = await api.dashboards();
-    if (list.length === 0) {
-      const created = await api.createDashboard("Overview");
-      list = [created];
-    }
-    setDashboards(list);
-    const remembered = localStorage.getItem(LAST_DASHBOARD_KEY);
-    const nextActive = list.find((d) => d.id === remembered)?.id ?? list[0].id;
-    setActiveDashboardId((current) => current ?? nextActive);
-  }, []);
+  const loadDashboards = useCallback(
+    () =>
+      api
+        .dashboards()
+        .then((list) => (list.length ? list : api.createDashboard("Overview").then((created) => [created])))
+        .then((list) => {
+          setDashboards(list);
+          let remembered: string | null = null;
+          try {
+            remembered = localStorage.getItem(LAST_DASHBOARD_KEY);
+          } catch {
+            // Storage unavailable: start on the first dashboard.
+          }
+          const nextActive = list.find((d) => d.id === remembered)?.id ?? list[0].id;
+          setActiveDashboardId((current) => current ?? nextActive);
+        }),
+    []
+  );
 
-  const loadWidgets = useCallback(async (dashboardId: string) => {
-    setWidgets(await api.widgets(dashboardId));
-  }, []);
+  const loadWidgets = useCallback((dashboardId: string) => api.widgets(dashboardId).then(setWidgets), []);
 
   // Every check already carries its newest result (lastStatus/lastCheckedAt
   // ...), so the whole dashboard refresh is three requests, not one per
   // check.
-  const loadStatusData = useCallback(async () => {
-    const [siteList, allChecks, endpointList] = await Promise.all([api.sites(), api.checks(), api.endpoints()]);
+  const loadStatusData = useCallback(
+    () =>
+      Promise.all([api.sites(), api.checks(), api.endpoints()]).then(([siteList, allChecks, endpointList]) => {
     setSites(siteList);
     setChecks(allChecks);
     setEndpoints(endpointList);
@@ -102,7 +118,9 @@ export default function DashboardsPage() {
           .map((c) => [c.id, { id: c.id, status: c.inMaintenance ? "unknown" : (c.lastStatus ?? "unknown"), latencyMs: c.lastLatencyMs, message: c.lastMessage, value: c.lastValue, checkedAt: c.lastCheckedAt! }] as const)
       )
     );
-  }, []);
+      }),
+    []
+  );
 
   useEffect(() => {
     if (!authChecked) return;
@@ -125,7 +143,11 @@ export default function DashboardsPage() {
   useEffect(() => {
     if (activeDashboardId) {
       loadWidgets(activeDashboardId);
-      localStorage.setItem(LAST_DASHBOARD_KEY, activeDashboardId);
+      try {
+        localStorage.setItem(LAST_DASHBOARD_KEY, activeDashboardId);
+      } catch {
+        // Not remembered; nothing else depends on it.
+      }
     }
   }, [activeDashboardId, loadWidgets]);
 
@@ -252,7 +274,7 @@ export default function DashboardsPage() {
       if (!check.enabled) {
         return (
           <p className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3 text-xs text-[var(--muted)]">
-            "{check.name}" is disabled — see Manage to re-enable it.
+            &ldquo;{check.name}&rdquo; is disabled — see Manage to re-enable it.
           </p>
         );
       }

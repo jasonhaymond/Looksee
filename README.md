@@ -3,29 +3,35 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v4.3.0 — 57 check types across the engine and agent (reachability, web,
+**Status**: v5.0.0 — 61 check types across the engine and agent (reachability, web,
 real-browser, DNS/DNSSEC, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
-app integrations, SNMP templates/walks/interface tables, printers, traps/syslog,
-Redfish/IPMI, Proxmox, VMware, Hyper-V, Docker, 60+ host metrics, files and folder
-watchdog, logs, event log/journal, scripts with expected output, backups,
-heartbeats/pushed values, IP change by MAC, anomaly detection), locations and multi-site
-monitoring (site collectors and direct push), email/Slack/Teams/Telegram/webhook/push
-alerts with message templates and remediation hints, per-check history pages and alert
-history, host process/service inventory, smart suggested checks, maintenance windows,
-dependencies, escalation, SLA reports, public status pages, discovery, NetFlow/sFlow top
-talkers, light/dark themes, in-app help, and a security layer (required two-factor
-sign-in with passkey/security-key support, lockouts, IP allowlist, new-IP email
-confirmation, attack detection with auto-blocking, and an outbound watchdog for
-Looksee's own outages). Built and verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md)
-for exactly what was tested how); the homelab server runs the 3.x line.
+app integrations, SNMP with an OID dictionary, calculations and reusable templates,
+interface tables, printers, traps/syslog, Redfish/IPMI, Proxmox, VMware, Hyper-V,
+Docker, 60+ endpoint metrics, installed software with upgradable/changed/vulnerable
+checks, files and folder watchdog, logs, event log/journal, scripts with expected
+output, backups, heartbeats/pushed values, calculated values, IP change by MAC, anomaly
+detection), organized as **Location → Site → Endpoint → Check** with a sidebar tree and
+groups, multi-site monitoring (site collectors and direct push), email/Slack/Teams/
+Telegram/webhook/push alerts with message templates and remediation hints, editable
+alert rules, manual and event-driven recovery, exclusions, per-check history pages and
+alert history, endpoint process/service inventory, suggested checks plus role, security
+and SNMP templates, maintenance windows, dependencies, escalation, SLA reports, public
+status pages, discovery, NetFlow/sFlow top talkers, light/dark themes, in-app help, and
+a security layer (required two-factor sign-in with passkey/security-key support,
+lockouts, IP allowlist, new-IP email confirmation, attack detection with auto-blocking,
+and both an outbound watchdog and watchdog agents for Looksee's own outages). Built and
+verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md) for exactly what was
+tested how).
 
-**Current version: v4.3.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#430---2026-10-15)
-(4.3 adds the release security gate and approval-checked deploys; 4.2 shows every time
-in your local time zone and adds the VPN-only access guide; 4.1
-added passkeys and the watchdog; upgrading from 3.x to 4.x requires setting up
-two-factor at your first sign-in — see the 4.0.0 upgrade notes there). See [Deploying](#deploying) for a first deployment and
-[`docs/user-guide.md`](docs/user-guide.md) for day-to-day usage (also built into the
-app under **Help**).
+**Current version: v5.0.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#500---2026-10-20).
+5.0 renames what 4.x called endpoints to **sites** and hosts to **endpoints** (in the
+database too), adds the sidebar tree, groups, exclusions, recovery options, watchdog
+agents, software and vulnerability checks, SNMP templates and calculations, and role
+templates. **Before upgrading from 4.x, read
+[Upgrading to 5.0](docs/deployment-guide.md#upgrading-to-50)** — rolling back means
+restoring the pre-update database snapshot. See [Deploying](#deploying) for a first
+deployment and [`docs/user-guide.md`](docs/user-guide.md) for day-to-day usage (also
+built into the app under **Help & user guide**).
 
 ## Tech stack
 
@@ -73,9 +79,9 @@ npm run dev              # http://localhost:3100
 Sign in with the admin account from step 2, add an Endpoint, then add a check (ping/tcp/http/
 dns/ssl_cert run agentless; agent_service needs the agent below).
 
-**4. Agent** (optional — only needed for host metrics / service checks)
+**4. Agent** (optional — only needed for endpoint metrics / service checks)
 
-See [`agent/README.md`](agent/README.md). Short version: create a Host in the dashboard,
+See [`agent/README.md`](agent/README.md). Short version: create an Endpoint in the dashboard,
 generate its agent key, copy `agent/looksee-agent.example.yaml` to
 `looksee-agent.yaml` with that key, then `go build` and run it.
 
@@ -161,8 +167,10 @@ Backups section for exactly what's been proven vs. still needs a first real run.
 - [`CLAUDE.md`](CLAUDE.md) — locked project-specific decisions
 - [`docs/deployment-guide.md`](docs/deployment-guide.md) — first deployment and updating
 - [`docs/migration-guide.md`](docs/migration-guide.md) — moving an existing deployment to a new server
-- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: checks (adding to many hosts, browsing what the agent found, duplicating, check pages), hosts and inventory, locations and endpoints, multiple sites, discovery, heartbeats, channels and templates, alerting and alert history, maintenance, reports, traps/syslog, top talkers, status pages, dashboards, security, themes
+- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: the Location → Site → Endpoint layout and sidebar, checks (adding to many endpoints, browsing what the agent found, duplicating, check pages, resolving and recovery, statistics exclusions, SNMP calculations, software and security checks), endpoints and inventory, suggestions and templates, sites and locations, groups, exclusions, SNMP templates, multiple sites, discovery, heartbeats, channels and templates, alerting and alert history, maintenance, reports, traps/syslog, top talkers, status pages, dashboards, security, watchdog and watchdog agents, themes
 - [`docs/check-reference.md`](docs/check-reference.md) — every check type: what it watches, how it works, its value, and how to check the same thing by hand
+- [`docs/check-settings.md`](docs/check-settings.md) — every setting of every check type, with defaults (generated from the check form)
+- [`docs/plans/check-expansion.md`](docs/plans/check-expansion.md) — recommendations for further checks and templates (not built)
 - [`docs/security-guide.md`](docs/security-guide.md) — two-factor, lockouts, IP allowlist, new-IP confirmation, attack detection, hardening checklist, recovery
 - [`docs/vpn-access.md`](docs/vpn-access.md) — reaching Looksee only through a VPN (admin only, or agents too), with split DNS, Caddy rules, verification and rollback — not applied to production yet
 - [`docs/security-audit-2026-10.md`](docs/security-audit-2026-10.md) — the 4.0.0 security and dependency audit: findings, fixes, open items

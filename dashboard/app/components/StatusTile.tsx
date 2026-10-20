@@ -1,3 +1,6 @@
+// Dashboard widget: one check's status as a coloured tile with its glyph,
+// name and latest message.
+
 "use client";
 
 import { useState } from "react";

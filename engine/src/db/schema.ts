@@ -27,7 +27,6 @@ import {
   pgEnum,
   uuid,
   text,
-  varchar,
   boolean,
   integer,
   doublePrecision,
@@ -338,8 +337,27 @@ export const endpoints = pgTable("endpoints", {
   // script check may run.
   availableScripts: jsonb("available_scripts").$type<string[]>(),
   tags: jsonb("tags").$type<string[]>().notNull().default([]),
+  // Watchdog agent: when enabled, this endpoint's agent sends an alert by
+  // email and/or chat itself if it can't reach Looksee for afterMinutes
+  // (and a recovery message when it can again). Null = not a watchdog.
+  watchdog: jsonb("watchdog").$type<WatchdogSetting>(),
+  // What the watchdog agent last reported: when it last alerted, tested,
+  // or failed to send (see routes/agent.ts).
+  watchdogStatus: jsonb("watchdog_status").$type<Record<string, unknown>>(),
+  // The 5.0 agent's software report: installed packages, upgradable
+  // packages (with security/phased flags) and the OS release — sent when it
+  // changes. Read by the software checks (services/software.ts).
+  software: jsonb("software").$type<Record<string, unknown>>(),
+  softwareUpdatedAt: timestamp("software_updated_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * A watchdog agent's settings (endpoints.watchdog): how long Looksee may be
+ * unreachable before it alerts, who it emails (through the SMTP settings),
+ * which chat channels it posts to, and a pending "send a test" request.
+ */
+export type WatchdogSetting = { enabled: boolean; afterMinutes: number; emailTo: string[]; channelIds: string[]; testRequestedAt?: string | null };
 
 // One monitored thing: a reachability probe run by the engine, or a metric/
 // service check reported in by an agent. `config` is a small per-type jsonb
@@ -792,6 +810,55 @@ export const groupMembers = pgTable("group_members", {
   // "Which groups is this endpoint in?" lookups.
   index("group_members_member_idx").on(t.memberType, t.memberId),
 ]);
+
+// Answers from outside services kept for a while, so checks don't ask the
+// same question repeatedly: vulnerability records from OSV.dev and
+// end-of-life dates from endoflife.date (services/software.ts). Public
+// data only — nothing secret is stored here.
+export const externalCache = pgTable("external_cache", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Custom SNMP templates: a named set of SNMP checks (OIDs, calculations,
+// thresholds) an admin builds once and applies to any number of devices
+// (services/snmpTemplates.ts). Built-in starter templates live in code, not
+// here. matchSysObjectId (an OID prefix) lets discovery suggest the template
+// for devices of that make.
+export const snmpTemplates = pgTable("snmp_templates", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  description: text("description"),
+  matchSysObjectId: text("match_sys_object_id"),
+  items: jsonb("items").$type<Record<string, unknown>[]>().notNull().default([]),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Reusable exclusion lists: items (mount points, interface names, message
+// texts, service names, …) that checks should ignore, kept in one place and
+// applied to every check — or only to the checks of chosen groups — whose
+// type uses that kind of item. Merged with each check's own `exclude`
+// setting by services/exclusions.ts before the check runs.
+export const exclusionLists = pgTable("exclusion_lists", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  description: text("description"),
+  // What the items are: "messages", "event_ids", "mounts", "interfaces",
+  // "devices", "sensors", "services", "containers", "vms" or "packages"
+  // (the list and which check types use each is EXCLUSION_KINDS in
+  // services/probes/exclude.ts).
+  kind: text("kind").notNull(),
+  items: text("items").array().notNull().default([]),
+  // Applies to every check of a matching type…
+  applyToAll: boolean("apply_to_all").notNull().default(false),
+  // …or only to the checks covered by these groups (resolved live).
+  groupIds: uuid("group_ids").array().notNull().default([]),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const logLevel = pgEnum("log_level", ["debug", "info", "warn", "error"]);
 

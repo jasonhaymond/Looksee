@@ -1,3 +1,6 @@
+// The root layout every page shares: page metadata, theme setup before the
+// page paints (no flash), and the app shell with the left navigation.
+
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "react-grid-layout/css/styles.css";

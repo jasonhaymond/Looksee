@@ -1,6 +1,9 @@
-import fs from "node:fs";
+// The in-app help: the repo's docs/ markdown, rendered on the server.
+// Files are read only from the docs folder (lib/safeFs.ts).
+
 import path from "node:path";
 import { Marked, type Tokens } from "marked";
+import { readTextIn } from "../lib/safeFs";
 
 // The in-app help is the repo's own docs/ folder, rendered at build time —
 // one source of truth, so the help inside the app can't drift from the
@@ -9,6 +12,7 @@ import { Marked, type Tokens } from "marked";
 export const DOCS = [
   { slug: "", file: "user-guide.md", title: "User guide" },
   { slug: "checks", file: "check-reference.md", title: "Check reference" },
+  { slug: "check-settings", file: "check-settings.md", title: "Check settings" },
   { slug: "windows-agent", file: "windows-agent-security.md", title: "Windows agent & security software" },
   { slug: "security", file: "security-guide.md", title: "Security guide" },
   { slug: "vpn", file: "vpn-access.md", title: "VPN-only access" },
@@ -44,7 +48,7 @@ export function loadDoc(slug: string): { title: string; intro: string; sections:
   if (!doc) return null;
   let src: string;
   try {
-    src = fs.readFileSync(path.join(process.cwd(), "..", "docs", doc.file), "utf-8");
+    src = readTextIn(path.join(process.cwd(), "..", "docs"), doc.file);
   } catch {
     return { title: doc.title, intro: `<p>This guide (docs/${doc.file}) isn't available in this build.</p>`, sections: [] };
   }

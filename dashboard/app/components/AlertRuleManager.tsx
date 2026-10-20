@@ -12,7 +12,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { api, type AlertRule, type Channel } from "../lib/api";
 import { Button, Label, inputClass } from "./ui";
@@ -119,17 +119,20 @@ export function AlertRuleManager({ checkId }: { checkId: string }) {
   const [editing, setEditing] = useState<{ id: string; value: RuleDraft } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
-    const [ruleList, channelList] = await Promise.all([api.alertRules(checkId), api.channels()]);
-    setRules(ruleList);
-    setChannels(channelList);
-    setLoaded(true);
-  }
+  // Loads the check's rules and the channels they can notify.
+  const load = useCallback(
+    () =>
+      Promise.all([api.alertRules(checkId), api.channels()]).then(([ruleList, channelList]) => {
+        setRules(ruleList);
+        setChannels(channelList);
+        setLoaded(true);
+      }),
+    [checkId]
+  );
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when the check changes
-  }, [checkId]);
+  }, [load]);
 
   async function add() {
     setError(null);

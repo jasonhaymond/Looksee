@@ -1,9 +1,15 @@
+// Warn/critical thresholds for any check's value and response time, applied
+// the same way for every check type; and "the worse of two statuses".
+
 export type Status = "up" | "down" | "warn" | "unknown";
 
-const RANK: Record<Status, number> = { up: 0, unknown: 1, warn: 2, down: 3 };
+// How bad each status is, for picking the worse of two.
+const RANK = { up: 0, unknown: 1, warn: 2, down: 3 } as const;
+/** A status's badness: up 0, unknown 1, warn 2, down 3. */
+const rank = (s: Status): number => (s === "down" ? RANK.down : s === "warn" ? RANK.warn : s === "unknown" ? RANK.unknown : RANK.up);
 
 export function worst(a: Status, b: Status): Status {
-  return RANK[a] >= RANK[b] ? a : b;
+  return rank(a) >= rank(b) ? a : b;
 }
 
 function num(v: unknown): number | undefined {
@@ -62,7 +68,7 @@ export function applyThresholds<T extends MeasuredResult>(result: T, config: Rec
   const t = readValueThresholds(config);
   if (result.value != null && hasThresholds(t) && status !== "down") {
     const v = evaluateValue(result.value, t, unit);
-    if (RANK[v.status] > RANK[status]) {
+    if (rank(v.status) > rank(status)) {
       status = v.status;
       if (v.message) notes.push(v.message);
     }
@@ -74,7 +80,7 @@ export function applyThresholds<T extends MeasuredResult>(result: T, config: Rec
     if (latCrit != null && result.latencyMs > latCrit) {
       status = "down";
       notes.push(`Response took ${result.latencyMs}ms (critical over ${latCrit}ms)`);
-    } else if (latWarn != null && result.latencyMs > latWarn && RANK[status] < RANK.warn) {
+    } else if (latWarn != null && result.latencyMs > latWarn && rank(status) < RANK.warn) {
       status = "warn";
       notes.push(`Response took ${result.latencyMs}ms (warn over ${latWarn}ms)`);
     }

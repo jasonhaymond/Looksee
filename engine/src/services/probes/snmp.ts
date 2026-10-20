@@ -1,6 +1,19 @@
+// SNMP: sessions (v1/v2c/v3), reading one value or a walked subtree, ready-made
+// templates (printers, UPS, CPU/memory/disk, sensors, reboots), calculations on
+// the value and extra OIDs, the interface table check, and the walk browser.
+//
+// Runs on the engine and on site collectors. Row and interface filters run on
+// RE2 (lib/userRegex.ts); calculations use the safe calculator
+// (probes/expression.ts).
+
 import * as snmp from "net-snmp";
 import { worst } from "../thresholds.js";
 import { type Config, type ProbeContext, type ProbeOutcome, bool, down, errMsg, numOr, str, warn } from "./types.js";
+import { excludeItems, nameExcluded } from "./exclude.js";
+import { evaluateExpression } from "./expression.js";
+import { own, setOwn } from "../../lib/own.js";
+import { compileUserRegex, type UserRegex } from "../../lib/userRegex.js";
+import { isOid } from "./mibs.js";
 
 const AUTH: Record<string, snmp.AuthProtocols> = {
   md5: snmp.AuthProtocols.md5,
@@ -31,14 +44,16 @@ export function openSnmpSession(config: Config): snmp.Session {
     // SHA-1, which then failed auth with no hint why).
     const authName = str(config, "authProtocol", "sha");
     const privName = str(config, "privProtocol", "aes");
-    if (!AUTH[authName]) throw new Error(`Unsupported SNMPv3 auth protocol: ${authName}`);
-    if (!PRIV[privName]) throw new Error(`Unsupported SNMPv3 privacy protocol: ${privName}`);
+    const authProtocol = own(AUTH, authName);
+    const privProtocol = own(PRIV, privName);
+    if (authProtocol === undefined) throw new Error(`Unsupported SNMPv3 auth protocol: ${authName}`);
+    if (privProtocol === undefined) throw new Error(`Unsupported SNMPv3 privacy protocol: ${privName}`);
     const user: snmp.User = {
       name: str(config, "username"),
       level: LEVELS[str(config, "securityLevel")] ?? snmp.SecurityLevel.authPriv,
-      authProtocol: AUTH[authName],
+      authProtocol,
       authKey: str(config, "authKey"),
-      privProtocol: PRIV[privName],
+      privProtocol,
       privKey: str(config, "privKey"),
     };
     return snmp.createV3Session(host, user, options);
@@ -223,7 +238,7 @@ export const SNMP_PRESETS: Record<string, (s: snmp.Session, c: Config, ctx: Prob
       alertRows.push({ severity: level === 3 ? "critical" : level === 4 || level === 5 ? "warning" : "other", description: toStr(alerts.get("8")?.get(idx)), code: toNum(alerts.get("7")?.get(idx)) });
     }
     const state = toNum([...printerStatus.values()][0]);
-    const stateName = ({ 1: "other", 2: "unknown", 3: "idle", 4: "printing", 5: "warming up" } as Record<number, string>)[state] ?? "unknown";
+    const stateName = own({ 1: "other", 2: "unknown", 3: "idle", 4: "printing", 5: "warming up" } as Record<number, string>, state) ?? "unknown";
     const critical = conditions.filter((c) => c.severity === "down").map((c) => c.name);
     const warnings = conditions.filter((c) => c.severity === "warn").map((c) => c.name);
     const critAlerts = alertRows.filter((a) => a.severity === "critical" && a.description).map((a) => a.description);
@@ -273,7 +288,7 @@ export const SNMP_PRESETS: Record<string, (s: snmp.Session, c: Config, ctx: Prob
     const [vb] = await snmpGet(s, ["1.3.6.1.2.1.33.1.4.1.0"]);
     const source = toNum(vb.value);
     const names: Record<number, string> = { 1: "other", 2: "none", 3: "normal (utility)", 4: "bypass", 5: "battery", 6: "booster", 7: "reducer" };
-    return { value: source, message: `Output source: ${names[source] ?? source}`, status: source === 5 ? "warn" : source === 2 ? "down" : "up" };
+    return { value: source, message: `Output source: ${own(names, source) ?? source}`, status: source === 5 ? "warn" : source === 2 ? "down" : "up" };
   },
   async uptime_reboot(s, c, ctx) {
     const [vb] = await snmpGet(s, ["1.3.6.1.2.1.1.3.0"]);
@@ -322,9 +337,10 @@ async function walkCheck(session: snmp.Session, oid: string, mode: string, confi
   const latencyMs = Date.now() - start;
   if (!rows.length) return down(`Nothing under ${oid}`);
   const filter = str(config, "indexFilter");
-  let re: RegExp | null = null;
+  // The admin's row filter runs on RE2 (lib/userRegex.ts): no catastrophic backtracking.
+  let re: UserRegex | null = null;
   try {
-    re = filter ? new RegExp(filter) : null;
+    re = filter ? compileUserRegex(filter) : null;
   } catch {
     return warn(`Invalid row filter regex: ${filter}`);
   }
@@ -371,7 +387,141 @@ function close(s: snmp.Session) {
   }
 }
 
+/**
+ * An SNMP check: reads the value (one OID, a walk, or a preset) and, when the
+ * check has a "Calculate" expression, works it out with the value read as
+ * `value` and — when another check is referenced (refCheckId) — that
+ * check's latest value as `ref`, which the engine puts in config.refValue
+ * before the check runs (services/checkConfig.ts).
+ *
+ * @param config the check's settings
+ * @param ctx the check's state from its previous run
+ */
 export async function probeSnmp(config: Config, ctx: ProbeContext): Promise<ProbeOutcome> {
+  const expression = str(config, "expression").trim();
+  let extras: ExtraOid[];
+  try {
+    extras = expression ? parseExtraOids(config.extraOids) : [];
+  } catch (err) {
+    return warn(errMsg(err));
+  }
+  // The main OID (or template) is optional when the result is calculated
+  // from extra OIDs alone.
+  const hasMain = Boolean(str(config, "oid") || str(config, "preset"));
+  const outcome: ProbeOutcome = hasMain || !extras.length ? await readSnmp(config, ctx) : { status: "up", latencyMs: null, message: null };
+  if (!expression || outcome.skip || (hasMain && outcome.value == null)) return outcome;
+  const vars: Record<string, number> = {};
+  if (hasMain && outcome.value != null) vars.value = outcome.value;
+  if (str(config, "refCheckId")) {
+    const ref = Number(config.refValue);
+    if (config.refValue == null || config.refValue === "" || !Number.isFinite(ref)) return { ...outcome, status: "unknown", message: "The referenced check has no value yet", value: null };
+    vars.ref = ref;
+  }
+  // State for rate(…) extras lives under "extra", next to whatever the main
+  // read keeps (its own rate baseline), so neither overwrites the other.
+  let state = outcome.state ?? ctx.state;
+  if (extras.length) {
+    const read = await readExtraOids(config, extras, (ctx.state.extra ?? {}) as Record<string, { raw: number; at: number }>);
+    if ("error" in read) return { ...outcome, status: "down", message: read.error, value: null };
+    state = { ...state, extra: read.state };
+    if (read.baseline) return { status: "up", latencyMs: outcome.latencyMs, message: "Collecting a baseline for the rate", skip: true, state };
+    Object.assign(vars, read.values);
+  }
+  try {
+    const value = evaluateExpression(expression, vars);
+    const unit = str(config, "unit");
+    const inputs = Object.entries(vars)
+      .map(([k, v]) => `${k}=${Math.round(v * 100) / 100}`)
+      .join(", ");
+    return { ...outcome, status: outcome.status ?? "up", value, message: `${Math.round(value * 100) / 100}${unit} (${inputs})`, state };
+  } catch (err) {
+    return { ...outcome, status: "warn", message: `Calculation failed: ${errMsg(err)}`, value: null, state };
+  }
+}
+
+/** One extra OID read for the calculation: its name in the expression, and whether it's a counter read as a per-second rate. */
+type ExtraOid = { name: string; oid: string; rate: boolean };
+
+// Names an extra OID can't take: the main value, the referenced check, and
+// the calculator's function names.
+const RESERVED_NAMES = new Set(["value", "ref", "min", "max", "abs", "round", "floor", "ceil", "sqrt", "log10"]);
+
+/**
+ * Reads the "Extra OIDs" setting: one per line, "name = OID" or
+ * "name = rate(OID)" for a counter — e.g. "used = 1.3.6.1.2.1.25.2.3.1.6.1".
+ * The regex matches: a name (letters, digits, _ — not starting with a digit),
+ * "=", optionally "rate(", an OID of digits and dots, optionally ")".
+ *
+ * @throws Error naming the line that isn't valid
+ */
+export function parseExtraOids(value: unknown): ExtraOid[] {
+  const lines = Array.isArray(value) ? value.map(String) : typeof value === "string" ? value.split(/\r?\n/) : [];
+  const out: ExtraOid[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    // "name = target": a name (letters, digits, _ — not starting with a
+    // digit), "=", then the OID, optionally wrapped in rate( … ).
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(line);
+    let target = m ? m[2].trim() : "";
+    const rate = target.startsWith("rate(") && target.endsWith(")");
+    if (rate) target = target.slice(5, -1).trim();
+    if (!m || !isOid(target)) throw new Error(`Extra OID line isn't "name = OID" or "name = rate(OID)": ${line.slice(0, 80)}`);
+    const oid = target.replace(/^\./, "");
+    if (RESERVED_NAMES.has(m[1])) throw new Error(`"${m[1]}" is reserved — pick another name for ${oid}`);
+    if (out.some((e) => e.name === m[1])) throw new Error(`"${m[1]}" is used twice in Extra OIDs`);
+    out.push({ name: m[1], oid, rate });
+  }
+  if (out.length > 20) throw new Error("At most 20 extra OIDs");
+  return out;
+}
+
+/**
+ * Reads the extra OIDs in one SNMP request. Counters marked rate(…) become
+ * per-second rates against the previous run (the first run, or a counter
+ * that went backwards, only records a baseline).
+ *
+ * @returns the values by name and the new rate state — or an error message
+ */
+async function readExtraOids(config: Config, extras: ExtraOid[], prev: Record<string, { raw: number; at: number }>): Promise<{ values: Record<string, number>; state: Record<string, { raw: number; at: number }>; baseline: boolean } | { error: string }> {
+  if (!str(config, "host")) return { error: "Missing host" };
+  let session: snmp.Session;
+  try {
+    session = openSnmpSession(config);
+  } catch (err) {
+    return { error: errMsg(err) };
+  }
+  session.on("error", () => undefined);
+  try {
+    const vbs = await snmpGet(session, extras.map((e) => e.oid));
+    const now = Date.now();
+    const values: Record<string, number> = {};
+    const state: Record<string, { raw: number; at: number }> = {};
+    let baseline = false;
+    for (const [i, e] of extras.entries()) {
+      const vb = vbs.at(i);
+      if (!vb || snmp.isVarbindError(vb)) return { error: `${e.name} (${e.oid}): ${vb ? snmp.varbindError(vb) : "no response"}` };
+      const n = toNum(vb.value);
+      if (Number.isNaN(n)) return { error: `${e.name} (${e.oid}) isn't a number: ${toStr(vb.value).slice(0, 60)}` };
+      if (!e.rate) {
+        values[e.name] = n;
+        continue;
+      }
+      state[e.name] = { raw: n, at: now };
+      const p = prev[e.name];
+      if (!p || n < p.raw || now <= p.at) baseline = true;
+      else values[e.name] = (n - p.raw) / ((now - p.at) / 1000);
+    }
+    return { values, state, baseline };
+  } catch (err) {
+    return { error: errMsg(err) };
+  } finally {
+    close(session);
+  }
+}
+
+/** Reads the SNMP value itself (see probeSnmp). */
+async function readSnmp(config: Config, ctx: ProbeContext): Promise<ProbeOutcome> {
   const host = str(config, "host");
   const preset = str(config, "preset");
   const oid = str(config, "oid");
@@ -387,7 +537,7 @@ export async function probeSnmp(config: Config, ctx: ProbeContext): Promise<Prob
   const start = Date.now();
   try {
     if (preset) {
-      const fn = SNMP_PRESETS[preset];
+      const fn = own(SNMP_PRESETS, preset);
       if (!fn) return warn(`Unknown SNMP preset: ${preset}`);
       const r = await fn(session, config, ctx);
       const latencyMs = Date.now() - start;
@@ -469,26 +619,31 @@ export async function probeSnmpInterfaces(config: Config, ctx: ProbeContext): Pr
     const prevAt = ctx.state.at as number | undefined;
     const elapsed = prevAt ? (now - prevAt) / 1000 : 0;
     const filter = str(config, "interfaceFilter");
-    let re: RegExp | null = null;
+    // The admin's interface filter runs on RE2 (lib/userRegex.ts).
+    let re: UserRegex | null = null;
     try {
-      re = filter ? new RegExp(filter, "i") : null;
+      re = filter ? compileUserRegex(filter, { ignoreCase: true }) : null;
     } catch {
       return warn(`Invalid interface filter regex: ${filter}`);
     }
+    const excluded = excludeItems(config.exclude, true);
     const counters: Record<string, { in: number; out: number; err: number; disc: number }> = {};
     const rows: IfRow[] = [];
     for (const [index, descr] of ifTable.get("2") ?? []) {
       const name = toStr(ifX.get("1")?.get(index)) || toStr(descr);
       const alias = toStr(ifX.get("18")?.get(index));
       if (re && !re.test(name) && !re.test(toStr(descr)) && !re.test(alias)) continue;
+      // Excluded interfaces (config.exclude, merged with any reusable
+      // exclusion lists) are skipped entirely, by name, description or alias.
+      if (nameExcluded(name, excluded) || nameExcluded(toStr(descr), excluded) || nameExcluded(alias, excluded)) continue;
       const inOct = toNum(ifX.get("6")?.get(index) ?? ifTable.get("10")?.get(index));
       const outOct = toNum(ifX.get("10")?.get(index) ?? ifTable.get("16")?.get(index));
       const err = toNum(ifTable.get("14")?.get(index) ?? 0) + toNum(ifTable.get("20")?.get(index) ?? 0);
       const disc = toNum(ifTable.get("13")?.get(index) ?? 0) + toNum(ifTable.get("19")?.get(index) ?? 0);
-      counters[index] = { in: inOct, out: outOct, err, disc };
+      setOwn(counters, index, { in: inOct, out: outOct, err, disc });
       const highSpeed = toNum(ifX.get("15")?.get(index));
       const speedMbps = highSpeed > 0 ? highSpeed : toNum(ifTable.get("5")?.get(index)) / 1e6;
-      const p = prev[index];
+      const p = own(prev, index);
       const rate = (a: number, b: number | undefined) => (p && elapsed > 0 && b != null && a >= b ? (a - b) / elapsed : null);
       const inBps = rate(inOct, p?.in);
       const outBps = rate(outOct, p?.out);

@@ -1,5 +1,8 @@
+// Dashboard widget: a summary of a set of checks (how many up, warn, down).
+
 import type { Check, CheckResult, Site } from "../lib/api";
 import { GroupSummary } from "./GroupSummary";
+import { own } from "../lib/own";
 
 const DOT_COLOR: Record<string, string> = {
   up: "var(--up)",
@@ -39,7 +42,7 @@ export function GroupSummaryCard({
             const status = latestByCheck.get(c.id)?.status ?? "unknown";
             return (
               <li key={c.id} className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full" style={{ background: DOT_COLOR[status] }} />
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: own(DOT_COLOR, status) }} />
                 <span>{c.name}</span>
                 <span className="text-[var(--muted)]">{status.toUpperCase()}</span>
               </li>

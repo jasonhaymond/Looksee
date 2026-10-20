@@ -1,5 +1,11 @@
+// Heavier checks: email round trip (send, then find it by IMAP), databases
+// (Postgres, MySQL, SQL Server, MongoDB, Redis), traceroute path changes, real
+// browser page loads (headless Chrome), domain expiry (RDAP/WHOIS) and public IP
+// changes.
+//
+// Database credentials are check secrets (write-only, lib/secrets.ts).
+
 import crypto from "node:crypto";
-import fs from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import nodemailer from "nodemailer";
@@ -8,6 +14,8 @@ import pg from "pg";
 import { type Config, type ProbeContext, type ProbeOutcome, bool, down, errMsg, numOr, str, warn } from "./types.js";
 import { tcpExchange } from "./net.js";
 import { httpRequest } from "./http.js";
+import { own } from "../../lib/own.js";
+import { knownPathExists } from "../../lib/safeFs.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -80,7 +88,7 @@ export async function probeDatabase(config: Config): Promise<ProbeOutcome> {
   const metric = str(config, "metric", "connect") as DbMetric;
   const start = Date.now();
   try {
-    const out = await DB_ENGINES[engine]?.(config, metric);
+    const out = await own(DB_ENGINES, engine)?.(config, metric);
     if (!out) return warn(`Unknown database engine: ${engine}`);
     const latencyMs = Date.now() - start;
     if (metric === "connect") return { status: "up", latencyMs, message: out.message ?? "Connected", value: out.value ?? null };
@@ -309,7 +317,7 @@ export function parseTraceroute(output: string): string[] {
   for (const line of output.split(/\r?\n/)) {
     const m = line.match(/^\s*(\d+)\s+(.*)$/);
     if (!m) continue;
-    const ip = m[2].match(/(\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]*:[0-9a-f:]+)/i);
+    const ip = m[2].match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[0-9a-f]*:[0-9a-f:]+)/i);
     hops[Number(m[1]) - 1] = ip ? ip[1] : "*";
   }
   return Array.from(hops, (h) => h ?? "*");
@@ -362,7 +370,7 @@ const CHROME_CANDIDATES = [
 ];
 
 export function findChrome(): string | null {
-  return CHROME_CANDIDATES.find((p) => p && fs.existsSync(p)) ?? null;
+  return CHROME_CANDIDATES.find((p) => p && knownPathExists(p)) ?? null;
 }
 
 // A15. Uses a system Chrome/Chromium (CHROME_PATH or a standard location)

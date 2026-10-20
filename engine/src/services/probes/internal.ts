@@ -1,8 +1,16 @@
+// Checks the engine works out from its own database: trap/syslog matches
+// (with clear patterns, auto-recovery and excluded texts), anomalies against
+// history, overdue heartbeats/pushes, agents gone silent, and disk-full
+// forecasts.
+//
+// Event filters reach the database as query parameters, never as query text.
+
 import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { checkResults, sites, events, endpoints } from "../../db/schema.js";
+import { checkResults, events, endpoints } from "../../db/schema.js";
 import { readValueThresholds, hasThresholds } from "../thresholds.js";
 import { type Config, type ProbeContext, type ProbeOutcome, down, errMsg, numOr, str, up, warn } from "./types.js";
+import { excludeItems } from "./exclude.js";
 
 /**
  * H3/H5: trap and syslog checks. Counts received events matching the
@@ -55,8 +63,9 @@ export async function probeEventMatch(source: "snmp_trap" | "syslog", config: Co
   // Excluded texts: strpos(...) = 0 means "the message doesn't contain it".
   // Passed as bound parameters, never pasted into the query text.
   // Accepts a list, or text with one entry per line (the dashboard's textarea).
-  const rawExclude = Array.isArray(config.exclude) ? (config.exclude as unknown[]).map(String) : typeof config.exclude === "string" ? config.exclude.split(/\r?\n/) : [];
-  const exclude = rawExclude.map((x) => x.trim()).filter(Boolean).slice(0, 50);
+  // At most 200 texts (the check's own plus reusable exclusion lists), each
+  // one more condition in the query.
+  const exclude = excludeItems(config.exclude).slice(0, 200);
   for (const x of exclude) base.push(sql`strpos(lower(${events.message}), lower(${x})) = 0`);
 
   // Failing events: the filter's pattern (a Postgres regular expression,
@@ -162,12 +171,16 @@ export function probePushStaleness(config: Config, ctx: ProbeContext): ProbeOutc
 export async function probeAgentHeartbeat(config: Config, ctx: ProbeContext): Promise<ProbeOutcome> {
   if (!ctx.endpointId) return warn("No host selected");
   const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, ctx.endpointId) });
-  if (!host) return warn("Host not found");
+  if (!host) return warn("Endpoint not found");
   if (!host.lastSeenAt) return down("This host's agent has never reported in");
   const silence = (Date.now() - host.lastSeenAt.getTime()) / 1000;
   const max = numOr(config, "maxSilenceSeconds", 120);
   const value = Math.round(silence);
-  if (silence > max) return down(`Agent silent for ${silence >= 120 ? `${Math.round(silence / 60)} min` : `${value}s`} (last report ${host.lastSeenAt.toISOString()})`, { value });
+  // Advanced: report a silent agent as warn instead of down (e.g. laptops).
+  if (silence > max) {
+    const msg = `Agent silent for ${silence >= 120 ? `${Math.round(silence / 60)} min` : `${value}s`} (last report ${host.lastSeenAt.toISOString()})`;
+    return str(config, "severity") === "warn" ? warn(msg, { value }) : down(msg, { value });
+  }
   return up(`Last report ${value}s ago (agent v${host.agentVersion ?? "?"})`, { value });
 }
 

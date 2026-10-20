@@ -148,6 +148,46 @@ export async function runBackup(): Promise<void> {
   }
 }
 
+/**
+ * Says why an archive's *database* can't be restored into the running
+ * version, or null when it can.
+ *
+ * A database backup only fits the code version that made it: restoring,
+ * say, a 4.3 backup into a running 5.0 engine would put back tables 5.0
+ * renamed, leaving a database neither version can use (pg_restore's --clean
+ * only replaces objects that are in the backup). So the in-app restore only
+ * accepts a backup from the same MAJOR.MINOR version as the running code;
+ * a different version is rolled back with scripts/restore.sh and
+ * scripts/update.sh, which change the code and the database together.
+ * Archives are named looksee-v<version>-<timestamp>; one without a version
+ * in its name comes from before 4.0 and is refused too.
+ *
+ * @param archiveName the Borg archive name, e.g. "looksee-v5.0.0-2026-…"
+ * @param running the running version (defaults to this build's)
+ */
+export function restoreVersionProblem(archiveName: string, running: string = VERSION): string | null {
+  // Matches the "MAJOR.MINOR." at the start of the version in the name —
+  // e.g. "looksee-v4.3.1-2026-10-19T…" gives 4 and 3.
+  const from = /^looksee-v(\d+)\.(\d+)\./.exec(archiveName);
+  const [major, minor] = running.split(".");
+  if (from && from[1] === major && from[2] === minor) return null;
+  const was = from ? `v${from[1]}.${from[2]}` : "an unknown version (before 4.0)";
+  return `This backup's database is from ${was}, but this server runs v${running}. Restoring it here would mix two database layouts. To go back to that version, follow the deployment guide → Rolling back (scripts/restore.sh, then scripts/update.sh). Restoring only the config files is still possible here.`;
+}
+
+/**
+ * Restores a Borg archive: its database dump and/or its env files.
+ * Runs in the background (the route answers 202 straight away); progress
+ * and the outcome are recorded in backup_runs. Destructive — the route
+ * requires the archive name to be typed again to confirm.
+ *
+ * @param archiveName the archive to restore
+ * @param options restoreDb replaces the live database's contents;
+ *   restoreConfig overwrites engine/.env and dashboard/.env
+ * @param repo repository and passphrase (defaults to the saved settings)
+ * @throws if another backup/restore is running, the repository isn't set,
+ *   or the database is from another version (see restoreVersionProblem)
+ */
 export async function restoreBackup(
   archiveName: string,
   options: { restoreDb: boolean; restoreConfig: boolean },
@@ -158,6 +198,10 @@ export async function restoreBackup(
   if (!repoUrl || !passphrase) {
     throw new Error("A backup repository and passphrase are required to restore.");
   }
+
+  // Checked here as well as in the route, so no caller can skip it.
+  const versionProblem = options.restoreDb ? restoreVersionProblem(archiveName) : null;
+  if (versionProblem) throw new Error(versionProblem);
 
   currentOperation = { kind: "restore", startedAt: new Date() };
   const [runRow] = await db.insert(backupRuns).values({ kind: "restore", archiveName }).returning();

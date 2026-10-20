@@ -1,8 +1,17 @@
+// API routes for alert rules: /api/alert-rules (list, create, edit, enable/
+// disable, delete) and the alert history (/events).
+//
+// A rule says when a failing check notifies (after N failing results in a
+// row; down only or warn too), which channels, reminders and escalation.
+// Security: every route requires a signed-in session; numbers are clamped
+// (e.g. 1–1000 results in a row) so a request can't store nonsense.
+
 import { Router } from "express";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lte } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { alertRules, alertRuleChannels, alertEvents, checks, sites } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
+import { own } from "../lib/own.js";
 
 export const alertRulesRouter = Router();
 alertRulesRouter.use(requireAuth);
@@ -14,7 +23,10 @@ alertRulesRouter.use(requireAuth);
 // Filters (all optional): siteId, locationId, checkId, endpointId,
 // status=open|resolved, since/until (ISO), q (check name or message text).
 alertRulesRouter.get("/events", async (req, res) => {
-  const q = (k: string) => (typeof req.query[k] === "string" && req.query[k] ? (req.query[k] as string) : undefined);
+  const q = (k: string) => {
+    const v = own(req.query as Record<string, unknown>, k);
+    return typeof v === "string" && v ? v : undefined;
+  };
   const date = (k: string) => {
     const d = q(k) ? new Date(q(k)!) : undefined;
     return d && !Number.isNaN(d.getTime()) ? d : undefined;

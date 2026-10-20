@@ -1,3 +1,5 @@
+// A site picker (dropdown) grouped by location, used by forms.
+
 "use client";
 
 import { useEffect, useState } from "react";

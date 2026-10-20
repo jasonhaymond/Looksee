@@ -1,3 +1,6 @@
+// Loads a check's recent results and keeps them fresh on a timer (paused while
+// you're using a field — lib/poll.ts); used by history widgets.
+
 import { useEffect, useState } from "react";
 import { api, type CheckResult } from "./api";
 import { rangeToSince } from "./timeRange";

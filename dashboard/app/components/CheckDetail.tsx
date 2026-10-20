@@ -1,12 +1,18 @@
+// The inline check detail on the Checks list: status, history, suggested
+// things to check (remediation), recovery URL, what it ignores, alert rules,
+// and the result details table.
+
 "use client";
 
 import { useEffect, useState } from "react";
 import { RecoveryUrl, ResolveButton } from "./CheckRecovery";
+import { ExclusionsApplied } from "./ExclusionsApplied";
 import { api, type Check, type CheckResult, type Site, type Endpoint } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
 import { AlertRuleManager } from "./AlertRuleManager";
 import { CheckForm } from "./CheckForm";
 import { Button, StatusBadge, relativeTime } from "./ui";
+import { own } from "../lib/own";
 
 function CopyText({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -48,6 +54,9 @@ export function Remediation({ check }: { check: Check }) {
 
 // Structured result details (interface tables, hop lists, containers,
 // matched log lines) shown as a table when they're a list of records.
+/** One table cell's text: "—" for nothing, JSON for objects, else the value as text. */
+const cell = (v: unknown) => (v == null ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v));
+
 export function Details({ value }: { value: unknown }) {
   if (value == null) return null;
   const rows = Array.isArray(value)
@@ -74,7 +83,7 @@ export function Details({ value }: { value: unknown }) {
               <tr key={i} className="border-t border-[var(--border)]">
                 {cols.map((c) => (
                   <td key={c} className="px-2 py-1">
-                    {r[c] == null ? "—" : typeof r[c] === "object" ? JSON.stringify(r[c]) : String(r[c])}
+                    {cell(own(r, c))}
                   </td>
                 ))}
               </tr>
@@ -164,11 +173,12 @@ export function CheckDetail({
           <Remediation check={check} />
           <p className="text-xs text-[var(--muted)]">
             {typeLabel(check.type)} · every {check.intervalSeconds}s{check.retryIntervalSeconds ? ` (retry ${check.retryIntervalSeconds}s)` : ""}
-            {host ? ` · host ${host.name}` : ""}
+            {host ? ` · endpoint ${host.name}` : ""}
             {probeEndpoint ? ` · runs from agent on ${probeEndpoint.name}` : ""}
             {collectorEndpoint ? ` · runs on the site collector on ${collectorEndpoint.name}` : ""}
           </p>
           <RecoveryUrl check={check} onChanged={onChanged} />
+          <ExclusionsApplied check={check} />
           {check.pushUrl && (check.type === "heartbeat" || check.type === "push_value") && (
             <div className="space-y-1.5 rounded-md border border-[var(--border)] p-2">
               <p className="text-xs text-[var(--muted)]">

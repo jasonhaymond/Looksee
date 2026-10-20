@@ -5,16 +5,26 @@ Every check type Looksee has: what it watches, exactly how Looksee does it, what
 yourself — useful when a check fails and you want to confirm it, or to understand what
 a check will report before you add it.
 
-This guide is also built into the app (**Help → Check reference**), and every check's
-form has a **How this check works** link to its entry here. For using checks in general
-(adding, thresholds, alerts), see the [user guide](user-guide.md).
+This guide is also built into the app (**Help & user guide → Check reference**), and
+every check's form has a **How this check works** link to its entry here. Every setting
+of every type, with its default, is listed in [check settings](check-settings.md). For
+using checks in general (adding, thresholds, alerts, exclusions, recovery), see the
+[user guide](user-guide.md).
 
 **Who runs it.** *Engine* checks are run by the Looksee server — or by a remote site's
-collector, or a host's agent when you choose **Run from** (see the user guide's
-[Multiple sites](user-guide.md#multiple-sites)). *Agent* checks run on the chosen host's
-agent. *Report* checks are judged by the engine from the metrics every agent report
-already carries. Commands below marked *(from Looksee)* should be run on whatever runs
-the check — the Looksee server, the collector host, or the agent host.
+collector, or an endpoint's agent when you choose **Run from** (see the user guide's
+[Multiple sites](user-guide.md#multiple-sites)). *Agent* checks run on the chosen
+endpoint's agent. *Report* checks are judged by the engine from the metrics every agent
+report already carries. Commands below marked *(from Looksee)* should be run on whatever
+runs the check — the Looksee server, the collector machine, or the agent's machine.
+
+**Common to every check.** Under **Advanced** every check has a retry interval, tags,
+**Depends on** and **Recovers together with**; any failing check can be **resolved** by
+hand or through its recovery URL; and checks that look at several items (disks,
+interfaces, services, containers, events, packages) take **exclusions** — their own
+and from reusable lists. See the user guide's
+[Resolving and recovery](user-guide.md#resolving-and-recovery) and
+[Exclusions](user-guide.md#exclusions).
 
 ## Contents
 
@@ -23,11 +33,12 @@ the check — the Looksee server, the collector host, or the agent host.
 3. [Databases & apps](#databases--apps)
 4. [Network devices & hardware](#network-devices--hardware)
 5. [Virtualization & containers](#virtualization--containers)
-6. [Host metrics (agent)](#host-metrics-agent)
+6. [Endpoint metrics (agent)](#endpoint-metrics-agent)
 7. [Services & processes (agent)](#services--processes-agent)
 8. [Files & logs (agent)](#files--logs-agent)
 9. [OS & hardware (agent)](#os--hardware-agent)
-10. [Push & smart](#push--smart)
+10. [Software & security (agent)](#software--security-agent)
+11. [Push & smart](#push--smart)
 
 ## Reachability & web
 
@@ -66,7 +77,9 @@ and Printer Sharing (Echo Request)" rule). Use a TCP check if you can't allow it
 **What it watches:** whether a TCP port accepts connections. **Engine.**
 
 **How it works:** opens a TCP connection to host:port and closes it immediately. Refused
-or timed out → down.
+or timed out → down. Under Advanced: *Timeout*, and *Send after connecting* / *Reply must contain* to check
+a banner or a simple request/response (e.g. send `PING\r\n`, expect `+PONG` from
+Redis) — no reply containing the text → down.
 
 **Value:** connect time (ms).
 
@@ -399,7 +412,7 @@ records).
 
 **How it works:** Looksee records every MAC→IP pair it sees: from agents' interface
 lists (every ~10 minutes), discovery scans, and ARP checks. This check looks at the
-MAC you enter (or every MAC of its host) and, when the newest address appeared within
+MAC you enter (or every MAC of its endpoint) and, when the newest address appeared within
 the *hold* period and differs from the previous one, reports warn (or down) with the old
 and new IP. IPv6 is ignored unless ticked, because privacy addresses change by design.
 
@@ -514,7 +527,21 @@ Monitoring MIB, RFC 2707 — not every printer has it), UPS battery/runtime/on b
 (UPS-MIB), CPU/memory/fullest disk (HOST-RESOURCES), hottest sensor (ENTITY-SENSOR), and
 reboot detection (sysUpTime going backwards).
 
-**Value:** the value read or computed (× *Multiply by*).
+**Calculations (Advanced).** *Calculate* applies a formula to the value
+(`value / 10`, `used / size * 100`) using only `+ - * / % ^`, brackets and
+`min max abs round floor ceil sqrt log10` — a calculator, never code. *Extra OIDs* reads
+more values in the same poll (`name = OID`, or `name = rate(OID)` for a counter's
+per-second rate) for the formula to use by name; with them the main OID is optional.
+`ref` stands for another check's latest value. A formula that can't be worked out (an
+unknown name, division by zero) makes the result **unknown** with the reason.
+
+The walk browser names known OIDs from a built-in dictionary (standard MIBs, the Printer
+MIB, UPS-MIB, and vendor counters for HP, Brother, Canon, Ricoh, Xerox, Kyocera, Lexmark
+and Konica Minolta), shows values readably, and says which vendor owns any other
+enterprise OID. Sets of SNMP checks for one kind of device are
+[SNMP templates](user-guide.md#snmp-templates).
+
+**Value:** the value read or computed (× *Multiply by*, then *Calculate*).
 
 **Check it yourself** *(from Looksee)* — or use **Walk this device…** in the check form:
 
@@ -567,6 +594,11 @@ received).
 pattern (searched in the trap OID and varbinds). Any match → the chosen status; with
 thresholds set, only above a count.
 
+*Clears when text matches* recovers the check as soon as a matching trap arrives after
+a failure (`linkUp` after `linkDown`); *Recover on its own after* recovers it when no new
+matching trap has arrived for that long. Message exclusions drop traps containing any
+excluded text before counting.
+
 **Value:** matching traps in the window.
 
 **Check it yourself:** **Insights → Traps & syslog**. Send a test trap:
@@ -581,6 +613,9 @@ received).
 
 **How it works:** counts received messages in the window from the source IP, at or above
 the severity, matching the regex.
+
+Recovery and exclusions work as for traps: *Clears when text matches*, *Recover on its
+own after*, and excluded message texts.
 
 **Value:** matching messages in the window.
 
@@ -679,11 +714,11 @@ docker inspect -f '{{.State.Health.Status}} {{.RestartCount}}' mycontainer
 docker stats --no-stream
 ```
 
-## Host metrics (agent)
+## Endpoint metrics (agent)
 
 <a id="host_metric"></a>
 
-### Host metric
+### Endpoint metric
 
 **What it watches:** any of 60+ measurements every agent report carries. **Report.**
 
@@ -692,8 +727,10 @@ memory/swap, every mounted filesystem, disk I/O, every interface, TCP states, li
 ports, temperatures, fans, battery, SMART, RAID/ZFS, pending updates, reboot pending,
 clock sync, Defender, firewall, disk encryption, failed logins) and the engine checks the
 chosen metric. For per-instance metrics (a disk, an interface) leave the instance blank
-to evaluate all of them and report the worst. Yes/no metrics use *Healthy when* instead
-of thresholds.
+to evaluate all of them and report the worst — excluded mounts, interfaces, disk
+devices and sensors are skipped. Yes/no metrics use *Healthy when* instead of
+thresholds. The *updates* metrics leave out Ubuntu phased updates (Ubuntu's gradual
+rollout holds them back anyway); `updates.phased` counts them on their own.
 
 **Value:** the metric.
 
@@ -722,7 +759,7 @@ of thresholds.
 
 ### CPU / memory / disk usage (simple)
 
-Older single-number checks kept for existing setups; **Host metric** covers them in more
+Older single-number checks kept for existing setups; **Endpoint metric** covers them in more
 detail. Same commands as above.
 
 <a id="disk_forecast"></a>
@@ -746,7 +783,7 @@ growing with `du -xh --max-depth=1 / | sort -h` or WinDirStat/TreeSize.
 
 **What it watches:** any reboot. **Report.**
 
-**How it works:** the agent's reported boot time changing means the host restarted; the
+**How it works:** the agent's reported boot time changing means the machine restarted; the
 check holds warn (or down) for the hold period so an alert rule catches it.
 
 **Check it yourself:** `last -x reboot | head` / `uptime -s` (Linux), `last reboot`
@@ -771,10 +808,11 @@ changed.
 
 ### Agent online
 
-**What it watches:** that the agent is still reporting — the host is up, the agent
+**What it watches:** that the agent is still reporting — the machine is up, the agent
 running, and the network path to Looksee working. **Engine.**
 
-**How it works:** fails when the host's last report is older than the allowed silence.
+**How it works:** fails when the endpoint's last report is older than the allowed
+silence. *Status when silent* (Advanced) chooses down or warn.
 
 **Value:** seconds since the last report.
 
@@ -784,7 +822,7 @@ running, and the network path to Looksee working. **Engine.**
 own output, stop the task and run
 `C:\ProgramData\LookseeAgent\looksee-agent.exe -config C:\ProgramData\LookseeAgent\looksee-agent.yaml -once`
 in an elevated PowerShell. Then `curl -I https://your-looksee/api/health` from
-the host.
+that machine.
 
 ## Services & processes (agent)
 
@@ -796,8 +834,10 @@ the host.
 how often it restarts. **Agent.**
 
 **How it works:** `systemctl is-active <name>` (and `NRestarts` for the restart count)
-on Linux; `Get-Service` on Windows. Use **Browse** in the form to pick from the host's
-services with their state.
+on Linux; `Get-Service` on Windows. Use **Browse** in the form to pick from the
+endpoint's services with their state. **Advanced → Should be: Stopped** turns it around:
+the check fails if the service *is* running — for services that should stay off
+(Telnet, Remote Registry). Needs agent 5.0.
 
 **Check it yourself:**
 
@@ -825,7 +865,7 @@ matches `nginx.exe`); counts them, or sums their CPU % / resident memory.
 
 **Check it yourself:** `pgrep -a nginx` / `ps aux | grep nginx` (Linux/macOS),
 `Get-Process nginx | Select-Object Id, CPU, WorkingSet64` or Task Manager → Details
-(Windows). The host's **Processes** tab shows the same list.
+(Windows). The endpoint's **Processes** tab shows the same list.
 
 <a id="agent_services_overview"></a>
 
@@ -836,7 +876,8 @@ service that isn't running. **Agent.**
 
 **How it works:** `systemctl list-units --failed`; on Windows, automatic services not
 running — excluding ones that stopped cleanly (exit code 0) unless ticked, since
-updaters and on-demand services do that routinely. *Ignore* skips names you list.
+updaters and on-demand services do that routinely. Excluded services (own list or
+reusable lists; `*` and `?` wildcards) are skipped.
 
 **Value:** how many.
 
@@ -876,7 +917,7 @@ success). Linux: `systemctl show <unit>` (Result, ExecMainStatus, last exit time
 **How it works:** runs a script that sits directly in the agent's `script_dir` (`.ps1`
 through PowerShell on Windows; anything executable elsewhere) with the arguments, under
 the timeout. Looksee never sends a command to run — only the name of a script already on
-the host, so a compromised Looksee login can't run code on your machines. Without an
+the endpoint, so a compromised Looksee login can't run code on your machines. Without an
 expected output: exit 0/1/2 = up/warn/down, other codes = unknown, and the first line is
 the message (Nagios plugins work as-is, including `| label=value` performance data).
 With an expected output (agent 4.0+): the engine compares the output (contains, doesn't
@@ -1011,7 +1052,7 @@ about every 2 minutes on an active tunnel); otherwise the interface's up flag.
 
 ### UPS (NUT / apcupsd)
 
-**What it watches:** a UPS connected to this host. **Agent.**
+**What it watches:** a UPS connected to this endpoint. **Agent.**
 
 **How it works:** reads `upsc <ups>` (Network UPS Tools) or `apcaccess` (apcupsd): on
 battery → warn, low battery → down.
@@ -1035,6 +1076,80 @@ command line.
 
 **Check it yourself:** `BORG_PASSPHRASE=… borg list --last 3 ssh://backup@nas/./repo`,
 `restic -r … snapshots --latest 3`, or the Veeam console's job history.
+
+## Software & security (agent)
+
+These read the installed-software list agent 5.0 reports: Debian/Ubuntu (dpkg), RPM,
+Alpine (apk) and Arch (pacman) packages, Windows programs (the registry's Uninstall
+keys), macOS apps, global npm and pip packages, the Node.js/Python/PHP runtimes, and any
+lock files you list. The agent sends the list when it changes, and at least once a day.
+
+<a id="host_packages"></a>
+
+### Upgradable packages
+
+**What it watches:** packages with updates waiting. **Report.**
+
+**How it works:** the agent lists upgradable packages (`apt list --upgradable` plus
+`apt-get -s upgrade` to spot phased ones, `dnf check-update` with its security list,
+`checkupdates` on Arch, Windows Update, `softwareupdate -l` on macOS). *Fail when* a
+security update is waiting (default), any update is, or never. Ubuntu phased updates are
+left out unless *Include Ubuntu phased updates* is ticked; excluded packages are neither
+counted nor listed.
+
+**Value:** packages to update.
+
+**Check it yourself:**
+
+```bash
+apt list --upgradable                      # Debian/Ubuntu
+sudo apt-get -s upgrade | grep -i phasing  # phased (deferred) ones
+dnf check-update; dnf updateinfo list --security   # RHEL/Fedora
+```
+
+```powershell
+Get-WindowsUpdate   # PSWindowsUpdate module; or Settings → Windows Update
+```
+
+<a id="host_software"></a>
+
+### Installed software changed
+
+**What it watches:** software installed, removed, or changed version. **Report.**
+
+**How it works:** compares each software list with the previous one and, when something
+changed, holds the chosen status for the hold period, naming what changed. *Only watch* limits it to some sources; excluded packages are
+ignored (browsers that update themselves daily are good candidates).
+
+**Value:** packages installed.
+
+**Check it yourself:** `zgrep -h " install \| upgrade \| remove " /var/log/dpkg.log*`
+(Debian/Ubuntu), `rpm -qa --last | head` (RPM), *Settings → Apps → Installed apps* or
+`Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='MsiInstaller'}`
+(Windows).
+
+<a id="host_vulnerable"></a>
+
+### Vulnerable or unsupported software
+
+**What it watches:** installed packages with known vulnerabilities, and an OS or runtime
+past (or near) its end of support. **Report** (with lookups by the Looksee server).
+
+**How it works:** the engine sends package names, versions and ecosystems (never
+hostnames or addresses) to [OSV.dev](https://osv.dev)'s batch API and reads each
+advisory's severity; the OS release and runtime versions are looked up on
+[endoflife.date](https://endoflife.date). Answers are cached (advisories 7 days,
+end-of-life dates 1 day). The worst finding decides: at or above *Down at severity* →
+down, at or above *Warn at severity* → warn; an unsupported OS/runtime → the chosen
+status, and a warning from *Warn this many days before end of life*. **Accepted risks**
+(a package name or advisory ID, then `# reason`) are left out, with the reasons shown
+in the result. Either lookup can be turned off under Advanced.
+
+**Value:** vulnerable packages.
+
+**Check it yourself:** paste a package into [osv.dev](https://osv.dev/list); on Ubuntu
+`pro security-status`; `npm audit` / `pip-audit` / `composer audit` in an application
+folder; `cat /etc/os-release` and look the version up on endoflife.date.
 
 ## Push & smart
 
@@ -1061,6 +1176,22 @@ goes down. See the user guide's [Heartbeats](user-guide.md#heartbeats-and-pushed
 anomaly detection apply.
 
 **Value:** the pushed value.
+
+<a id="calculated"></a>
+
+### Calculated value
+
+**What it watches:** a number worked out from up to four other checks' latest values.
+**Engine.**
+
+**How it works:** reads the latest value of the checks chosen as *a*–*d* and evaluates
+the *Expression* with the same safe calculator as SNMP *Calculate*. If an input has no
+value, or is older than *Inputs must be newer than*, the result is **unknown** rather than
+a number worked out from stale data.
+
+**Value:** the result; thresholds apply.
+
+**Check it yourself:** open each input check's page and do the sum.
 
 <a id="anomaly"></a>
 

@@ -1,3 +1,10 @@
+// The Backups page (/backups): Borg repository settings, schedule and
+// retention, back up now, the list of archives, and restore.
+//
+// The settings form is filled once (not by every status refresh), and the
+// passphrase is write-only. "use client" makes this a React component that
+// runs in the browser; the engine refuses every call without a session.
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -31,13 +38,13 @@ export default function BackupsPage() {
   // Polled every few seconds for live status. The settings form is filled
   // from the saved values only when asked (first load, after a save) —
   // refilling it on every poll would wipe what the admin is typing.
-  const loadAll = useCallback(async (fillForm = false) => {
-    const [settingsRes, statusRes, runsRes, archivesRes] = await Promise.all([
+  const loadAll = useCallback((fillForm = false) =>
+    Promise.all([
       api.backupSettings(),
       api.backupStatus(),
       api.backupRuns(),
       api.backupArchives().catch(() => ({ archives: [] })),
-    ]);
+    ]).then(([settingsRes, statusRes, runsRes, archivesRes]) => {
     setSettings(settingsRes.settings);
     setBorgAvailable(settingsRes.borgAvailable);
     setBorgVersion(settingsRes.borgVersion);
@@ -49,7 +56,7 @@ export default function BackupsPage() {
       setSchedule(settingsRes.settings.schedule ?? "");
       setRetentionCount(settingsRes.settings.retentionCount != null ? String(settingsRes.settings.retentionCount) : "");
     }
-  }, []);
+  }), []);
 
   useEffect(() => {
     api

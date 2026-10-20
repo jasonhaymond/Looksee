@@ -1,3 +1,13 @@
+// The heart of alerting: records every check result, works out status changes
+// and flapping, opens and closes incidents, sends notifications through the
+// alert rules' channels (with reminders and escalation), and resolves checks by
+// hand, by URL or together with another check.
+//
+// Where this sits: called with every result (scheduler, agents, collectors,
+// push URLs); processOpenAlerts runs on a timer for reminders/escalation.
+// Maintenance windows record results without alerting; a child check whose
+// parent is down is held back so one outage sends one alert.
+
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { checks, checkResults, alertRules, alertRuleChannels, alertEvents, notificationChannels, checkDependencies, endpoints, sites, locations } from "../db/schema.js";
@@ -54,7 +64,7 @@ export async function recordCheckResult(checkId: string, input: ResultInput) {
     .orderBy(desc(checkResults.checkedAt))
     .limit(FLAP_WINDOW);
   let changes = 0;
-  for (let i = 1; i < recent.length; i++) if (recent[i].status !== recent[i - 1].status) changes++;
+  for (let i = 1; i < recent.length; i++) if (recent.at(i)?.status !== recent.at(i - 1)?.status) changes++;
   const flapping = check.flapping ? changes > FLAP_STOP : changes >= FLAP_START;
   if (flapping && !check.flapping) {
     logger.warn("alerting", `Check ${checkId} started flapping (${changes} state changes in ${recent.length} results)`, `"${check.name}" is flapping between states — alerts for it are held until it settles.`, { checkId });
@@ -210,9 +220,9 @@ export async function processOpenAlerts(now = new Date()) {
 
 // Everything a template can mention, looked up once per notification.
 export async function alertContext(check: typeof checks.$inferSelect, event: AlertEvent, status: string, message: string | null, openedAt: Date | null): Promise<AlertContext> {
-  const host = check.endpointId ? await db.query.endpoints.findFirst({ where: eq(endpoints.id, check.endpointId) }) : undefined;
-  const endpoint = await db.query.sites.findFirst({ where: eq(sites.id, check.siteId) });
-  const location = endpoint?.locationId ? await db.query.locations.findFirst({ where: eq(locations.id, endpoint.locationId) }) : undefined;
+  const endpoint = check.endpointId ? await db.query.endpoints.findFirst({ where: eq(endpoints.id, check.endpointId) }) : undefined;
+  const site = await db.query.sites.findFirst({ where: eq(sites.id, check.siteId) });
+  const location = site?.locationId ? await db.query.locations.findFirst({ where: eq(locations.id, site.locationId) }) : undefined;
   const hints = remediationFor({ type: check.type, status: event === "resolved" ? "up" : status, message, config: check.config });
   return {
     event,
@@ -221,8 +231,9 @@ export async function alertContext(check: typeof checks.$inferSelect, event: Ale
     type: check.type.replace(/_/g, " "),
     status: status.toUpperCase(),
     message: message ?? "",
-    host: host?.name ?? "",
     endpoint: endpoint?.name ?? "",
+    host: endpoint?.name ?? "",
+    site: site?.name ?? "",
     location: location?.name ?? "",
     time: new Date().toLocaleString(),
     duration: openedAt ? formatDuration(Date.now() - openedAt.getTime()) : "",

@@ -20,6 +20,7 @@ import (
 	"looksee-agent/internal/metrics"
 	"looksee-agent/internal/report"
 	"looksee-agent/internal/selfupdate"
+	"looksee-agent/internal/watchdog"
 )
 
 // Set via -ldflags "-X main.version=..." in build-all.sh, from the single
@@ -62,6 +63,7 @@ func main() {
 		runner:    checks.NewRunner(checks.Options{ScriptDir: cfg.ScriptDir, DockerSocket: cfg.DockerSocket}),
 		inFlight:  map[string]bool{},
 		site:      collector.New(cfg.EngineURL, cfg.AgentKey, collector.DefaultDir()),
+		watch:     watchdog.New(watchdog.DefaultPath(*configPath), time.Now()),
 	}
 	interval := time.Duration(cfg.IntervalSeconds) * time.Second
 	log.Printf("looksee-agent %s starting, reporting to %s every %s", version, cfg.EngineURL, interval)
@@ -85,6 +87,9 @@ type agent struct {
 	slow      *metrics.SlowCollector
 	runner    *checks.Runner
 	site      *collector.Supervisor
+	// Alerts by email/chat if the engine can't be reached (when this
+	// endpoint is a watchdog agent; otherwise it does nothing).
+	watch *watchdog.Watchdog
 
 	mu        sync.Mutex
 	inFlight  map[string]bool
@@ -94,6 +99,10 @@ type agent struct {
 	discovery     report.Discovery
 	inventoryHash string
 	inventoryAt   time.Time
+	// The software report (installed and upgradable packages) is large, so
+	// like the inventory it's only sent when it changed, or once a day.
+	softwareHash string
+	softwareAt   time.Time
 }
 
 // Checks run in the background: a slow one (a borg repository listing, a
@@ -132,6 +141,14 @@ func (a *agent) runOnce(cycle int) {
 	cfgResp, err := a.client.FetchConfig()
 	if err != nil {
 		log.Printf("fetching agent config: %v", err)
+		a.watch.Unreachable(err, time.Now())
+	} else {
+		a.watch.Reachable(cfgResp.Watchdog, time.Now())
+		var lockfiles []string
+		if cfgResp.SoftwareScan != nil {
+			lockfiles = cfgResp.SoftwareScan.Lockfiles
+		}
+		a.slow.SetLockfiles(lockfiles)
 	}
 
 	if cfgResp.UpdateAvailable {
@@ -220,8 +237,17 @@ func (a *agent) runOnce(cycle int) {
 		}
 	}
 
+	var software *metrics.Software
+	if sw := a.slow.Software(); sw != nil {
+		b, _ := json.Marshal(sw)
+		h := fmt.Sprintf("%x", sha256.Sum256(b))
+		if h != a.softwareHash || time.Since(a.softwareAt) > 24*time.Hour {
+			software, a.softwareHash, a.softwareAt = sw, h, time.Now()
+		}
+	}
+
 	results := a.drain()
-	if err := a.client.SendReport(snap, results, discovery, inventory, version, a.site.LastError()); err != nil {
+	if err := a.client.SendReport(snap, results, discovery, inventory, version, a.site.LastError(), a.watch.Status(), software); err != nil {
 		log.Printf("sending report: %v", err)
 		// Keep results for the next attempt rather than dropping them.
 		a.mu.Lock()
@@ -231,6 +257,7 @@ func (a *agent) runOnce(cycle int) {
 		}
 		a.mu.Unlock()
 		a.inventoryHash = ""
+		a.softwareHash = ""
 	}
 }
 

@@ -1,3 +1,7 @@
+// The Traps & syslog page (/events): messages devices sent, with filters,
+// refreshing live. "use client" makes this a React component that runs in the
+// browser; the engine refuses every call without a session.
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";

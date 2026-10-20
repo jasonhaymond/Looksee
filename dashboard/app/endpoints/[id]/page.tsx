@@ -35,21 +35,27 @@ export default function EndpointPage() {
   const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null);
 
   // Everything the page shows, in parallel. A 404 means the endpoint was deleted.
-  const load = useCallback(async () => {
-    try {
-      const ep = await api.endpoint(id);
-      setEndpoint(ep);
-      const [s, l, c, ch, t, health] = await Promise.all([api.sites(), api.locations(), api.checks(ep.siteId), api.channels(), api.tree(), api.health()]);
-      setSites(s);
-      setLocations(l);
-      setChecks(c);
-      setChannels(ch);
-      setTree(t);
-      setLatestAgentVersion(health.agentVersion);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) setMissing(true);
-    }
-  }, [id]);
+  const load = useCallback(
+    () =>
+      api
+        .endpoint(id)
+        .then((ep) => {
+          setEndpoint(ep);
+          return Promise.all([api.sites(), api.locations(), api.checks(ep.siteId), api.channels(), api.tree(), api.health()]);
+        })
+        .then(([s, l, c, ch, t, health]) => {
+          setSites(s);
+          setLocations(l);
+          setChecks(c);
+          setChannels(ch);
+          setTree(t);
+          setLatestAgentVersion(health.agentVersion);
+        })
+        .catch((err) => {
+          if (err instanceof ApiError && err.status === 404) setMissing(true);
+        }),
+    [id]
+  );
 
   // Load once signed in, then refresh every 30 s.
   useEffect(() => {

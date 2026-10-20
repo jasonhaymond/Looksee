@@ -1,3 +1,11 @@
+// Sign-in API: password + mandatory two-factor login, logout, the current
+// user, password changes, recovery codes, passkeys and authenticator rotation.
+//
+// Security: login attempts are rate-limited (brute force), wrong passwords and
+// unknown accounts give the same answer (no account enumeration), sessions are
+// httpOnly/secure/SameSite cookies, passwords are bcrypt-hashed, recovery codes
+// are single-use, and changing the password signs out every other session.
+
 import { Router } from "express";
 import crypto from "node:crypto";
 import rateLimit from "express-rate-limit";
@@ -12,6 +20,7 @@ import { consumeTotp, generateRecoveryCodes, generateTotpSecret, otpauthUri } fr
 import { getSecuritySettings, lockedOut, notifySecurity, recordSecurityEvent } from "../services/security.js";
 import { authenticationOptions, credentialsFor, finishRegistration, startRegistration, verifyPasskey } from "../services/passkeys.js";
 import { sendEmail } from "../services/notifications/email.js";
+import { own } from "../lib/own.js";
 
 export const authRouter = Router();
 
@@ -135,7 +144,7 @@ authRouter.post("/login/verify", loginLimiter, async (req, res) => {
     if (!challenge.webauthnChallenge || !(await verifyPasskey(user, challenge.webauthnChallenge, req.body.passkey))) return fail("passkey");
   } else if (recovery) {
     let match = -1;
-    for (let i = 0; i < user.recoveryCodes.length; i++) if (await bcrypt.compare(recovery, user.recoveryCodes[i])) match = i;
+    for (const [i, code] of user.recoveryCodes.entries()) if (await bcrypt.compare(recovery, code)) match = i;
     if (match < 0) return fail("recovery code");
     await db.update(users).set({ recoveryCodes: user.recoveryCodes.filter((_, i) => i !== match) }).where(eq(users.id, user.id));
     await recordSecurityEvent("recovery_code_used", { req, detail: `${user.recoveryCodes.length - 1} recovery code(s) left` });
@@ -161,7 +170,7 @@ authRouter.post("/login/verify", loginLimiter, async (req, res) => {
 });
 
 authRouter.post("/logout", async (req, res) => {
-  const token = req.cookies?.[SESSION_COOKIE_NAME];
+  const token = own(req.cookies as Record<string, string> | undefined, SESSION_COOKIE_NAME);
   if (token) await deleteSessionByToken(token);
   res.clearCookie(SESSION_COOKIE_NAME, { sameSite: "strict", secure: process.env.NODE_ENV === "production", httpOnly: true });
   res.json({ ok: true });
@@ -190,8 +199,8 @@ authRouter.post("/password", requireAuth, async (req, res) => {
     return;
   }
   await db.update(users).set({ passwordHash: await bcrypt.hash(next, 12), passwordChangedAt: new Date() }).where(eq(users.id, user.id));
-  const current = req.cookies?.[SESSION_COOKIE_NAME];
-  await db.delete(sessions).where(and(eq(sessions.userId, user.id), ne(sessions.token, current)));
+  const current = own(req.cookies as Record<string, string> | undefined, SESSION_COOKIE_NAME);
+  await db.delete(sessions).where(and(eq(sessions.userId, user.id), ne(sessions.token, current ?? "")));
   await recordSecurityEvent("password_changed", { req, detail: user.email });
   res.json({ ok: true });
 });

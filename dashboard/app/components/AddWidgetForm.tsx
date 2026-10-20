@@ -1,3 +1,6 @@
+// The "Add widget" form on a dashboard: pick a widget type and its settings
+// (which check, site, endpoint or note).
+
 "use client";
 
 import { useState } from "react";
@@ -13,7 +16,7 @@ const WIDGET_TYPES: { type: WidgetType; label: string; help: string; pick?: "che
   { type: "alert_history", label: "Alert history", help: "Recent alert incidents", pick: "site-or-all" },
   { type: "endpoint_metrics", label: "Endpoint metrics", help: "CPU, memory and disk of one endpoint", pick: "endpoint" },
   { type: "network_bandwidth", label: "Network bandwidth", help: "One endpoint's traffic", pick: "endpoint" },
-  { type: "all_endpoints", label: "All endpoints", help: "Every host and its agent state" },
+  { type: "all_endpoints", label: "All endpoints", help: "Every endpoint and its agent state" },
   { type: "top_talkers", label: "Top talkers", help: "NetFlow / sFlow conversations" },
   { type: "backup_status", label: "Backup status", help: "Looksee's own backups" },
   { type: "clock", label: "Clock", help: "Date and time" },

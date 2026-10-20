@@ -21,6 +21,7 @@ export const NAV: NavGroup[] = [
       { href: "/sites", label: "Sites & locations", hint: "Networks, grouped by place" },
       { href: "/groups", label: "Groups", hint: "Your own sets, by hand or by filter" },
       { href: "/discovery", label: "Discovery", hint: "Scan a subnet for devices" },
+      { href: "/snmp-templates", label: "SNMP templates", hint: "Sets of SNMP checks for a kind of device" },
     ],
   },
   {
@@ -29,6 +30,7 @@ export const NAV: NavGroup[] = [
       { href: "/alerts", label: "Alert history", hint: "Every incident, open and resolved" },
       { href: "/channels", label: "Channels", hint: "Email, push, Slack, Teams, Telegram…" },
       { href: "/maintenance", label: "Maintenance", hint: "Silence alerts on a schedule" },
+      { href: "/exclusions", label: "Exclusions", hint: "Items checks should ignore" },
     ],
   },
   {

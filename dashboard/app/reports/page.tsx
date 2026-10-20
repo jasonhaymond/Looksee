@@ -1,3 +1,7 @@
+// The SLA reports page (/reports): uptime per check over 7–365 days, excluding
+// maintenance and excluded results. "use client" makes this a React component
+// that runs in the browser; the engine refuses every call without a session.
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";

@@ -1,3 +1,9 @@
+// The slow collector: data that's expensive or changes rarely (sessions,
+// sensors, failed logins, security state, time sync, RAID, SMART, pending
+// updates with phased/security flags, hardware inventory, installed software)
+// gathered in the background on its own schedules, so a slow command never
+// delays a report.
+
 package metrics
 
 import (
@@ -8,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,9 +62,12 @@ type TimeSync struct {
 	Server   string   `json:"server,omitempty"`
 }
 
+// Updates counts pending OS updates. Total and Security leave out Ubuntu
+// phased updates, which are counted in Phased.
 type Updates struct {
 	Total     int   `json:"total"`
 	Security  int   `json:"security"`
+	Phased    int   `json:"phased"`
 	CheckedAt int64 `json:"checkedAt"`
 }
 
@@ -113,6 +123,16 @@ type SlowCollector struct {
 	linkSpeeds map[string]int
 	winSystem  *winPerfSystem
 	inventory  map[string]any
+	// Software (software.go): upgradable packages from the updates job,
+	// installed packages from the software job, and the lock files the
+	// engine asked to read.
+	upgradable    []Upgradable
+	upgradableAt  int64
+	packages      []Package
+	packageErrors []string
+	packagesAt    int64
+	lockfiles     []string
+	osRelease     map[string]string
 }
 
 type winPerfSystem struct {
@@ -125,7 +145,7 @@ func NewSlowCollector(ntpServer string) *SlowCollector {
 	if ntpServer == "" {
 		ntpServer = "pool.ntp.org"
 	}
-	return &SlowCollector{NTPServer: ntpServer}
+	return &SlowCollector{NTPServer: ntpServer, osRelease: OSRelease()}
 }
 
 type job struct {
@@ -145,6 +165,7 @@ var jobs = []job{
 	{30 * time.Minute, (*SlowCollector).collectSmart},
 	{6 * time.Hour, (*SlowCollector).collectUpdates},
 	{6 * time.Hour, (*SlowCollector).collectInventory},
+	{6 * time.Hour, (*SlowCollector).collectSoftware},
 }
 
 // Start runs every job once immediately, then on its own interval. Each job
@@ -815,69 +836,140 @@ func ParseAptSimulate(out string) (total, security int) {
 }
 
 func (s *SlowCollector) collectUpdates() {
-	var u *Updates
-	now := time.Now().Unix()
+	ups, ok := upgradablePackages()
+	if !ok {
+		return
+	}
+	// Counts leave out Ubuntu phased updates (held back on purpose by the
+	// rollout); they're counted separately so a check can include them.
+	u := &Updates{CheckedAt: time.Now().Unix()}
+	for _, p := range ups {
+		switch {
+		case p.Phased:
+			u.Phased++
+		default:
+			u.Total++
+			if p.Security {
+				u.Security++
+			}
+		}
+	}
+	s.mu.Lock()
+	s.updates = u
+	s.upgradable = ups
+	s.upgradableAt = u.CheckedAt
+	s.mu.Unlock()
+}
+
+// upgradablePackages lists the packages with an update available on this
+// platform. ok is false when no supported package manager answered.
+func upgradablePackages() (ups []Upgradable, ok bool) {
+	c := map[string]string{"LC_ALL": "C"}
 	switch runtime.GOOS {
 	case "linux":
 		if execx.Exists("apt-get") {
-			if res, err := execx.Run(5*time.Minute, map[string]string{"LC_ALL": "C"}, "apt-get", "-s", "-o", "Debug::NoLocking=true", "upgrade"); err == nil && res.ExitCode == 0 {
-				t, sec := ParseAptSimulate(res.Stdout)
-				u = &Updates{Total: t, Security: sec, CheckedAt: now}
+			list, err := execx.Run(5*time.Minute, c, "apt", "list", "--upgradable")
+			if err != nil || list.ExitCode != 0 {
+				return nil, false
 			}
-		} else if execx.Exists("dnf") || execx.Exists("yum") {
+			ups = ParseAptUpgradable(list.Stdout)
+			// A simulated upgrade names the packages deferred by phasing.
+			if sim, err := execx.Run(5*time.Minute, c, "apt-get", "-s", "-o", "Debug::NoLocking=true", "upgrade"); err == nil {
+				phased := ParseAptPhased(sim.Stdout)
+				for i := range ups {
+					ups[i].Phased = phased[ups[i].Name]
+				}
+			}
+			return ups, true
+		}
+		if execx.Exists("dnf") || execx.Exists("yum") {
 			tool := "dnf"
 			if !execx.Exists("dnf") {
 				tool = "yum"
 			}
 			res, err := execx.Run(5*time.Minute, nil, tool, "-q", "check-update")
-			if err == nil && (res.ExitCode == 0 || res.ExitCode == 100) {
-				total := 0
-				for _, l := range strings.Split(res.Stdout, "\n") {
-					if f := strings.Fields(l); len(f) == 3 && strings.Contains(f[0], ".") {
-						total++
-					}
-				}
-				sec := 0
-				if r2, err := execx.Run(5*time.Minute, nil, tool, "-q", "updateinfo", "list", "--security"); err == nil {
-					for _, l := range strings.Split(r2.Stdout, "\n") {
-						if strings.TrimSpace(l) != "" {
-							sec++
-						}
-					}
-				}
-				u = &Updates{Total: total, Security: sec, CheckedAt: now}
+			// check-update exits 100 when updates are available.
+			if err != nil || (res.ExitCode != 0 && res.ExitCode != 100) {
+				return nil, false
 			}
-		} else if execx.Exists("checkupdates") {
-			if res, err := execx.Run(5*time.Minute, nil, "checkupdates"); err == nil {
-				n := 0
-				for _, l := range strings.Split(res.Stdout, "\n") {
-					if strings.TrimSpace(l) != "" {
-						n++
-					}
-				}
-				u = &Updates{Total: n, CheckedAt: now}
+			sec := ""
+			if r2, err := execx.Run(5*time.Minute, nil, tool, "-q", "updateinfo", "list", "--security"); err == nil {
+				sec = r2.Stdout
 			}
+			return ParseDnfCheckUpdate(res.Stdout, sec), true
+		}
+		if execx.Exists("checkupdates") {
+			res, err := execx.Run(5*time.Minute, nil, "checkupdates")
+			if err != nil {
+				return nil, false
+			}
+			return ParseCheckupdates(res.Stdout), true
 		}
 	case "windows":
-		out, ok := ps(`$r = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'"); $sec = @($r.Updates | Where-Object { $_.Categories | Where-Object { $_.Name -eq 'Security Updates' -or $_.Name -eq 'Critical Updates' } }).Count; "$($r.Updates.Count)|$sec"`, nil, 15*time.Minute)
-		if ok {
-			parts := strings.SplitN(out, "|", 2)
-			if len(parts) == 2 {
-				t, _ := strconv.Atoi(parts[0])
-				sec, _ := strconv.Atoi(parts[1])
-				u = &Updates{Total: t, Security: sec, CheckedAt: now}
+		out, okPS := ps(`$r = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
+ConvertTo-Json -Compress -InputObject @($r.Updates | ForEach-Object { [pscustomobject]@{ name = [string]$_.Title; security = [bool]($_.Categories | Where-Object { $_.Name -eq 'Security Updates' -or $_.Name -eq 'Critical Updates' }) } })`, nil, 15*time.Minute)
+		if !okPS {
+			return nil, false
+		}
+		var rows []struct {
+			Name     string `json:"name"`
+			Security bool   `json:"security"`
+		}
+		if strings.TrimSpace(out) != "" && json.Unmarshal([]byte(out), &rows) != nil {
+			return nil, false
+		}
+		for _, r := range rows {
+			ups = append(ups, Upgradable{Name: r.Name, Security: r.Security, Source: "windows-update"})
+		}
+		return ups, true
+	case "darwin":
+		res, err := execx.Run(10*time.Minute, nil, "softwareupdate", "-l")
+		if err != nil {
+			return nil, false
+		}
+		for _, l := range strings.Split(res.Stdout+res.Stderr, "\n") {
+			if i := strings.Index(l, "* Label: "); i >= 0 {
+				ups = append(ups, Upgradable{Name: strings.TrimSpace(l[i+len("* Label: "):]), Source: "softwareupdate"})
 			}
 		}
-	case "darwin":
-		if res, err := execx.Run(10*time.Minute, nil, "softwareupdate", "-l"); err == nil {
-			n := strings.Count(res.Stdout+res.Stderr, "* Label:")
-			u = &Updates{Total: n, CheckedAt: now}
-		}
+		return ups, true
 	}
-	if u != nil {
-		s.mu.Lock()
-		s.updates = u
-		s.mu.Unlock()
+	return nil, false
+}
+
+// collectSoftware gathers installed packages (and the lock files the
+// engine asked for) — see software.go.
+func (s *SlowCollector) collectSoftware() {
+	s.mu.Lock()
+	lockfiles := append([]string(nil), s.lockfiles...)
+	s.mu.Unlock()
+	pkgs, errs := collectPackages(lockfiles)
+	s.mu.Lock()
+	s.packages, s.packageErrors, s.packagesAt = pkgs, errs, time.Now().Unix()
+	s.mu.Unlock()
+}
+
+// Software returns the latest software report, or nil before the first
+// collection finishes.
+func (s *SlowCollector) Software() *Software {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.packagesAt == 0 && s.upgradableAt == 0 {
+		return nil
+	}
+	return &Software{CollectedAt: s.packagesAt, OS: s.osRelease, Packages: s.packages, Upgradable: s.upgradable, UpgradableAt: s.upgradableAt, Errors: s.packageErrors}
+}
+
+// SetLockfiles sets the lock files to read (from the engine's config) and,
+// when the list changed, collects software again straight away.
+func (s *SlowCollector) SetLockfiles(paths []string) {
+	sort.Strings(paths)
+	s.mu.Lock()
+	changed := strings.Join(paths, "\n") != strings.Join(s.lockfiles, "\n")
+	s.lockfiles = paths
+	s.mu.Unlock()
+	if changed {
+		go s.collectSoftware()
 	}
 }
 

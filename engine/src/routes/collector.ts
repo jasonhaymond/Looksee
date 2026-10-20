@@ -1,3 +1,11 @@
+// API routes the site collector calls: /api/collector/config (checks to run,
+// receiver ports, queued discovery scans and jobs), results, received
+// traps/syslog/flows, and scan/job results.
+//
+// Security: authenticated with the collector endpoint's agent key; a collector
+// only receives checks of the sites it collects for, and results for anything
+// else are ignored.
+
 import { Router } from "express";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -10,6 +18,8 @@ import { storeEvents, storeFlows } from "../services/receivers/index.js";
 import type { EventInput, FlowRow } from "../services/receivers/core.js";
 import type { ScannedDevice } from "../services/discoveryCore.js";
 import { logger } from "../lib/logger.js";
+import { prepareConfig } from "../services/checkConfig.js";
+import { own } from "../lib/own.js";
 
 // The API a site collector calls, authenticated with its host's agent key.
 // Everything is a request the collector makes outbound over HTTPS, so a
@@ -20,7 +30,7 @@ collectorRouter.use(requireAgentAuth);
 const STATUSES = new Set(["up", "down", "warn", "unknown"]);
 
 function portSetting(name: string, fallback: number): number | null {
-  const raw = process.env[name];
+  const raw = own(process.env, name);
   if (raw === "0" || raw === "off") return null;
   const n = Number(raw ?? fallback);
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : fallback;
@@ -65,10 +75,12 @@ collectorRouter.get("/config", async (req, res) => {
   res.json({
     pollSeconds: 15,
     sites: (res.locals.sites as (typeof sites.$inferSelect)[]).map((e) => ({ id: e.id, name: e.name })),
-    checks: rows.map((c) => ({
+    // Each check's config carries its merged exclusions (own + reusable lists)
+    // and any referenced check's latest value (services/checkConfig.ts).
+    checks: await Promise.all(rows.map(async (c) => ({
       id: c.id,
       type: c.type,
-      config: c.config,
+      config: await prepareConfig(c),
       intervalSeconds: c.intervalSeconds,
       retryIntervalSeconds: c.retryIntervalSeconds,
       lastStatus: c.lastStatus,
@@ -76,7 +88,7 @@ collectorRouter.get("/config", async (req, res) => {
       lastRunAt: c.lastRunAt?.toISOString() ?? null,
       state: c.state ?? {},
       createdAt: c.createdAt.toISOString(),
-    })),
+    }))),
     receivers: {
       syslog: portSetting("COLLECTOR_SYSLOG_PORT", 1514),
       trap: portSetting("COLLECTOR_TRAP_PORT", 1162),

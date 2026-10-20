@@ -1,7 +1,11 @@
+// Small SVG charts used on check pages and widgets: a line chart with hover
+// readout and min/max band, and a status strip (up/warn/down over time).
+
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 import { STATUS_COLOR } from "./ui";
+import { own } from "../lib/own";
 
 // Small, dependency-free SVG charts for the check page. One measure per
 // chart (never two y-axes); hover gives a crosshair + readout, and every
@@ -48,12 +52,12 @@ export function LineChart({ points, unit = "", height = 160, label }: { points: 
   const yMax = hi + (hi - yMin) * 0.1 || 1;
   const X = (t: number) => pad.l + ((t - x0) / (x1 - x0 || 1)) * (W - pad.l - pad.r);
   const Y = (v: number) => pad.t + (1 - (v - yMin) / (yMax - yMin || 1)) * (height - pad.t - pad.b);
-  const path = data.map((p, i) => `${i ? "L" : "M"}${X(xs[i]).toFixed(1)},${Y(p.v).toFixed(1)}`).join("");
+  const path = data.map((p, i) => `${i ? "L" : "M"}${X(xs.at(i)!).toFixed(1)},${Y(p.v).toFixed(1)}`).join("");
   const band = data.some((p) => p.min != null && p.max != null && p.max !== p.min)
-    ? data.map((p, i) => `${i ? "L" : "M"}${X(xs[i]).toFixed(1)},${Y(p.max ?? p.v).toFixed(1)}`).join("") + [...data].reverse().map((p, i) => `L${X(xs[data.length - 1 - i]).toFixed(1)},${Y(p.min ?? p.v).toFixed(1)}`).join("") + "Z"
+    ? data.map((p, i) => `${i ? "L" : "M"}${X(xs.at(i)!).toFixed(1)},${Y(p.max ?? p.v).toFixed(1)}`).join("") + [...data].reverse().map((p, i) => `L${X(xs[data.length - 1 - i]).toFixed(1)},${Y(p.min ?? p.v).toFixed(1)}`).join("") + "Z"
     : null;
   const ticks = [0, 0.5, 1].map((f) => yMin + f * (yMax - yMin));
-  const h = hover != null ? data[hover] : null;
+  const h = hover != null ? (data.at(hover) ?? null) : null;
   return (
     <div ref={box} className="relative">
       <svg
@@ -68,7 +72,7 @@ export function LineChart({ points, unit = "", height = 160, label }: { points: 
           const rect = ref.current!.getBoundingClientRect();
           const x = ((e.clientX - rect.left) / rect.width) * W;
           let best = 0;
-          for (let i = 1; i < xs.length; i++) if (Math.abs(X(xs[i]) - x) < Math.abs(X(xs[best]) - x)) best = i;
+          for (let i = 1; i < xs.length; i++) if (Math.abs(X(xs.at(i)!) - x) < Math.abs(X(xs.at(best)!) - x)) best = i;
           setHover(best);
         }}
         onPointerLeave={() => setHover(null)}
@@ -118,7 +122,7 @@ export function LineChart({ points, unit = "", height = 160, label }: { points: 
 export function StatusStrip({ series }: { series: { t: string; status: string; n: number }[] }) {
   const [hover, setHover] = useState<number | null>(null);
   if (!series.length) return null;
-  const h = hover != null ? series[hover] : null;
+  const h = hover != null ? (series.at(hover) ?? null) : null;
   return (
     <div className="relative">
       <div className="flex h-6 min-w-0 gap-px sm:gap-[2px]" role="img" aria-label="Status over time">
@@ -146,7 +150,7 @@ export function StatusStrip({ series }: { series: { t: string; status: string; n
       <div className="mt-1 flex flex-wrap gap-3 text-[10px] text-[var(--muted)]">
         {["up", "warn", "down", "maintenance", "unknown"].map((s) => (
           <span key={s} className="inline-flex items-center gap-1">
-            <span className="h-2 w-2 rounded-sm" style={{ background: STATUS_COLOR[s] }} />
+            <span className="h-2 w-2 rounded-sm" style={{ background: own(STATUS_COLOR, s) }} />
             {s}
           </span>
         ))}

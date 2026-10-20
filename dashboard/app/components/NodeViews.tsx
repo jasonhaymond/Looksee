@@ -43,22 +43,22 @@ export function Breadcrumbs({ trail }: { trail: Crumb[] }) {
 
 /**
  * A node's status in words: the glyph, the status, and the number of
- * failing checks out of the total.
+ * failing checks out of the active (enabled) ones — disabled checks are
+ * listed on the page but don't count here.
  */
 export function SummaryLine({ status, problems, checkCount }: { status: Status | null; problems: number; checkCount: number }) {
   return (
     <p className="flex items-center gap-2 text-sm">
       <StatusGlyph status={status} />
-      <span className="font-medium">{status ?? "no checks"}</span>
-      <span className="text-[var(--muted)]">
-        · {checkCount} check{checkCount === 1 ? "" : "s"}
-        {problems ? (
-          <span className="text-[var(--down)]">
-            {" "}
-            · {problems} with problems
-          </span>
-        ) : null}
-      </span>
+      <span className="font-medium">{status ?? "no active checks"}</span>
+      {/* The count is left out when there are none — the status already says
+          "no active checks". */}
+      {checkCount > 0 && (
+        <span className="text-[var(--muted)]">
+          · {checkCount} active check{checkCount === 1 ? "" : "s"}
+          {problems ? <span className="text-[var(--down)]"> · {problems} with problems</span> : null}
+        </span>
+      )}
     </p>
   );
 }

@@ -1,5 +1,15 @@
+// Runs an external program (borg, pg_dump, psql) for the backup service,
+// with arguments passed as a list — never through a shell — so a value with
+// spaces or quotes can't become a second command.
+//
+// Where this sits: used by services/backup.ts. Output can be streamed to or
+// from files (a database dump), which stay inside the backup's own folder
+// (lib/safeFs.ts).
+
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
+import { readStreamIn, writeStreamIn } from "./safeFs.js";
 
 /**
  * Runs a child process to completion, capturing stdout/stderr as text.
@@ -25,14 +35,15 @@ export function run(
     const stdoutChunks: Buffer[] = [];
     let stdoutFileStream: fs.WriteStream | undefined;
     if (opts.stdoutFile) {
-      stdoutFileStream = fs.createWriteStream(opts.stdoutFile);
+      // Paths built by the backup code; written only inside their own folder.
+      stdoutFileStream = writeStreamIn(path.dirname(opts.stdoutFile), path.basename(opts.stdoutFile));
       child.stdout.pipe(stdoutFileStream);
     } else {
       child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
     }
 
     if (opts.stdinFile) {
-      fs.createReadStream(opts.stdinFile).pipe(child.stdin);
+      readStreamIn(path.dirname(opts.stdinFile), path.basename(opts.stdinFile)).pipe(child.stdin);
     } else {
       // Closed immediately rather than left open — every command this runs
       // is unattended (no terminal attached), so an open, unwritten stdin

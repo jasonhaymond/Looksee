@@ -1,3 +1,10 @@
+// Log checks: new lines in a log file (follows rotation), new systemd journal
+// entries, and new Windows Event Log events, counted when they match the
+// check's pattern (Go's RE2 engine — no catastrophic backtracking). Lines
+// containing an excluded text, and excluded event IDs, are dropped first.
+// Filter values reach PowerShell through environment variables, never the
+// script text.
+
 package checks
 
 import (
@@ -154,7 +161,8 @@ func runLog(c Cfg, st map[string]any) Result {
 	if err != nil {
 		return down(permissionHint(err))
 	}
-	return matchResult(c, matchLines(lines, re, c.Bool("invert", false)), filepath.Base(path))
+	// Lines containing an excluded text are dropped before matching.
+	return matchResult(c, matchLines(withoutExcluded(lines, c.Excludes(false)), re, c.Bool("invert", false)), filepath.Base(path))
 }
 
 // D9: journal entries since the previous cycle, optionally for one unit and
@@ -197,7 +205,7 @@ func runJournal(c Cfg, st map[string]any) Result {
 			lines = append(lines, l)
 		}
 	}
-	return matchResult(c, matchLines(lines, re, false), "the journal")
+	return matchResult(c, matchLines(withoutExcluded(lines, c.Excludes(false)), re, false), "the journal")
 }
 
 // D8: Windows Event Log entries since the previous cycle. Filter values go
@@ -263,9 +271,22 @@ catch { if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { '[]' } el
 			}
 		}
 	}
+	// Exclusions: an all-digits item is an event ID to skip; anything else is
+	// a text that, found in the event's line, skips it.
+	var ids, texts []string
+	for _, x := range c.Excludes(false) {
+		if isDigits(x) {
+			ids = append(ids, x)
+		} else {
+			texts = append(texts, x)
+		}
+	}
 	var lines []string
 	for _, e := range events {
+		if nameExcluded(strconv.Itoa(e.Id), ids) {
+			continue
+		}
 		lines = append(lines, fmt.Sprintf("[%s %d] %s: %s", e.LevelDisplayName, e.Id, e.ProviderName, strings.TrimSpace(e.Message)))
 	}
-	return matchResult(c, matchLines(lines, re, false), c.Str("logName", "System")+" log")
+	return matchResult(c, matchLines(withoutExcluded(lines, texts), re, false), c.Str("logName", "System")+" log")
 }

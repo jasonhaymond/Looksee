@@ -1,3 +1,7 @@
+// The Top talkers page (/flows): who's using the network, from NetFlow/IPFIX
+// and sFlow. "use client" makes this a React component that runs in the
+// browser; the engine refuses every call without a session.
+
 "use client";
 
 import { useEffect, useState } from "react";

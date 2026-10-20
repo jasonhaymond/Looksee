@@ -1,3 +1,7 @@
+// Runs the receivers on the engine itself and stores what they receive:
+// syslog and traps as events, flows aggregated per minute. Sites' public IPs
+// may also send (for devices that send directly over the internet).
+
 import { db } from "../../db/index.js";
 import { events, flowRecords } from "../../db/schema.js";
 import { logger } from "../../lib/logger.js";

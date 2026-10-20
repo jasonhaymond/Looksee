@@ -1,6 +1,12 @@
+// Parsers for flow records: NetFlow v5, NetFlow v9 / IPFIX (template-based)
+// and sFlow, turned into source → destination byte and packet counts.
+//
+// Buffers are read with bounds-checked methods (readUInt8/16/32), so a
+// malformed packet can't read outside its data.
+
 export type Flow = { src: string; dst: string; protocol: number; srcPort: number; dstPort: number; bytes: number; packets: number };
 
-const ipv4 = (b: Buffer, o: number) => `${b[o]}.${b[o + 1]}.${b[o + 2]}.${b[o + 3]}`;
+const ipv4 = (b: Buffer, o: number) => `${b.readUInt8(o)}.${b.readUInt8(o + 1)}.${b.readUInt8(o + 2)}.${b.readUInt8(o + 3)}`;
 function ipv6(b: Buffer, o: number) {
   const parts: string[] = [];
   for (let i = 0; i < 16; i += 2) parts.push(b.readUInt16BE(o + i).toString(16));
@@ -52,7 +58,7 @@ function decodeRecord(fields: TemplateField[], b: Buffer, o: number, end: number
   for (const field of fields) {
     let len = field.length;
     if (len === 0xffff) {
-      len = b[p];
+      len = b.readUInt8(p);
       p += 1;
       if (len === 255) {
         len = b.readUInt16BE(p);
@@ -73,7 +79,7 @@ function decodeRecord(fields: TemplateField[], b: Buffer, o: number, end: number
           f.packets = (f.packets ?? 0) + readUInt(b, p, len);
           break;
         case 4:
-          f.protocol = b[p];
+          f.protocol = b.readUInt8(p);
           break;
         case 7:
           f.srcPort = readUInt(b, p, len);
@@ -171,7 +177,7 @@ function parseEthernetHeader(h: Buffer): Omit<Flow, "bytes" | "packets"> | null 
   }
   o += 2;
   if (ethertype === 0x0800 && h.length >= o + 20) {
-    const ihl = (h[o] & 0x0f) * 4;
+    const ihl = (h.readUInt8(o) & 0x0f) * 4;
     const protocol = h[o + 9];
     const ports = (protocol === 6 || protocol === 17) && h.length >= o + ihl + 4;
     return { src: ipv4(h, o + 12), dst: ipv4(h, o + 16), protocol, srcPort: ports ? h.readUInt16BE(o + ihl) : 0, dstPort: ports ? h.readUInt16BE(o + ihl + 2) : 0 };

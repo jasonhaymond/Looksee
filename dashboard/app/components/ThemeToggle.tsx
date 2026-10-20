@@ -1,12 +1,18 @@
+// The light/dark/system theme switch, remembered in this browser
+// (lib/useStoredState.ts).
+
 "use client";
 
-import { useEffect, useState } from "react";
+import { useStoredState } from "../lib/useStoredState";
 
 type Theme = "system" | "light" | "dark";
 const KEY = "looksee.theme";
-const NEXT: Record<Theme, Theme> = { system: "light", light: "dark", dark: "system" };
-const LABEL: Record<Theme, string> = { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" };
-const ICON: Record<Theme, string> = { system: "◐", light: "☀", dark: "☾" };
+// System → Light → Dark → System.
+const nextTheme = (t: Theme): Theme => (t === "system" ? "light" : t === "light" ? "dark" : "system");
+const themeLabel = (t: Theme) => `Theme: ${t}`;
+const themeIcon = (t: Theme) => (t === "light" ? "☀" : t === "dark" ? "☾" : "◐");
+/** A saved theme, or undefined for anything else stored under the key. */
+const parseTheme = (raw: string): Theme | undefined => (raw === "light" || raw === "dark" || raw === "system" ? raw : undefined);
 
 export function applyTheme(theme: Theme) {
   const root = document.documentElement;
@@ -22,29 +28,23 @@ export function applyTheme(theme: Theme) {
 // Cycles System → Light → Dark. A per-browser preference, like the
 // grouping choices on the Checks page.
 export function ThemeToggle({ showLabel = false }: { showLabel?: boolean }) {
-  const [theme, setTheme] = useState<Theme>("system");
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(KEY);
-      if (saved === "light" || saved === "dark") setTheme(saved);
-    } catch {
-      // stays system
-    }
-  }, []);
+  // The saved theme (lib/useStoredState.ts); "system" until one is chosen.
+  const [theme, setTheme] = useStoredState<Theme>(KEY, "system", parseTheme, String);
+  const next = nextTheme(theme);
+  const label = themeLabel(theme);
   return (
     <button
       type="button"
       onClick={() => {
-        const next = NEXT[theme];
         applyTheme(next);
         setTheme(next);
       }}
-      title={`${LABEL[theme]} — click to switch`}
-      aria-label={`${LABEL[theme]}. Switch to ${NEXT[theme]}`}
+      title={`${label} — click to switch`}
+      aria-label={`${label}. Switch to ${next}`}
       className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2 py-0.5 text-[var(--muted)] hover:text-[var(--text)]"
     >
-      <span aria-hidden>{ICON[theme]}</span>
-      {showLabel && <span className="text-xs">{LABEL[theme]}</span>}
+      <span aria-hidden>{themeIcon(theme)}</span>
+      {showLabel && <span className="text-xs">{label}</span>}
     </button>
   );
 }

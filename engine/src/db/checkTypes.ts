@@ -14,6 +14,8 @@
 //   only reachable from inside another network.
 // minAgentVersion: agents older than this never receive the check; the
 //   engine records a warn result explaining why instead of sending it.
+
+import { own } from "../lib/own.js";
 export type CheckExecutor = "engine" | "agent" | "report";
 // local: an engine-run type that reads the engine's own database (event
 // matching, anomaly baselines, heartbeat staleness, forecasts) — always run by
@@ -57,6 +59,11 @@ export const CHECK_TYPE_META = {
   agent_heartbeat: { executor: "engine", endpointRequired: true, local: true },
   disk_forecast: { executor: "engine", endpointRequired: true, local: true },
   ip_change: { executor: "engine", local: true },
+  // A value worked out from other checks' latest values (services/expression.ts).
+  calculated: { executor: "engine", local: true },
+  // Vulnerable or unsupported software, looked up online from the
+  // endpoint's software report (services/software.ts).
+  host_vulnerable: { executor: "engine", endpointRequired: true, local: true },
 
   agent_service: { executor: "agent", endpointRequired: true },
   agent_process: { executor: "agent", endpointRequired: true },
@@ -80,14 +87,17 @@ export const CHECK_TYPE_META = {
   host_metric: { executor: "report", endpointRequired: true, minAgentVersion: "3.0.0" },
   host_reboot: { executor: "report", endpointRequired: true, minAgentVersion: "3.0.0" },
   host_change: { executor: "report", endpointRequired: true, minAgentVersion: "3.0.0" },
+  // From the 5.0 agent's software report (services/software.ts).
+  host_packages: { executor: "report", endpointRequired: true, minAgentVersion: "5.0.0" },
+  host_software: { executor: "report", endpointRequired: true, minAgentVersion: "5.0.0" },
 } as const satisfies Record<string, CheckTypeMeta>;
 
 export type CheckType = keyof typeof CHECK_TYPE_META;
 export const CHECK_TYPES = Object.keys(CHECK_TYPE_META) as [CheckType, ...CheckType[]];
 
-const meta = (t: string): CheckTypeMeta | undefined => (CHECK_TYPE_META as Record<string, CheckTypeMeta>)[t];
+const meta = (t: string): CheckTypeMeta | undefined => own(CHECK_TYPE_META as Record<string, CheckTypeMeta>, t);
 export const isCheckType = (t: unknown): t is CheckType => typeof t === "string" && meta(t) !== undefined;
-export const typesWhere = (pred: (m: CheckTypeMeta) => boolean) => CHECK_TYPES.filter((t) => pred(CHECK_TYPE_META[t]));
+export const typesWhere = (pred: (m: CheckTypeMeta) => boolean) => CHECK_TYPES.filter((t) => pred(meta(t)!));
 
 export const ENGINE_CHECK_TYPES = typesWhere((m) => m.executor === "engine");
 export const AGENT_CHECK_TYPES = typesWhere((m) => m.executor === "agent");
@@ -106,7 +116,7 @@ export function versionAtLeast(actual: string | null | undefined, required: stri
   const a = actual.split(".").map((n) => parseInt(n, 10) || 0);
   const r = required.split(".").map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < Math.max(a.length, r.length); i++) {
-    if ((a[i] ?? 0) !== (r[i] ?? 0)) return (a[i] ?? 0) > (r[i] ?? 0);
+    if ((a.at(i) ?? 0) !== (r.at(i) ?? 0)) return (a.at(i) ?? 0) > (r.at(i) ?? 0);
   }
   return true;
 }

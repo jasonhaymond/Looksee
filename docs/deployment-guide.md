@@ -19,7 +19,7 @@ adjust package manager commands for another distro.
 5. [Firewall](#5-firewall)
 6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
 7. [Backups](#7-backups)
-8. [Updating](#8-updating) — including [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
+8. [Updating](#8-updating) — including [Upgrading to 5.0](#upgrading-to-50), [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
 9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Security notes](#11-security-notes)
@@ -88,7 +88,7 @@ cp .env.example .env
 # Edit .env: DATABASE_URL (match the port above), a real SESSION_SECRET
 # (node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"),
 # CORS_ALLOWED_ORIGINS, PUBLIC_URL (same value as NEXT_PUBLIC_API_URL below —
-# used to build the agent install command shown on the Hosts page), SMTP_*
+# used to build the agent install command shown on the Endpoints page), SMTP_*
 # if you want email alerts, VAPID_* for Web Push (see .env.example for the
 # generate command — never regenerate once real subscriptions exist), and
 # TRUST_PROXY = your reverse proxy's IP (127.0.0.1 if Caddy runs on this
@@ -233,6 +233,10 @@ looksee.haymondtechnologies.com {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
     -Server
   }
+  # Compress responses for browsers that accept it. The check list and other
+  # JSON responses get large (hundreds of KB with thousands of checks);
+  # compressed, they arrive several times faster on a slow link.
+  encode zstd gzip
   @api path /api/* /install/*
   handle @api {
     reverse_proxy localhost:4100
@@ -251,6 +255,10 @@ curl -sI https://looksee.haymondtechnologies.com/api/health | grep -i -E "strict
 
 You should see `strict-transport-security: max-age=31536000; includeSubDomains` and no
 `server:` line. Only add HSTS once HTTPS works — browsers remember it for a year.
+To confirm compression, sign in in a browser, open DevTools → Network, reload, and click
+the `checks` request: its response headers include `content-encoding: zstd` (or `gzip`),
+and *transferred* is much smaller than *size*. An existing Caddyfile without the
+`encode` line can add it at any time (validate and reload as below).
 
 **`/install/*` must be routed to the engine too**, not just `/api/*` — it's where the
 one-line agent install command (section 9) and the binaries it downloads are served from.
@@ -345,6 +353,125 @@ You can run the same checks by hand at any time:
 
 **Check:** every line reads `PASS` and the last line is `RESULT: PASS`; the full report
 is saved under `~/Looksee/security-reports/`.
+
+### Upgrading to 5.0
+
+5.0 renames Looksee's building blocks to **Location → Site → Endpoint → Check**: what
+4.x called an *endpoint* (a network) is now a **site**, and a *host* (a machine) is now an
+**endpoint**. The rename goes all the way into the database (tables, columns, saved
+dashboards, maintenance scopes, alert templates), so **this upgrade can't be undone by
+deploying 4.x code alone** — read *Rolling back from 5.0* below before you start.
+
+**Before you start:**
+
+1. **Make sure a recent backup exists off the server.** `update.sh` takes its own
+   snapshot first (step 2 below), but a copy somewhere else protects against losing the
+   server itself. On **System → Backups**, click **Back up now**. **Check:** the newest
+   entry in the list says *v4.3.x* and today's date.
+2. **If the server's outbound internet is restricted,** allow HTTPS (443) to `api.osv.dev`
+   and `endoflife.date`. Only the new *Vulnerable or unsupported software* check uses them,
+   and only if you add it (both lookups can be turned off per check).
+
+**Upgrade:**
+
+1. Run the update as usual:
+
+   ```bash
+   ~/Looksee/scripts/update.sh
+   ```
+
+2. What happens: the script snapshots the database (as
+   `~/looksee-backups/pre-update-v4.3.x-<timestamp>.sql.gz`), checks out v5.0.0, installs
+   dependencies, applies migrations 0019–0025 (the rename, groups, exclusions, watchdog
+   agents, installed software and SNMP templates), rebuilds the dashboard, the site
+   collector bundle and the agent binaries, restarts, and waits for the health check. On
+   a large database the rename takes seconds, not minutes — a test copy with 1,000
+   endpoints, 10,000 checks and 3 million results migrated in about 6 seconds.
+
+   **What success looks like:** `Update complete — v5.0.0 is live.`
+
+3. **Check the data came across.** Sign in and compare with what you had:
+   - The sidebar tree shows your locations, their **sites** (your old endpoints) and
+     each site's **endpoints** (your old hosts).
+   - **Monitoring → Checks** shows the same number of checks as before.
+   - **Monitoring → Endpoints** shows your agent machines online.
+
+   Or, on the server:
+
+   ```bash
+   psql "$(grep ^DATABASE_URL ~/Looksee/engine/.env | cut -d= -f2-)" -c "select (select count(*) from sites) sites, (select count(*) from endpoints) endpoints, (select count(*) from checks) checks; select version from app_meta;"
+   ```
+
+   **Check:** the counts match your old endpoint/host/check counts, and `version` is
+   `5.0.0`.
+
+**Agents.** 4.x agents keep working unchanged — the agent protocol didn't change. Update
+them (Endpoints → tick them → **Actions → Update agents**) to get the 5.0 features:
+installed-software reporting (for the new software and vulnerability checks), watchdog
+agents, and the *Should be: Stopped* service check. Each agent updates itself on its next
+check-in.
+
+**Linux agents' default access.** New Linux installs now give the agent read access to
+system logs, the journal, Docker (if installed) and SMART by default — see
+[agent/README.md → Privileges](../agent/README.md#privileges). An agent that updates
+itself keeps its old, narrower access. To give an existing agent the new defaults, run
+on that machine:
+
+```bash
+sudo usermod -aG adm,systemd-journal looksee-agent
+getent group docker >/dev/null && sudo usermod -aG docker looksee-agent   # skip on purpose if you don't want it — see the agent README
+sudo mkdir -p /etc/systemd/system/looksee-agent.service.d
+curl -fsSL https://<your-looksee>/install/looksee-agent-privileged.conf | sudo tee /etc/systemd/system/looksee-agent.service.d/privileged.conf >/dev/null
+sudo systemctl daemon-reload && sudo systemctl restart looksee-agent
+```
+
+**Check:** `id looksee-agent` lists `adm` and `systemd-journal`, and the endpoint's
+SMART and log checks stop saying "permission denied".
+
+**Things that look different:**
+
+- **Bookmarks.** `/hosts` now redirects to `/endpoints`. The old `/endpoints` page
+  (networks) is now `/sites`, so a bookmark to the old `/endpoints` opens the new
+  devices list instead.
+- **Alert templates.** Your saved templates were updated: `{{endpoint}}` became
+  `{{site}}` and `{{host}}` became `{{endpoint}}`, so messages say the same things as
+  before. `{{host}}` keeps working as another name for `{{endpoint}}`.
+- **Regular expressions** typed into checks (HTTP body match, banner, expected output,
+  interface filters, Prometheus labels) now run on the RE2 engine, which can't freeze
+  the server on a pathological pattern. RE2 has no look-ahead (`(?=…)`, `(?!…)`),
+  look-behind or back-references (`\1`). A check whose pattern uses them reports the
+  pattern as invalid — rewrite it (usually as two simpler checks, or with
+  *does not contain*). To find them before upgrading:
+
+  ```bash
+  psql "$(grep ^DATABASE_URL ~/Looksee/engine/.env | cut -d= -f2-)" -c "select name from checks where config::text ~ '\(\?[=!<]|\\\\[1-9]';"
+  ```
+
+  **Check:** the query returns no rows, or you've noted which checks to fix.
+
+**Rolling back from 5.0.** Deploying 4.x code onto the renamed database fails — the
+tables it expects no longer exist. A rollback is therefore always **code + database**:
+
+1. Find the snapshot the upgrade took: `ls -t ~/looksee-backups/pre-update-v4.3*` — the
+   newest one is from just before 5.0 was deployed.
+2. Restore it, then deploy the old version:
+
+   ```bash
+   ~/Looksee/scripts/restore.sh ~/looksee-backups/pre-update-v4.3.1-<timestamp>.sql.gz
+   ~/Looksee/scripts/update.sh v4.3.1
+   ```
+
+**Restoring discards everything recorded since the upgrade** — results, incidents, and
+any sites, endpoints, checks, groups or settings created in 5.0. `restore.sh` asks you to
+type `RESTORE` first, then empties the database completely and loads the snapshot, so no
+5.0 tables are left behind. **What success looks like:** `Restore complete — this data
+was last used by Looksee v4.3.1.`, then the update's `Update complete — v4.3.1 is
+live.` Agents updated to 5.0 keep working with 4.3 (they send extra data 4.3 ignores).
+
+The in-app restore on **System → Backups** only restores a database backup made by the
+same version (5.0.x into 5.0.x); for a backup from another version it explains that and
+points here, because only `restore.sh` + `update.sh` change the code and the database
+together.
 
 ### Upgrading to 4.3
 

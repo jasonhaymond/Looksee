@@ -1,3 +1,8 @@
+// The Security page (/security): sign-in and 2FA policy, IP allowlist and
+// blocks, security events and the rules that act on them. "use client" makes
+// this a React component that runs in the browser; the engine refuses every
+// call without a session.
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -8,6 +13,7 @@ import { PageHelp } from "../components/PageHelp";
 import { ActionMenu, Button, FilterChip, Label, Modal, inputClass, relativeTime, useToast } from "../components/ui";
 import { Tooltip } from "../components/Tooltip";
 import { usePageAuth } from "../components/usePageAuth";
+import { own } from "../lib/own";
 
 const SECTIONS = [
   ["account", "Your account & 2FA"],
@@ -407,8 +413,8 @@ export default function SecurityPage() {
   const [newBlock, setNewBlock] = useState({ ip: "", minutes: "", reason: "" });
   const toast = useToast();
 
-  const load = useCallback(async () => {
-    const [o, ch, r, b, t] = await Promise.all([api.securityOverview(), api.channels(), api.securityRules(), api.ipBlocks(), api.trustedIps()]);
+  const load = useCallback(() =>
+    Promise.all([api.securityOverview(), api.channels(), api.securityRules(), api.ipBlocks(), api.trustedIps()]).then(([o, ch, r, b, t]) => {
     setOverview(o);
     setDraft(o.settings);
     setAllowText(o.settings.allowlist.join("\n"));
@@ -416,8 +422,8 @@ export default function SecurityPage() {
     setRules(r);
     setBlocks(b);
     setTrusted(t);
-  }, []);
-  const loadEvents = useCallback(async () => setEvents(await api.securityEvents({ ...evFilter, kind: evFilter.kind || undefined, severity: evFilter.severity || undefined, q: evFilter.q || undefined })), [evFilter]);
+  }), []);
+  const loadEvents = useCallback(() => api.securityEvents({ ...evFilter, kind: evFilter.kind || undefined, severity: evFilter.severity || undefined, q: evFilter.q || undefined }).then(setEvents), [evFilter]);
 
   useEffect(() => {
     if (authed) load();
@@ -444,7 +450,7 @@ export default function SecurityPage() {
   const s = draft;
   const num = (k: keyof typeof s, label: string, help?: string, placeholder?: string) => (
     <Label label={label} help={help}>
-      <input type="number" value={s[k] == null ? "" : String(s[k])} placeholder={placeholder} onChange={(e) => setDraft({ ...s, [k]: e.target.value === "" ? null : Number(e.target.value) })} className={inputClass} />
+      <input type="number" value={own(s, k) == null ? "" : String(own(s, k))} placeholder={placeholder} onChange={(e) => setDraft({ ...s, [k]: e.target.value === "" ? null : Number(e.target.value) })} className={inputClass} />
     </Label>
   );
 

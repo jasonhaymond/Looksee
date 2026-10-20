@@ -1,3 +1,6 @@
+// How an endpoint's site collector is doing, in words (online, starting, not
+// running — with its last error), for the Endpoints and Sites pages.
+
 import type { Endpoint } from "../lib/api";
 
 // A collector polls the engine every ~15s; a minute of silence is worth

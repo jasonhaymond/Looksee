@@ -1,5 +1,16 @@
+// The 60+ endpoint metrics a 3.x+ agent reports (CPU, memory, every disk and
+// interface, temperatures, SMART, RAID, updates, firewall, encryption…) and how
+// "Endpoint metric", "Reboot detection" and "Change detection" checks are
+// judged from an agent's report.
+//
+// Where this sits: routes/agent.ts evaluates these checks on every report; the
+// dashboard's metric picker comes from ENDPOINT_METRICS. Excluded items
+// (mounts, interfaces, devices, sensors — services/exclusions.ts) are left out
+// of multi-item readings.
+
 import crypto from "node:crypto";
 import { applyThresholds, type MeasuredResult, type Status } from "./thresholds.js";
+import { excludeItems, nameExcluded } from "./probes/exclude.js";
 
 // Shape of the 3.x agent's `metrics.extended` (agent/internal/metrics).
 // Every field is optional: a platform or permission may not provide it.
@@ -24,7 +35,7 @@ export type Snapshot = {
   users?: { count?: number; sessions?: { user: string; terminal?: string; host?: string; started?: number }[] };
   pendingReboot?: boolean | null;
   time?: { offsetMs?: number | null; synced?: boolean | null; server?: string };
-  updates?: { total?: number; security?: number; checkedAt?: number } | null;
+  updates?: { total?: number; security?: number; phased?: number; checkedAt?: number } | null;
   defender?: { enabled?: boolean; realtime?: boolean; signatureAgeDays?: number } | null;
   firewall?: { enabled?: boolean; detail?: string } | null;
   encryption?: { enabled?: boolean; detail?: string } | null;
@@ -132,6 +143,7 @@ export const ENDPOINT_METRICS: MetricDef[] = [
 
   { key: "updates.total", label: "Pending OS updates", group: "Security & updates", kind: "number", help: "apt, dnf/yum, Windows Update, or macOS softwareupdate — checked every 6 hours.", read: (s) => one(s.updates?.total) },
   { key: "updates.security", label: "Pending security updates", group: "Security & updates", kind: "number", read: (s) => one(s.updates?.security) },
+  { key: "updates.phased", label: "Phased updates held back (Ubuntu)", group: "Security & updates", kind: "number", platforms: "Ubuntu, agent 5.0+", help: "Updates Ubuntu is rolling out gradually and holding back for now. Not counted in Pending OS updates.", read: (s) => one(s.updates?.phased) },
   { key: "defender.enabled", label: "Defender antivirus enabled", group: "Security & updates", kind: "boolean", expect: true, platforms: "Windows", read: (s) => one(s.defender?.enabled) },
   { key: "defender.realtime", label: "Defender real-time protection on", group: "Security & updates", kind: "boolean", expect: true, platforms: "Windows", read: (s) => one(s.defender?.realtime) },
   { key: "defender.signature_age_days", label: "Defender signature age", group: "Security & updates", kind: "number", unit: " days", platforms: "Windows", read: (s) => one(s.defender?.signatureAgeDays) },
@@ -149,9 +161,13 @@ export function evaluateEndpointMetric(snapshot: Snapshot, config: Record<string
   if (!def) return { status: "warn", latencyMs: null, message: `Unknown metric: ${config.metric}` };
   const instance = String(config.instance ?? "").trim();
   if (def.instanceRequired && !instance) return { status: "warn", latencyMs: null, message: `${def.label} needs a ${def.instance}` };
-  const readings = def.read(snapshot, instance);
+  // Excluded items (mounts, interfaces, devices, sensors — config.exclude,
+  // already merged with any reusable exclusion lists) are left out, except
+  // for metrics about one named item, where excluding it would make no sense.
+  const excluded = def.instance && !def.instanceRequired ? excludeItems(config.exclude, true) : [];
+  const readings = def.read(snapshot, instance)?.filter((r) => !nameExcluded(r.label, excluded)) ?? null;
   if (readings == null || readings.length === 0) {
-    return { status: "unknown", latencyMs: null, message: instance && def.instance ? `No ${def.instance} matching "${instance}" on this host` : `${def.label} isn't reported by this host${def.platforms ? ` (${def.platforms})` : ""}` };
+    return { status: "unknown", latencyMs: null, message: instance && def.instance ? `No ${def.instance} matching "${instance}" on this endpoint` : `${def.label} isn't reported by this endpoint${def.platforms ? ` (${def.platforms})` : ""}` };
   }
 
   if (def.kind === "boolean") {
@@ -182,7 +198,7 @@ export function evaluateReboot(snapshot: Snapshot, config: Record<string, unknow
   const hold = Number(config.holdMinutes ?? 15) * 60_000;
   const since = next.rebootedAt ? Date.now() - Number(next.rebootedAt) : Infinity;
   const bootIso = new Date(boot * 1000).toISOString().replace("T", " ").slice(0, 16);
-  if (since < hold) return { result: { status: String(config.severity ?? "warn") === "down" ? "down" : "warn", latencyMs: null, message: `Host rebooted at ${bootIso} UTC`, value: (snapshot.uptimeSeconds ?? 0) / 3600 }, state: next };
+  if (since < hold) return { result: { status: String(config.severity ?? "warn") === "down" ? "down" : "warn", latencyMs: null, message: `Rebooted at ${bootIso} UTC`, value: (snapshot.uptimeSeconds ?? 0) / 3600 }, state: next };
   return { result: { status: "up", latencyMs: null, message: `Up since ${bootIso} UTC`, value: (snapshot.uptimeSeconds ?? 0) / 3600 }, state: next };
 }
 

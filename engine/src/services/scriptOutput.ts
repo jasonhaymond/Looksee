@@ -1,4 +1,9 @@
+// Judges a custom script check's output on the engine: expected exit code and
+// expected text (contains, doesn't contain, equals, or a pattern on RE2 —
+// lib/userRegex.ts).
+
 import type { Status } from "./thresholds.js";
+import { compileUserRegex } from "../lib/userRegex.js";
 
 type Result = { status: Status; message: string | null; value?: number | null; details?: unknown; latencyMs: number | null };
 
@@ -13,7 +18,7 @@ export function evaluateScriptOutput<T extends Result>(config: Record<string, un
   if ((!mode || mode === "none") && wantExit == null) return null;
   const details = (result.details ?? {}) as { output?: string; exitCode?: number };
   if (details.output === undefined || details.exitCode === undefined) {
-    return { ...result, status: "warn", message: "Expected-output matching needs agent 4.0.0+ — update this host's agent" };
+    return { ...result, status: "warn", message: "Expected-output matching needs agent 4.0.0+ — update this endpoint's agent" };
   }
   const fail: Status = String(config.expectSeverity ?? "down") === "warn" ? "warn" : "down";
   const out = details.output.replace(/\r\n/g, "\n");
@@ -29,7 +34,7 @@ export function evaluateScriptOutput<T extends Result>(config: Record<string, un
     else if (mode === "equals") ok = hay.trim() === needle.trim();
     else if (mode === "regex") {
       try {
-        ok = new RegExp(text, caseless ? "i" : "").test(out);
+        ok = compileUserRegex(text, { ignoreCase: caseless }).test(out);
       } catch {
         return { ...result, status: "warn", message: `Invalid expected-output regex: ${text}` };
       }

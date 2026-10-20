@@ -1,3 +1,8 @@
+// API routes for locations (places that group sites): list, create, rename,
+// delete, and "maintenance for N minutes" for everything at a location.
+//
+// Security: every route requires a signed-in session.
+
 import { Router } from "express";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";

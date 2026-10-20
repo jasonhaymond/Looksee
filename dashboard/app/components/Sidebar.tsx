@@ -24,6 +24,8 @@ import { NAV } from "../lib/nav";
 import { PushEnableButton } from "./PushEnableButton";
 import { ThemeToggle } from "./ThemeToggle";
 import { pollEvery } from "../lib/poll";
+import { own } from "../lib/own";
+import { parseFlags, useStoredState } from "../lib/useStoredState";
 
 // Where the open/closed state of tree branches is remembered.
 const EXPANDED_KEY = "looksee.nav.expanded";
@@ -54,27 +56,9 @@ function Problems({ n }: { n: number }) {
   return <span className="ml-auto shrink-0 pl-1 text-[10px] font-medium text-[var(--down)]">{n} problem{n === 1 ? "" : "s"}</span>;
 }
 
-/**
- * Reads a JSON value saved in the browser, or `fallback` if nothing is
- * saved or storage is unavailable (private windows can block it).
- */
-function readJson<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    return v ? (JSON.parse(v) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-/** Saves a JSON value in the browser, ignoring storage that's unavailable. */
-function writeJson(key: string, value: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Storage blocked or full: the tree just won't remember its state.
-  }
-}
+// Nothing remembered yet: every branch and section at its default.
+const NO_FLAGS: Record<string, boolean> = {};
+const toJson = (v: Record<string, boolean>) => JSON.stringify(v);
 
 /**
  * One row of the tree: an optional open/close toggle, the status glyph, the
@@ -113,15 +97,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
   const [tree, setTree] = useState<Tree | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [sections, setSections] = useState<Record<string, boolean>>({});
+  // Which branches and page-list sections are open, remembered in this
+  // browser (lib/useStoredState.ts).
+  const [expanded, setExpanded] = useStoredState(EXPANDED_KEY, NO_FLAGS, parseFlags, toJson);
+  const [sections, setSections] = useStoredState(SECTIONS_KEY, NO_FLAGS, parseFlags, toJson);
   const [query, setQuery] = useState("");
-
-  // Restore remembered open/closed state once, in the browser.
-  useEffect(() => {
-    setExpanded(readJson(EXPANDED_KEY, {}));
-    setSections(readJson(SECTIONS_KEY, {}));
-  }, []);
 
   // Load the tree now and every 30 s. A signed-out visitor (401) simply gets
   // no tree; other errors keep the last good tree on screen.
@@ -148,24 +128,14 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   }, [pathname]);
 
   /** Opens or closes one branch and remembers it. */
-  const toggle = (key: string) =>
-    setExpanded((prev) => {
-      const next = { ...prev, [key]: !prev[key] };
-      writeJson(EXPANDED_KEY, next);
-      return next;
-    });
+  const toggle = (key: string) => setExpanded({ ...expanded, [key]: !own(expanded, key) });
   // A page-list section is open if it holds the page being viewed, unless
   // the admin opened or closed it by hand (remembered in `sections`). Keeping
   // the rest closed leaves most of the column to the tree.
   const isActiveHref = (href: string) => (href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`));
-  const sectionOpen = (label: string) => sections[label] ?? NAV.find((g) => g.label === label)!.items.some((i) => isActiveHref(i.href));
+  const sectionOpen = (label: string) => own(sections, label) ?? NAV.find((g) => g.label === label)!.items.some((i) => isActiveHref(i.href));
   /** Opens or closes one page-list section and remembers it. */
-  const toggleSection = (label: string) =>
-    setSections((prev) => {
-      const next = { ...prev, [label]: !sectionOpen(label) };
-      writeJson(SECTIONS_KEY, next);
-      return next;
-    });
+  const toggleSection = (label: string) => setSections({ ...sections, [label]: !sectionOpen(label) });
 
   // With a search typed, only matching objects and the branches leading to
   // them are shown, all opened.
@@ -193,7 +163,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- hit depends only on q
   }, [tree, q]);
-  const isOpen = (key: string) => Boolean(q) || Boolean(expanded[key]);
+  const isOpen = (key: string) => Boolean(q) || Boolean(own(expanded, key));
 
   async function signOut() {
     await api.logout();

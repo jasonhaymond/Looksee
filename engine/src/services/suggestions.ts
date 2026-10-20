@@ -1,8 +1,15 @@
+// Suggested checks for an endpoint, from what its agent reports: services,
+// processes, containers, listening ports, disks, interfaces, hardware, security
+// state, software, detected server roles (services/roleTemplates.ts) and checks
+// it already has — minus anything it already has.
+
 import type { Snapshot } from "./endpointMetrics.js";
+import { ROLE_TEMPLATES, hostFacts } from "./roleTemplates.js";
+import { own } from "../lib/own.js";
 
 export type Suggestion = { key: string; name: string; type: string; config: Record<string, unknown>; reason: string; intervalSeconds?: number; group?: string; endpointScoped?: boolean };
 
-type EndpointLike = { name: string; hostname?: string | null; os: string | null; lastSnapshot: unknown; availableServices: unknown; inventory: unknown; processInventory?: unknown; serviceInventory?: unknown; availableProcesses?: unknown };
+type EndpointLike = { name: string; hostname?: string | null; os: string | null; lastSnapshot: unknown; availableServices: unknown; inventory: unknown; processInventory?: unknown; serviceInventory?: unknown; availableProcesses?: unknown; software?: unknown };
 type ServiceRow = { name: string; displayName?: string; state?: string; startType?: string };
 type ProcessRow = { name: string; memoryMb?: number };
 type ExistingCheck = { type: string; config: unknown };
@@ -13,9 +20,25 @@ const PSEUDO_FS = /^(tmpfs|devtmpfs|overlay|squashfs|proc|sysfs|cgroup|nsfs|auto
 // Services worth a dedicated up/down check whenever the agent sees them.
 const NOTABLE_SERVICES = ["ssh", "sshd", "nginx", "caddy", "apache2", "httpd", "postgresql", "mysql", "mariadb", "docker", "containerd", "redis-server", "redis", "smbd", "nfs-server", "pihole-FTL", "unbound", "named", "wireguard", "tailscaled", "zfs-zed", "pveproxy", "pvedaemon", "MSSQLSERVER", "W3SVC", "WinRM", "TermService", "Spooler", "DNS", "NTDS", "DHCPServer", "vmms", "VeeamBackupSvc"];
 
-function key(s: Pick<Suggestion, "type" | "config">) {
+/**
+ * What makes two checks "the same" for suggestions: the type plus the
+ * settings that say what is watched — metric and item, the target host or
+ * URL, port, event log + event IDs, SNMP template or OID, and the measure.
+ * A suggestion whose key matches an existing check isn't offered again.
+ */
+export function suggestionKey(s: Pick<Suggestion, "type" | "config">) {
   const c = s.config as Record<string, unknown>;
-  return [s.type, c.metric ?? "", c.instance ?? c.mount ?? c.serviceName ?? c.container ?? c.what ?? c.url ?? c.logName ?? c.unit ?? "", c.port ?? "", c.measure && c.measure !== "count" && c.measure !== "status" ? c.measure : ""].join("|").toLowerCase();
+  return [
+    s.type,
+    c.metric ?? "",
+    c.instance ?? c.mount ?? c.serviceName ?? c.container ?? c.what ?? c.url ?? c.logName ?? c.unit ?? "",
+    c.host ?? c.hostname ?? c.server ?? "",
+    c.port ?? "",
+    c.eventIds ?? c.preset ?? c.oid ?? "",
+    c.measure && c.measure !== "count" && c.measure !== "status" ? c.measure : "",
+  ]
+    .join("|")
+    .toLowerCase();
 }
 
 // Well-known listening ports -> the check that proves the service works
@@ -52,18 +75,18 @@ const PORT_CHECKS: Record<number, { label: string; type: string; config: (addr: 
 
 // Server software worth a "is it running" check when found, by process or
 // service name. Matched case-insensitively against the whole name.
-const NOTABLE = /^(sshd?|nginx|caddy|apache2|httpd|traefik|haproxy|postgres(ql)?(@.*)?|mysqld?|mariadbd?|mariadb|mongod|redis-server|redis|memcached|sqlservr(\.exe)?|MSSQL\$?\w*|MSSQLSERVER|SQLSERVERAGENT|W3SVC|IISADMIN|WinRM|TermService|Spooler|DNS|NTDS|DHCPServer|vmms|Veeam\w*|docker(d)?|containerd|kubelet|k3s|smbd|nmbd|nfs-server|vsftpd|proftpd|postfix|exim4?|dovecot|named|bind9|unbound|pihole-FTL|AdGuardHome|wg-quick@\w+|openvpn(@\w+)?|tailscaled|zerotier-one|plexmediaserver|Plex Media Server(\.exe)?|jellyfin|emby-server|home-?assistant|php-fpm\S*|tomcat\d*|jenkins|gitlab-runsvdir|elasticsearch|grafana-server|grafana|prometheus|influxd|mosquitto|unifi|zabbix-agent2?|crowdsec|fail2ban|chronyd?|ntpd?|smartd|zfs-zed|pveproxy|pvedaemon|ceph-\w+|apcupsd|nut-server|upsd|cups(d)?|nextcloud\w*|syncthing|minio|rabbitmq-server|kafka|nginx-proxy-manager|portainer)$/i;
+const NOTABLE = /^(sshd?|nginx|caddy|apache2|httpd|traefik|haproxy|postgres(?:ql|)(?:@.*|)|mysqld?|mariadbd?|mariadb|mongod|redis-server|redis|memcached|sqlservr(\.exe)?|MSSQL\$?\w*|MSSQLSERVER|SQLSERVERAGENT|W3SVC|IISADMIN|WinRM|TermService|Spooler|DNS|NTDS|DHCPServer|vmms|Veeam\w*|docker(d)?|containerd|kubelet|k3s|smbd|nmbd|nfs-server|vsftpd|proftpd|postfix|exim4?|dovecot|named|bind9|unbound|pihole-FTL|AdGuardHome|wg-quick@\w+|openvpn(?:@\w+|)|tailscaled|zerotier-one|plexmediaserver|Plex Media Server(\.exe)?|jellyfin|emby-server|home-?assistant|php-fpm\S*|tomcat\d*|jenkins|gitlab-runsvdir|elasticsearch|grafana-server|grafana|prometheus|influxd|mosquitto|unifi|zabbix-agent2?|crowdsec|fail2ban|chronyd?|ntpd?|smartd|zfs-zed|pveproxy|pvedaemon|ceph-\w+|apcupsd|nut-server|upsd|cups(d)?|nextcloud\w*|syncthing|minio|rabbitmq-server|kafka|nginx-proxy-manager|portainer)$/i;
 const DATABASE_PROCESS = /^(postgres|mysqld|mariadbd|mongod|redis-server|sqlservr\.exe|influxd|elasticsearch|memcached)$/i;
 
 // L10: turn one agent snapshot into a checklist of sensible checks with
 // sensible thresholds, minus whatever this host already has.
 export function suggestChecks(host: EndpointLike, existing: ExistingCheck[]): Suggestion[] {
   const s = (host.lastSnapshot ?? {}) as Snapshot & { availableContainers?: string[] };
-  const isWindows = /windows/i.test(host.os ?? "") || /windows/i.test(JSON.stringify(host.inventory ?? {}));
+  const isWindows = `${host.os ?? ""} ${JSON.stringify(host.inventory ?? {})}`.toLowerCase().includes("windows");
   const out: Suggestion[] = [];
   const add = (name: string, type: string, config: Record<string, unknown>, reason: string, intervalSeconds?: number) => {
     const sug = { name: `${host.name}: ${name}`, type, config, reason, intervalSeconds, key: "" };
-    sug.key = key(sug);
+    sug.key = suggestionKey(sug);
     out.push(sug);
   };
 
@@ -71,7 +94,7 @@ export function suggestChecks(host: EndpointLike, existing: ExistingCheck[]): Su
   add("unexpected reboot", "host_reboot", { holdMinutes: 15, severity: "warn" }, "Flags any reboot so an unplanned one doesn't go unnoticed.");
   if (s.cpu) add("CPU", "host_metric", { metric: "cpu.percent", warnAbove: 85, criticalAbove: 97 }, "Sustained CPU saturation.");
   if (s.mem) add("memory", "host_metric", { metric: "mem.percent", warnAbove: 90, criticalAbove: 97 }, "Memory pressure before the OOM killer acts.");
-  if (s.mem?.swapTotal) add("swap", "host_metric", { metric: "swap.percent", warnAbove: 50, criticalAbove: 85 }, "Heavy swapping slows everything on the host.");
+  if (s.mem?.swapTotal) add("swap", "host_metric", { metric: "swap.percent", warnAbove: 50, criticalAbove: 85 }, "Heavy swapping slows everything on the endpoint.");
   if (s.load?.l5 != null && !isWindows) add("load (5 min)", "host_metric", { metric: "load.5", warnAbove: 1.5, criticalAbove: 3 }, "Run-queue length per core.");
   if (s.cpu?.steal != null && s.cpu.steal > 0) add("CPU steal", "host_metric", { metric: "cpu.steal", warnAbove: 10, criticalAbove: 25 }, "This looks like a VM; steal shows an oversubscribed hypervisor.");
 
@@ -100,7 +123,7 @@ export function suggestChecks(host: EndpointLike, existing: ExistingCheck[]): Su
     add("Defender real-time", "host_metric", { metric: "defender.realtime", severity: "down" }, "Real-time antivirus protection.");
     add("Defender signatures", "host_metric", { metric: "defender.signature_age_days", warnAbove: 3, criticalAbove: 7 }, "Out-of-date antivirus definitions.", 3600);
   }
-  if (s.failedLogins != null) add("failed logins", "host_metric", { metric: "logins.failed", warnAbove: 10, criticalAbove: 50 }, "Brute-force attempts against this host.");
+  if (s.failedLogins != null) add("failed logins", "host_metric", { metric: "logins.failed", warnAbove: 10, criticalAbove: 50 }, "Brute-force attempts against this endpoint.");
   if (s.battery?.present) add("battery", "host_metric", { metric: "battery.percent", warnBelow: 30, criticalBelow: 10 }, "Battery charge.");
   if (s.temps?.length) add("temperature", "host_metric", { metric: "temp.max", warnAbove: 80, criticalAbove: 90 }, `${s.temps.length} temperature sensor(s).`);
 
@@ -118,7 +141,7 @@ export function suggestChecks(host: EndpointLike, existing: ExistingCheck[]): Su
     const running = !svc.state || /running|active/i.test(svc.state);
     if (!(NOTABLE.test(base) || NOTABLE_SERVICES.some((n) => n.toLowerCase() === base.toLowerCase())) || !enabled || !running) continue;
     seenServices.add(base.toLowerCase());
-    add(`service ${svc.displayName && svc.displayName !== base ? `${svc.displayName} (${base})` : base}`, "agent_service", { serviceName: base }, svc.state ? `${svc.state}, starts ${svc.startType ?? "automatically"}.` : "Well-known service found on this host.");
+    add(`service ${svc.displayName && svc.displayName !== base ? `${svc.displayName} (${base})` : base}`, "agent_service", { serviceName: base }, svc.state ? `${svc.state}, starts ${svc.startType ?? "automatically"}.` : "Well-known service found on this endpoint.");
   }
 
   // Processes without a matching service (apps started by hand, Docker on
@@ -132,7 +155,7 @@ export function suggestChecks(host: EndpointLike, existing: ExistingCheck[]): Su
     // postgresql, mysqld -> mysql) would only duplicate that check.
     const lower = base.toLowerCase().replace(/d$/, "");
     if ([...seenServices].some((s) => s.startsWith(lower) || lower.startsWith(s))) continue;
-    add(`process ${name}`, "agent_process", { serviceName: name, measure: "count", minCount: 1 }, "Server software running as a process on this host.");
+    add(`process ${name}`, "agent_process", { serviceName: name, measure: "count", minCount: 1 }, "Server software running as a process on this endpoint.");
   }
   for (const name of procNames.filter((n) => DATABASE_PROCESS.test(n))) {
     const mem = procs.filter((p) => p.name === name).reduce((a, p) => a + (p.memoryMb ?? 0), 0);
@@ -152,7 +175,7 @@ export function suggestChecks(host: EndpointLike, existing: ExistingCheck[]): Su
     add("unexpected shutdowns", "agent_eventlog", { logName: "System", eventIds: "41,6008", levels: "critical,error", severity: "down" }, "Kernel-Power 41 / EventLog 6008 — the machine lost power or crashed.");
     add("service crashes", "agent_eventlog", { logName: "System", eventIds: "7031,7034", levels: "critical,error,warning", severity: "warn" }, "Service Control Manager: a service terminated unexpectedly.");
     add("disk errors", "agent_eventlog", { logName: "System", eventIds: "7,11,51,153", levels: "critical,error,warning", severity: "warn" }, "Bad blocks, controller errors and I/O retries.");
-  } else if (/linux/i.test(host.os ?? "") || s.load) {
+  } else if ((host.os ?? "").toLowerCase().includes("linux") || s.load) {
     add("critical journal entries", "agent_journal", { unit: "", priority: "crit", pattern: "" }, "Anything logged at critical or worse.");
   }
 
@@ -162,14 +185,40 @@ export function suggestChecks(host: EndpointLike, existing: ExistingCheck[]): Su
   if (address) {
     const ports = new Set((s.listening ?? []).filter((l) => l.proto?.startsWith("tcp") && !/^(127\.|::1$|\[::1\])/.test(l.address ?? "")).map((l) => l.port));
     for (const port of ports) {
-      for (const pc of PORT_CHECKS[port] ?? []) add(`${pc.label} reachable`, pc.type, pc.config(address), `Port ${port} is listening${(s.listening ?? []).find((l) => l.port === port)?.process ? ` (${(s.listening ?? []).find((l) => l.port === port)!.process})` : ""}; checks it answers over the network at ${address}.`);
+      for (const pc of own(PORT_CHECKS, port) ?? []) add(`${pc.label} reachable`, pc.type, pc.config(address), `Port ${port} is listening${(s.listening ?? []).find((l) => l.port === port)?.process ? ` (${(s.listening ?? []).find((l) => l.port === port)!.process})` : ""}; checks it answers over the network at ${address}.`);
     }
     add("reachable (ping)", "ping", { host: address, count: 3, lossWarnPercent: 20, lossCriticalPercent: 100 }, `Network reachability of ${address} from Looksee.`);
   }
 
-  const have = new Set(existing.map((e) => key({ type: e.type, config: (e.config ?? {}) as Record<string, unknown> })));
+  // Software (5.0 agents): updates waiting and vulnerable software, once the
+  // agent has sent a software report.
+  const sw = host.software as { upgradableAt?: number; collectedAt?: number } | null | undefined;
+  if (sw?.upgradableAt) add("updates waiting", "host_packages", { failOn: "security", severity: "warn" }, "Lists packages with updates; warns when a security update is waiting.", 3600);
+  if (sw?.collectedAt) add("vulnerable software", "host_vulnerable", {}, "Known vulnerabilities and end-of-life software, looked up online every 6 hours.", 21600);
+
+  // From checks already on this endpoint: an HTTPS check without a
+  // certificate check for the same host gets one suggested.
+  const certHosts = new Set(existing.filter((e) => e.type === "ssl_cert").map((e) => String((e.config as Record<string, unknown>)?.host ?? "").toLowerCase()));
+  for (const e of existing.filter((x) => x.type === "http")) {
+    try {
+      const u = new URL(String((e.config as Record<string, unknown>)?.url ?? ""));
+      if (u.protocol === "https:" && !certHosts.has(u.hostname.toLowerCase())) add(`TLS certificate ${u.hostname}`, "ssl_cert", { host: u.hostname, port: Number(u.port) || 443, warnDays: 14, criticalDays: 3 }, `Your HTTPS check on ${u.hostname} doesn't watch its certificate's expiry yet.`, 3600);
+    } catch {
+      // Not a URL — nothing to suggest.
+    }
+  }
+
+  // Server roles this endpoint looks like (web, database, DNS, domain
+  // controller…): their role checks, grouped under the role's name.
+  const facts = hostFacts(host, address);
+  for (const t of ROLE_TEMPLATES) {
+    if (t.kind !== "role" || !t.detect(facts)) continue;
+    for (const c of t.checks(facts)) out.push({ ...c, key: suggestionKey(c), group: t.label });
+  }
+
+  const have = new Set(existing.map((e) => suggestionKey({ type: e.type, config: (e.config ?? {}) as Record<string, unknown> })));
   const unique = new Map<string, Suggestion>();
-  for (const sug of out) if (!have.has(sug.key) && !unique.has(sug.key)) unique.set(sug.key, { ...sug, group: groupOf(sug.type) });
+  for (const sug of out) if (!have.has(sug.key) && !unique.has(sug.key)) unique.set(sug.key, { ...sug, group: sug.group ?? groupOf(sug.type) });
   return [...unique.values()];
 }
 
@@ -178,11 +227,12 @@ function groupOf(type: string): string {
   if (type === "agent_service" || type === "agent_process" || type === "agent_services_overview") return "Services & software";
   if (type === "agent_docker") return "Containers";
   if (type === "agent_eventlog" || type === "agent_journal") return "Logs";
+  if (type === "host_packages" || type === "host_vulnerable" || type === "host_software") return "Software & security";
   return "Network reachability";
 }
 
 // The host's main LAN address, for network checks against it.
-function primaryAddress(s: Snapshot): string | null {
+export function primaryAddress(s: Snapshot): string | null {
   for (const n of s.net ?? []) {
     if (!n.up || VIRTUAL_IFACE.test(n.name)) continue;
     for (const a of n.addrs ?? []) {

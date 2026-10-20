@@ -11,6 +11,7 @@ import {
   listArchives,
   rescheduleBackupCron,
   restoreBackup,
+  restoreVersionProblem,
   runBackup,
 } from "../services/backup.js";
 import { logger } from "../lib/logger.js";
@@ -137,6 +138,13 @@ backupsRouter.post("/restore", async (req, res) => {
   }
   if (getCurrentOperation()) {
     res.status(409).json({ error: `A ${getCurrentOperation()!.kind} is already in progress.` });
+    return;
+  }
+  // A database from another app version would leave the database in a
+  // state neither version can use — refuse up front with the way to do it.
+  const versionProblem = restoreDb ? restoreVersionProblem(archiveName) : null;
+  if (versionProblem) {
+    res.status(409).json({ error: versionProblem });
     return;
   }
 

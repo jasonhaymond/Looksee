@@ -1,28 +1,40 @@
+// Request-level protection that runs before every route: blocked IP
+// addresses, the optional IP allowlist, security headers on every response,
+// and counting requests for known exploit paths (a scanner probing for
+// WordPress or .env files) as security events.
+//
+// Where this sits: registered first in app.ts. The health check stays
+// reachable for uptime monitors; machine routes (agents, collectors, push
+// URLs, install scripts, public status pages) are only covered by the
+// allowlist when the admin turns that on.
+
 import type { NextFunction, Request, Response } from "express";
 import { buildList, clientIp, listHas } from "../lib/ipMatch.js";
-import { SCAN_PATTERNS, getSecuritySettings, isBlocked, recordSecurityEvent } from "../services/security.js";
+import { getSecuritySettings, isBlocked, looksLikeScan, recordSecurityEvent } from "../services/security.js";
 
 // Machine-to-machine routes: agents, site collectors, heartbeat/push URLs,
 // the install scripts agents download, and public status pages. The IP
 // allowlist only covers them when "also apply to agents" is on; blocks
 // always apply.
-const MACHINE_ROUTES = /^\/(api\/agent|api\/collector|api\/hb|api\/public|install)(\/|$)/;
+const MACHINE_PREFIXES = ["/api/agent", "/api/collector", "/api/hb", "/api/public", "/install"];
+/** Whether a path is one of those routes (the prefix itself, or below it). */
+const isMachineRoute = (p: string) => MACHINE_PREFIXES.some((pre) => p === pre || p.startsWith(`${pre}/`));
 
 // Health stays reachable for uptime monitors and the update script, even
 // from a blocked or non-allowlisted IP — it reveals only up/down + version.
-const ALWAYS_OPEN = /^\/api\/health$/;
+const ALWAYS_OPEN = "/api/health";
 
 let allowCache: { key: string; list: ReturnType<typeof buildList> } | null = null;
 
 export async function securityGate(req: Request, res: Response, next: NextFunction) {
-  if (ALWAYS_OPEN.test(req.path)) return next();
+  if (req.path === ALWAYS_OPEN) return next();
   const ip = clientIp(req);
   if (await isBlocked(ip)) {
     res.status(403).json({ error: "Access from your IP address is blocked." });
     return;
   }
   const s = await getSecuritySettings();
-  if (s.allowlistEnabled && s.allowlist.length && (s.allowlistAgents || !MACHINE_ROUTES.test(req.path))) {
+  if (s.allowlistEnabled && s.allowlist.length && (s.allowlistAgents || !isMachineRoute(req.path))) {
     const key = s.allowlist.join(",");
     if (allowCache?.key !== key) allowCache = { key, list: buildList(s.allowlist) };
     if (!listHas(allowCache.list, ip)) {
@@ -38,7 +50,7 @@ export async function securityGate(req: Request, res: Response, next: NextFuncti
 // known exploit path is a probe worth counting.
 export async function notFoundHandler(req: Request, res: Response) {
   const s = await getSecuritySettings();
-  if (s.detectScans && SCAN_PATTERNS.test(req.originalUrl)) await recordSecurityEvent("scan_probe", { req });
+  if (s.detectScans && looksLikeScan(req.originalUrl)) await recordSecurityEvent("scan_probe", { req });
   res.status(404).json({ error: "Not found" });
 }
 

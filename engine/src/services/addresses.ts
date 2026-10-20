@@ -1,5 +1,13 @@
+// IP address history by MAC address: every time an endpoint's network card
+// (MAC) is seen with an IP — from the agent's interface list, discovery scans
+// or ARP checks — it's recorded, so "this device changed IP" can alert and the
+// endpoint page can show its address history.
+//
+// Used by routes/agent.ts (each report), discovery, and the ip_change check
+// (probeIpChange).
+
 import net from "node:net";
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { endpoints, macIpHistory } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
@@ -12,7 +20,7 @@ import { type Config, type ProbeContext, type ProbeOutcome, numOr, str, up, warn
 // an IP change; ip_change checks and the host's address history read this.
 
 const VIRTUAL_IFACE = /^(docker|veth|br-|virbr|vmnet|vEthernet|tun|tap|wg|zt|tailscale|isatap|Teredo|Bluetooth|Local Area Connection\*|lo)/i;
-const usableMac = (mac: string) => /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac) && mac !== "00:00:00:00:00:00";
+const usableMac = (mac: string) => /^[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}$/.test(mac) && mac !== "00:00:00:00:00:00";
 const usableIp = (ip: string) => (net.isIPv4(ip) && !ip.startsWith("169.254.") && !ip.startsWith("127.")) || (net.isIPv6(ip) && !/^(fe80|::1)/i.test(ip));
 
 export async function recordSighting(input: { mac: string; ip: string; source: string; endpointId?: string | null; siteId?: string | null }) {
@@ -74,7 +82,7 @@ export async function probeIpChange(config: Config, ctx: ProbeContext): Promise<
     const rows = await db.selectDistinct({ mac: macIpHistory.mac }).from(macIpHistory).where(eq(macIpHistory.endpointId, ctx.endpointId));
     macs = [...new Set([...(host?.macAddress ? [normalizeMac(host.macAddress)] : []), ...rows.map((r) => r.mac)])];
   }
-  if (!macs.length) return warn("No MAC address to watch — set one on the check or the host");
+  if (!macs.length) return warn("No MAC address to watch — set one on the check or the endpoint");
   const includeV6 = config.includeIpv6 === true || config.includeIpv6 === "true";
   const hold = numOr(config, "holdMinutes", 60) * 60_000;
   const severity = str(config, "severity", "warn") === "down" ? "down" : "warn";

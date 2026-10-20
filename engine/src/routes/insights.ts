@@ -1,3 +1,10 @@
+// API routes for SLA reports, received events (traps/syslog), flow top
+// talkers and network discovery scans.
+//
+// Security: every route requires a signed-in session; filters are validated
+// (IDs, numbers, time ranges) and passed to queries as parameters, never as
+// query text.
+
 import { Router } from "express";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -5,13 +12,13 @@ import { discoveryScans, events, sites, endpoints, checks } from "../db/schema.j
 import { createAlertRule, parseAlertRule } from "../services/alertRuleFactory.js";
 import { requireAuth } from "../middleware/auth.js";
 import { MAX_SCAN_ADDRESSES, expandCidr, runDiscoveryScan } from "../services/discovery.js";
+import { isUuid } from "../lib/ids.js";
 
 // ?site= on events/flows: "local" = received on the engine's own network,
 // an endpoint id = that remote site (its collector or direct push).
-const UUID_RE = /^[0-9a-f-]{36}$/i;
 function siteFilter(site: unknown) {
   if (site === "local") return sql`site_id IS NULL`;
-  if (typeof site === "string" && UUID_RE.test(site)) return sql`site_id = ${site}`;
+  if (typeof site === "string" && isUuid(site)) return sql`site_id = ${site}`;
   return null;
 }
 

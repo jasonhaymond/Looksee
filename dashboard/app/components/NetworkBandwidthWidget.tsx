@@ -1,3 +1,5 @@
+// Dashboard widget: an endpoint's network throughput over time.
+
 "use client";
 
 import { useEffect, useState } from "react";

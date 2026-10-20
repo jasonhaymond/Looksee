@@ -1,3 +1,7 @@
+// Site helpers: the site collector bundle's manifest (what agents download to
+// become a collector), which collector a site uses, and queuing one-off jobs
+// (Wake-on-LAN, SNMP walks) for a collector.
+
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +26,7 @@ export type CollectorManifest = {
 let manifestCache: { at: number; value: CollectorManifest | null } | null = null;
 export function collectorManifest(): CollectorManifest | null {
   if (manifestCache && Date.now() - manifestCache.at < 30_000) return manifestCache.value;
-  let value: CollectorManifest | null = null;
+  let value: CollectorManifest | null;
   try {
     value = JSON.parse(fs.readFileSync(path.join(collectorDistDir, "manifest.json"), "utf-8"));
   } catch {

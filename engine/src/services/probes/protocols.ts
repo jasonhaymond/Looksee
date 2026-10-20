@@ -1,3 +1,9 @@
+// Protocol checks: UDP, mail/SSH/FTP/LDAP/RDP greetings, NTP, DHCP, MQTT,
+// WebSocket, gRPC health, container registries, ARP presence and Wake-on-LAN.
+//
+// Each speaks just enough of its protocol to prove the service answers;
+// response patterns run on RE2 (lib/userRegex.ts).
+
 import crypto from "node:crypto";
 import net from "node:net";
 import tls from "node:tls";
@@ -9,6 +15,8 @@ import * as grpc from "@grpc/grpc-js";
 import { type Config, type ProbeOutcome, bool, down, errMsg, numOr, str, warn } from "./types.js";
 import { parsePayload, tcpExchange, udpExchange } from "./net.js";
 import { httpRequest } from "./http.js";
+import { own } from "../../lib/own.js";
+import { compileUserRegex, type UserRegex } from "../../lib/userRegex.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -86,7 +94,7 @@ const lines = (b: Buffer) => b.toString("latin1");
 // answering (a banner, a capability list, a bind result), then hang up.
 export async function probeProtocol(config: Config): Promise<ProbeOutcome> {
   const protocol = str(config, "protocol", "smtp");
-  const defaults = DEFAULT_PORTS[protocol] ?? { port: 0 };
+  const defaults = own(DEFAULT_PORTS, protocol) ?? { port: 0 };
   const host = str(config, "host");
   const port = numOr(config, "port", defaults.port);
   const useTls = config.tls == null ? Boolean(defaults.tls) : bool(config, "tls");
@@ -163,7 +171,13 @@ export async function probeProtocol(config: Config): Promise<ProbeOutcome> {
       default:
         return warn(`Unknown protocol: ${protocol}`);
     }
-    if (expect && !new RegExp(expect, "i").test(banner)) return { status: "down", latencyMs, message: `Response didn't match /${expect}/: ${banner.split("\n")[0].trim()}` };
+    let matcher: UserRegex | null = null;
+    try {
+      matcher = expect ? compileUserRegex(expect, { ignoreCase: true }) : null;
+    } catch {
+      return warn(`Invalid response pattern: ${expect}`);
+    }
+    if (matcher && !matcher.test(banner)) return { status: "down", latencyMs, message: `Response didn't match /${expect}/: ${banner.split("\n")[0].trim()}` };
     return { status: "up", latencyMs, message: banner.split(/\r?\n/)[0].trim().slice(0, 200) };
   } catch (err) {
     return down(errMsg(err));
@@ -267,8 +281,8 @@ export function parseDhcpOffer(buf: Buffer, xid: number): { offeredIp: string; s
   let i = 240;
   let type = 0;
   let serverId: string | null = null;
-  while (i < buf.length && buf[i] !== 255) {
-    const code = buf[i];
+  while (i < buf.length && buf.readUInt8(i) !== 255) {
+    const code = buf.readUInt8(i);
     if (code === 0) {
       i++;
       continue;
@@ -371,7 +385,7 @@ export async function probeMqtt(config: Config): Promise<ProbeOutcome> {
     });
     if (r.data[0] !== 0x20) return { status: "down", latencyMs: r.latencyMs, message: "Not an MQTT CONNACK" };
     const rc = r.data[3];
-    if (rc !== 0) return { status: "down", latencyMs: r.latencyMs, message: `Connection refused: ${MQTT_CODES[rc] ?? `code ${rc}`}` };
+    if (rc !== 0) return { status: "down", latencyMs: r.latencyMs, message: `Connection refused: ${own(MQTT_CODES, rc) ?? `code ${rc}`}` };
     return { status: "up", latencyMs: r.latencyMs, message: "CONNACK accepted" };
   } catch (err) {
     return down(errMsg(err));

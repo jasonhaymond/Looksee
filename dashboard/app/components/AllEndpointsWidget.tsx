@@ -1,6 +1,10 @@
+// Dashboard widget: every endpoint with whether its agent reported recently
+// (online) and its site.
+
 "use client";
 
 import type { Endpoint } from "../lib/api";
+import { useNow } from "../lib/useNow";
 
 // A host has no single "check" of its own — online/offline here is a
 // last-seen recency heuristic (default agent report interval is 30s; 3
@@ -19,6 +23,8 @@ function timeAgo(iso: string | null): string {
 }
 
 export function AllEndpointsWidget({ endpoints, siteNameById }: { endpoints: Endpoint[]; siteNameById: Map<string, string> }) {
+  // The current time, ticking every second (lib/useNow.ts).
+  const now = useNow();
   return (
     <div className="h-full overflow-auto surface rounded-lg p-3">
       <h3 className="mb-2 font-medium">All endpoints</h3>
@@ -27,7 +33,7 @@ export function AllEndpointsWidget({ endpoints, siteNameById }: { endpoints: End
       ) : (
         <ul className="space-y-1 text-xs">
           {endpoints.map((h) => {
-            const online = h.lastSeenAt != null && Date.now() - new Date(h.lastSeenAt).getTime() < STALE_AFTER_MS;
+            const online = h.lastSeenAt != null && now - new Date(h.lastSeenAt).getTime() < STALE_AFTER_MS;
             return (
               <li key={h.id} className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: online ? "var(--up)" : "var(--down)" }} />

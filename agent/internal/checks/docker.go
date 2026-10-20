@@ -1,3 +1,8 @@
+// Docker container checks (agent_docker): running/healthy state, restart
+// loops and new restarts, or one container's CPU/memory — read from the Docker
+// Engine API over its local socket. Excluded containers (exclude.go) are
+// skipped.
+
 package checks
 
 import (
@@ -124,6 +129,7 @@ func runDocker(c Cfg, st map[string]any, socket string) Result {
 	filter := c.Str("container", "*")
 	measure := c.Str("measure", "status")
 	ignoreStopped := c.Bool("ignoreStopped", false)
+	excluded := c.Excludes(true)
 	prevRestarts, _ := st["restarts"].(map[string]int)
 	restarts := map[string]int{}
 	var problems []string
@@ -141,7 +147,8 @@ func runDocker(c Cfg, st map[string]any, socket string) Result {
 	newRestarts := 0
 	for _, s := range list {
 		name := s.name()
-		if !matchContainer(name, filter) {
+		// Excluded containers (own setting + reusable lists) are skipped.
+		if !matchContainer(name, filter) || nameExcluded(name, excluded) {
 			continue
 		}
 		matched++

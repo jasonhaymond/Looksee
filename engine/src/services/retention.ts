@@ -1,3 +1,7 @@
+// Deletes old data on a schedule (check results, metrics, events, flows,
+// logs) so the database doesn't grow forever; how long each is kept comes from
+// the *_RETENTION_DAYS environment settings (.env.example).
+
 import { and, isNotNull, lt } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { checkResults, events, flowRecords, endpointMetrics, ipBlocks, loginChallenges, securityEvents, sessions } from "../db/schema.js";

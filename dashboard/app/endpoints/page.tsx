@@ -1,11 +1,15 @@
+// The Endpoints page (/endpoints): every device (with or without an agent),
+// filters, bulk actions, and the endpoint panel inline. "use client" makes
+// this a React component that runs in the browser; the engine refuses every
+// call without a session.
+
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, type AddressRow, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type Location, type Suggestion } from "../lib/api";
-import { typeLabel } from "../lib/checkTypes";
+import { api, ApiError, type Channel, type Check, type Site, type Endpoint, type Location } from "../lib/api";
 import { PageHelp } from "../components/PageHelp";
-import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Label, Modal, PromptDialog, StatusBadge, Tags, alertRulePayload, emptyAlertOptions, formatBytes, inputClass, relativeTime, useSelection, useToast, type BulkAction } from "../components/ui";
+import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, Label, Modal, PromptDialog, StatusBadge, Tags, alertRulePayload, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction } from "../components/ui";
 import { displayStatus } from "../components/CheckDetail";
 import { collectorState } from "../components/collector";
 import { EndpointPanel, endpointState } from "../components/EndpointPanel";
@@ -29,8 +33,8 @@ export default function EndpointsPage() {
   const [dialog, setDialog] = useState<"add" | "delete" | "move" | "tags" | "untag" | "maint" | "suggest" | "group" | null>(null);
   const toast = useToast();
 
-  const load = useCallback(async () => {
-    const [e, h, c, health, ch, l] = await Promise.all([api.sites(), api.endpoints(), api.checks(), api.health(), api.channels(), api.locations()]);
+  const load = useCallback(() =>
+    Promise.all([api.sites(), api.endpoints(), api.checks(), api.health(), api.channels(), api.locations()]).then(([e, h, c, health, ch, l]) => {
     setSites(e);
     setEndpoints(h);
     setChecks(c);
@@ -38,7 +42,7 @@ export default function EndpointsPage() {
     setLocations(l);
     setLatestAgentVersion(health.agentVersion);
     setLoaded(true);
-  }, []);
+  }), []);
 
   useEffect(() => {
     api
@@ -83,10 +87,10 @@ export default function EndpointsPage() {
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-medium">Endpoints</h2>
         <Button variant="primary" onClick={() => setDialog("add")} disabled={!sites.length}>
-          + Add host
+          + Add endpoint
         </Button>
       </div>
-      <PageHelp anchor="endpoints">A host is a machine running the Looksee agent. Open one to see its live state, install or update its agent, and add suggested checks in one click.</PageHelp>
+      <PageHelp anchor="endpoints">An endpoint is a device you monitor — a server, PC, switch, printer — with or without the Looksee agent. Open one to see its live state, install or update its agent, and add suggested checks in one click.</PageHelp>
 
       <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-4">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, IP, MAC, OS, tag…" className={`${inputClass} sm:col-span-2`} aria-label="Search endpoints" />
@@ -173,11 +177,11 @@ export default function EndpointsPage() {
 
       <BulkBar
         count={sel.ids.length}
-        noun="host"
+        noun="endpoint"
         onClear={sel.clear}
         actions={
           [
-            { group: "Checks", key: "suggest", label: "Add suggested checks…", hint: "Everything recommended for each host", run: () => setDialog("suggest") },
+            { group: "Checks", key: "suggest", label: "Add suggested checks…", hint: "Everything recommended for each endpoint", run: () => setDialog("suggest") },
             { group: "Checks", key: "on", label: "Enable their checks", run: () => bulk("enable_checks", {}, "Enabled checks:") },
             { group: "Checks", key: "off", label: "Disable their checks", run: () => bulk("disable_checks", {}, "Disabled checks:") },
             { group: "Checks", key: "maint", label: "Maintenance…", run: () => setDialog("maint") },
@@ -233,7 +237,7 @@ function BulkSuggestDialog({ channels, count, onClose, onSubmit }: { channels: C
   return (
     <Modal title={`Add suggested checks to ${count} host(s)`} onClose={onClose} wide>
       <div className="space-y-3 text-sm">
-        <p className="text-xs text-[var(--muted)]">Adds every recommended check each host doesn&apos;t have yet (open a host&apos;s Suggested checks tab to pick individually). Optionally attach an alert rule to all of them:</p>
+        <p className="text-xs text-[var(--muted)]">Adds every recommended check each endpoint doesn&apos;t have yet (open an endpoint&apos;s Suggested checks tab to pick individually). Optionally attach an alert rule to all of them:</p>
         <AlertOptions channels={channels} value={alert} onChange={setAlert} />
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
@@ -269,7 +273,7 @@ function AddEndpointDialog({ sites, defaultSiteId, onClose, onCreated }: { sites
   const [form, setForm] = useState({ siteId: defaultSiteId || sites[0]?.id || "", name: "", hostname: "", os: "", macAddress: "" });
   const [error, setError] = useState<string | null>(null);
   return (
-    <Modal title="Add a host" onClose={onClose}>
+    <Modal title="Add an endpoint" onClose={onClose}>
       <form
         className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2"
         onSubmit={async (e) => {
@@ -305,13 +309,13 @@ function AddEndpointDialog({ sites, defaultSiteId, onClose, onCreated }: { sites
           <input value={form.macAddress} onChange={(e) => setForm({ ...form, macAddress: e.target.value })} className={inputClass} />
         </Label>
         {error && <p className="text-[var(--down)] sm:col-span-2">{error}</p>}
-        <p className="text-xs text-[var(--muted)] sm:col-span-2">After adding, open the host&apos;s Agent tab for its one-line install command.</p>
+        <p className="text-xs text-[var(--muted)] sm:col-span-2">After adding, open the endpoint&apos;s Agent tab for its one-line install command.</p>
         <div className="flex justify-end gap-2 sm:col-span-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button variant="primary" type="submit">
-            Add host
+            Add endpoint
           </Button>
         </div>
       </form>

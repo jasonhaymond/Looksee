@@ -1,8 +1,15 @@
+// The engine's check runner: picks the probe for a check type, runs it, and
+// applies the check's value thresholds to the result (anomaly checks judge
+// themselves).
+
 import { applyThresholds } from "../thresholds.js";
 import { type Config, type ProbeContext, type ProbeOutcome, warn } from "./types.js";
 import { NETWORK_PROBES } from "./network.js";
 import { probeAgentHeartbeat, probeAnomaly, probeDiskForecast, probeEventMatch, probePushStaleness } from "./internal.js";
 import { probeIpChange } from "../addresses.js";
+import { probeVulnerable } from "../software.js";
+import { probeCalculated } from "../calculated.js";
+import { own } from "../../lib/own.js";
 
 export type { ProbeContext, ProbeOutcome } from "./types.js";
 
@@ -18,6 +25,8 @@ const PROBES: Record<string, (config: Config, ctx: ProbeContext) => Promise<Prob
   agent_heartbeat: probeAgentHeartbeat,
   disk_forecast: probeDiskForecast,
   ip_change: probeIpChange,
+  host_vulnerable: probeVulnerable,
+  calculated: probeCalculated,
 };
 
 export const PROBE_TYPES = Object.keys(PROBES);
@@ -26,7 +35,7 @@ export const PROBE_TYPES = Object.keys(PROBES);
 // the exception: its value is a z-score already judged by its own
 // sensitivity setting.
 export async function runProbe(type: string, config: Config, ctx?: Partial<ProbeContext>): Promise<ProbeOutcome> {
-  const fn = PROBES[type];
+  const fn = own(PROBES, type);
   if (!fn) return warn(`Unknown agentless check type: ${type}`);
   const full: ProbeContext = { checkId: "", endpointId: null, siteId: null, intervalSeconds: 60, state: {}, ...ctx };
   const result = await fn(config, full);

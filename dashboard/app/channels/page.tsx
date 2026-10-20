@@ -1,3 +1,11 @@
+// The Channels page (/channels): notification channels (email, webhook, web
+// push, Slack, Teams, Telegram…), their message templates with a live preview,
+// send-a-test, and the SMTP server settings.
+//
+// Channel secrets and the SMTP password are write-only. "use client" makes
+// this a React component that runs in the browser; the engine refuses every
+// call without a session.
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -14,6 +22,7 @@ import {
   normalizeChannelConfig,
   validateChannelConfig,
 } from "../components/ChannelConfigFields";
+import { own } from "../lib/own";
 
 function SmtpSettingsSection() {
   const [settings, setSettings] = useState<SmtpSettings | null>(null);
@@ -27,14 +36,14 @@ function SmtpSettingsSection() {
   const [saved, setSaved] = useState(false);
   const [testStatus, setTestStatus] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    const { settings: s } = await api.smtpSettings();
+  const load = useCallback(() =>
+    api.smtpSettings().then(({ settings: s }) => {
     setSettings(s);
     setEndpoint(s.host ?? "");
     setPort(s.port != null ? String(s.port) : "");
     setUser(s.user ?? "");
     setFrom(s.from ?? "");
-  }, []);
+  }), []);
 
   useEffect(() => {
     load();
@@ -144,9 +153,9 @@ function TemplateEditor({ channel, onClose, onSaved }: { channel: Channel; onClo
     return () => clearTimeout(t);
   }, [templates]);
   if (!info) return null;
-  const cur = templates[event] ?? {};
-  const def = info.defaults[event];
-  const set = (k: "title" | "body", v: string) => setTemplates((t) => ({ ...t, [event]: { ...t[event], [k]: v } }));
+  const cur = own(templates, event) ?? {};
+  const def = own(info.defaults, event)!;
+  const set = (k: "title" | "body", v: string) => setTemplates((t) => ({ ...t, [event]: { ...own(t, event), [k]: v } }));
   return (
     <Modal title={`Message templates — ${channel.name}`} onClose={onClose} wide>
       <div className="space-y-3 text-sm">
@@ -155,7 +164,7 @@ function TemplateEditor({ channel, onClose, onSaved }: { channel: Channel; onClo
           {info.events.map((ev) => (
             <FilterChip key={ev} active={event === ev} onClick={() => setEvent(ev)}>
               {ev}
-              {templates[ev]?.title || templates[ev]?.body ? " •" : ""}
+              {own(templates, ev)?.title || own(templates, ev)?.body ? " •" : ""}
             </FilterChip>
           ))}
         </div>
@@ -182,11 +191,11 @@ function TemplateEditor({ channel, onClose, onSaved }: { channel: Channel; onClo
             </ul>
           </div>
         </div>
-        {preview?.[event] && (
+        {own(preview, event) && (
           <div className="rounded-md border border-[var(--border)] bg-[var(--code-bg)] p-3">
             <div className="mb-1 text-xs text-[var(--muted)]">Preview with sample data</div>
-            <div className="font-medium">{preview[event].title}</div>
-            <pre className="mt-1 whitespace-pre-wrap font-sans text-xs">{preview[event].body}</pre>
+            <div className="font-medium">{own(preview, event)!.title}</div>
+            <pre className="mt-1 whitespace-pre-wrap font-sans text-xs">{own(preview, event)!.body}</pre>
           </div>
         )}
         <div className="flex justify-between gap-2">
@@ -330,9 +339,7 @@ export default function ChannelsPage() {
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
 
-  const load = useCallback(async () => {
-    setChannels(await api.channels());
-  }, []);
+  const load = useCallback(() => api.channels().then(setChannels), []);
 
   useEffect(() => {
     if (authed) load();
@@ -386,7 +393,7 @@ export default function ChannelsPage() {
             <Label label="Name">
               <input placeholder="e.g. Ops Slack, My phone" required value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
             </Label>
-            <Label label="Type" help={CHANNEL_TYPE_HELP[type]}>
+            <Label label="Type" help={own(CHANNEL_TYPE_HELP, type)}>
               <select
                 value={type}
                 onChange={(e) => {

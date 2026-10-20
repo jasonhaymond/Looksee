@@ -12,11 +12,11 @@
 // boundary. Secrets the engine never returns (channel tokens, passwords)
 // simply don't appear in these types.
 //
-// Time zones: every response passes through localizeResponse (lib/localTime.ts),
-// which rewrites UTC timestamps embedded in message text into the viewer's
-// own time zone. Plain timestamp fields (createdAt, lastCheckedAt, ...) stay
-// ISO strings; pages format those with `new Date(x).toLocaleString()`, which
-// is already local.
+// Time zones: every response passes through localizeResponse
+// (lib/localTime.ts), which rewrites UTC timestamps embedded in message text
+// into the viewer's own time zone. Plain timestamp fields (createdAt,
+// lastCheckedAt, ...) stay ISO strings; pages format those with `new
+// Date(x).toLocaleString()`, which is already local.
 
 import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
 import { browserTimeZone, localizeResponse } from "./localTime";
@@ -109,7 +109,13 @@ export type Endpoint = {
   serviceCount?: number | null;
   inventoryUpdatedAt?: string | null;
   availableScripts?: string[] | null;
+  // Watchdog agent settings (null = not a watchdog) and what its agent last
+  // reported about alerts, tests and delivery errors.
+  watchdog?: WatchdogSetting | null;
+  watchdogStatus?: WatchdogStatus | null;
 };
+export type WatchdogSetting = { enabled: boolean; afterMinutes: number; emailTo: string[]; channelIds: string[]; testRequestedAt?: string | null };
+export type WatchdogStatus = { alerting?: boolean; unreachableSince?: string; lastAlertAt?: string; lastRecoveryAt?: string; lastTestAt?: string; lastTestId?: string; lastError?: string; lastErrorAt?: string };
 export type ProcessInfo = { pid: number; name: string; user?: string; cpuPercent?: number; memoryMb?: number; command?: string; started?: number };
 export type ServiceInfo = { name: string; displayName?: string; state: string; startType?: string };
 export type EndpointInventory = { processes: ProcessInfo[] | null; services: ServiceInfo[] | null; scripts: string[] | null; containers: string[] | null; updatedAt: string | null; processNames: string[] | null; serviceNames: string[] | null };
@@ -186,7 +192,12 @@ export type CheckStats = {
   incidents: { id: string; status: string; severity: string; message: string | null; triggeredAt: string; resolvedAt: string | null }[];
 };
 export type AlertRulePayload = { channelIds: string[]; escalationChannelIds: string[]; consecutiveFailures: number; triggerOn: "down" | "warn"; renotifyMinutes: number | null; escalateAfterMinutes: number | null };
-export type WalkRow = { oid: string; type: string; value: string };
+// One walked SNMP value. name/mib/description/display come from the
+// engine's built-in OID dictionary when the OID is a known one; hint is what
+// to fill in when the row is picked (counters as a rate, unit, scale).
+export type WalkRow = { oid: string; type: string; value: string; name?: string; mib?: string; description?: string; display?: string; hint?: { asRate?: boolean; unit?: string; scale?: number } };
+// A dictionary entry from the OID lookup.
+export type OidInfo = { oid: string; name: string; mib: string; description: string; unit?: string; enum?: Record<string, string>; kind?: string; column?: boolean };
 export type CheckInput = {
   name: string;
   siteId: string;
@@ -380,6 +391,53 @@ export type GroupDetail = Omit<Group, "id" | "name" | "description" | "kind" | "
   coveredCheckIds: string[];
   coveredEndpointIds: string[];
 };
+// ---- Server-role / security templates and site suggestions ----
+// A template for an endpoint (engine services/roleTemplates.ts): whether it
+// looks like this role, and the checks it would add that aren't there yet.
+export type RoleTemplate = { id: string; label: string; kind: "role" | "security"; description: string; detected: boolean; checks: Suggestion[]; alreadyHave: number };
+// A suggested check for a site, possibly for one of its endpoints.
+export type SiteSuggestion = Suggestion & { endpointId?: string | null };
+
+// ---- SNMP templates (routes/snmpTemplates.ts) ----
+// One check a template creates (mirrors the snmp check's settings).
+export type SnmpTemplateItem = {
+  name: string;
+  type?: "snmp" | "snmp_interfaces";
+  preset?: string;
+  oid?: string;
+  mode?: string;
+  asRate?: boolean;
+  scale?: number;
+  unit?: string;
+  expression?: string;
+  extraOids?: string;
+  warnAbove?: number;
+  criticalAbove?: number;
+  warnBelow?: number;
+  criticalBelow?: number;
+  intervalSeconds?: number;
+  note?: string;
+};
+export type SnmpTemplate = { id: string; name: string; description: string | null; matchSysObjectId: string | null; items: SnmpTemplateItem[]; builtIn: boolean };
+
+// ---- Exclusions (routes/exclusions.ts, GET /api/checks/:id/exclusions) ----
+// A kind of item checks can ignore: how it matches and which check types use it.
+export type ExclusionKind = { id: string; label: string; match: "name" | "text"; types: string[]; help: string };
+// A reusable exclusion list.
+export type ExclusionList = {
+  id: string;
+  name: string;
+  description: string | null;
+  kind: string;
+  items: string[];
+  applyToAll: boolean;
+  groupIds: string[];
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+// One item a check ignores, and where it came from.
+export type ExclusionItem = { value: string; kind: string; source: { type: "check" } | { type: "list"; id: string; name: string } };
 export type GroupFields = { fields: Record<MemberType, { field: string; label: string; hint?: string }[]>; ops: string[] };
 // Navigation tree nodes. status = worst status of the node's enabled checks;
 // problems = how many of them are warn or down; checkCount = enabled checks.
@@ -422,9 +480,11 @@ export type DiscoveredDevice = {
   mac: string | null;
   pingable: boolean;
   openPorts: { port: number; service: string }[];
-  snmp: { sysName?: string; sysDescr?: string } | null;
+  snmp: { sysName?: string; sysDescr?: string; sysObjectId?: string } | null;
   knownEndpointId: string | null;
   suggestedChecks: SuggestedCheck[];
+  // SNMP templates matching the device's sysObjectID, best first.
+  snmpTemplates?: { id: string; name: string }[];
 };
 export type LoginStep = { challengeId: string; step: "enroll" | "totp"; emailCode: boolean; enroll?: { secret: string; uri: string }; passkey?: PublicKeyCredentialRequestOptionsJSON | null };
 export type WatchdogView = { enabled: boolean; urlSet: boolean; url: string | null; failUrlSet: boolean; failUrl: string | null; intervalSeconds: number; lastPingAt: string | null; lastResult: string | null; lastError: string | null; selfCheck: { ok: boolean; reason: string } };
@@ -538,6 +598,8 @@ export const api = {
     request<Endpoint>(`/api/endpoints/${id}`, patch(input)),
   deleteEndpoint: (endpointId: string) => request<void>(`/api/endpoints/${endpointId}`, del),
   issueAgentKey: (endpointId: string) => request<{ agentApiKey: string; installCommands: { unix: string; windows: string } }>(`/api/endpoints/${endpointId}/agent-key`, { method: "POST" }),
+  setWatchdog: (endpointId: string, input: { enabled: boolean; afterMinutes: number; emailTo: string[] | string; channelIds: string[] }) => request<Endpoint>(`/api/endpoints/${endpointId}/watchdog`, { ...json(input), method: "PUT" }),
+  testWatchdogAgent: (endpointId: string) => request<{ requested: boolean }>(`/api/endpoints/${endpointId}/watchdog/test`, { method: "POST" }),
   requestEndpointUpdate: (endpointId: string) => request<{ requested: boolean }>(`/api/endpoints/${endpointId}/request-update`, { method: "POST" }),
   endpointMetricCatalog: () => request<MetricDef[]>("/api/endpoints/metric-catalog"),
   endpointSuggestions: (id: string) => request<Suggestion[]>(`/api/endpoints/${id}/suggestions`),
@@ -557,6 +619,7 @@ export const api = {
   check: (id: string) => request<Check>(`/api/checks/${id}`),
   checkStats: (id: string, hours: number) => request<CheckStats>(`/api/checks/${id}/stats${qs({ hours })}`),
   snmpWalk: (input: { config: Record<string, unknown>; siteId?: string; checkId?: string }) => request<{ rows: WalkRow[]; truncated: boolean } | { jobId: string }>("/api/checks/snmp-walk", json(input)),
+  snmpOids: (q: string) => request<OidInfo[]>(`/api/checks/snmp-oids?q=${encodeURIComponent(q)}`),
   snmpWalkJob: (jobId: string) => request<{ rows: WalkRow[]; truncated: boolean } | { pending: true }>(`/api/checks/snmp-walk/${jobId}`),
   updateCheck: (id: string, input: Partial<CheckInput>) => request<Check>(`/api/checks/${id}`, patch(input)),
   deleteCheck: (id: string) => request<void>(`/api/checks/${id}`, del),
@@ -634,6 +697,28 @@ export const api = {
   deleteGroup: (id: string) => request<void>(`/api/groups/${id}`, del),
   groupMembers: (id: string, change: { add?: { type: MemberType; id: string }[]; remove?: { type: MemberType; id: string }[] }) =>
     request<{ added: number; removed: number; members: number }>(`/api/groups/${id}/members`, json(change)),
+
+  // Role/security templates for endpoints and suggestions for sites.
+  roleTemplates: (endpointId: string) => request<RoleTemplate[]>(`/api/endpoints/${endpointId}/role-templates`),
+  applyRoleTemplate: (endpointId: string, templateId: string, opts: { keys?: string[]; alertRule?: AlertRulePayload | null } = {}) => request<{ created: number }>(`/api/endpoints/${endpointId}/role-templates/${encodeURIComponent(templateId)}/apply`, json(opts)),
+  siteSuggestions: (siteId: string) => request<SiteSuggestion[]>(`/api/sites/${siteId}/suggestions`),
+  applySiteSuggestions: (siteId: string, keys: string[], alertRule?: AlertRulePayload | null) => request<{ created: number }>(`/api/sites/${siteId}/suggestions/apply`, json({ keys, alertRule })),
+
+  // SNMP templates (routes/snmpTemplates.ts).
+  snmpTemplates: () => request<SnmpTemplate[]>("/api/snmp-templates"),
+  createSnmpTemplate: (input: Omit<SnmpTemplate, "id" | "builtIn">) => request<SnmpTemplate>("/api/snmp-templates", json(input)),
+  updateSnmpTemplate: (id: string, input: Partial<Omit<SnmpTemplate, "id" | "builtIn">>) => request<SnmpTemplate>(`/api/snmp-templates/${encodeURIComponent(id)}`, patch(input)),
+  deleteSnmpTemplate: (id: string) => request<void>(`/api/snmp-templates/${encodeURIComponent(id)}`, del),
+  applySnmpTemplate: (id: string, input: { siteId: string; endpointId?: string | null; device: Record<string, unknown>; namePrefix?: string; intervalSeconds?: number; items?: number[]; alertRule?: AlertRulePayload | null }) =>
+    request<{ created: { id: string; name: string }[] }>(`/api/snmp-templates/${encodeURIComponent(id)}/apply`, json(input)),
+
+  // Reusable exclusion lists (routes/exclusions.ts), and what one check ignores.
+  exclusionKinds: () => request<ExclusionKind[]>("/api/exclusion-lists/kinds"),
+  exclusionLists: () => request<ExclusionList[]>("/api/exclusion-lists"),
+  createExclusionList: (input: Partial<Omit<ExclusionList, "items">> & { items?: string[] | string }) => request<ExclusionList>("/api/exclusion-lists", json(input)),
+  updateExclusionList: (id: string, input: Partial<Omit<ExclusionList, "items">> & { items?: string[] | string }) => request<ExclusionList>(`/api/exclusion-lists/${id}`, patch(input)),
+  deleteExclusionList: (id: string) => request<void>(`/api/exclusion-lists/${id}`, del),
+  checkExclusions: (checkId: string) => request<ExclusionItem[]>(`/api/checks/${checkId}/exclusions`),
 
   // Maintenance windows (routes/maintenance.ts).
   maintenance: () => request<MaintenanceWindow[]>("/api/maintenance"),

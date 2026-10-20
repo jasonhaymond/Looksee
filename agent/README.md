@@ -1,6 +1,6 @@
 # Looksee Agent
 
-A single static binary that reports host metrics and runs the host-side checks a
+A single static binary that reports a machine's metrics and runs the on-machine checks a
 Looksee engine assigns to it. No runtime dependency — Go compiles to one self-contained
 executable per platform. Version 4.1.0 (versioned in lockstep with the engine and
 dashboard; see [CHANGELOG.md](../CHANGELOG.md)). Running it on Windows alongside Smart
@@ -9,7 +9,7 @@ App Control, Defender, ASR, WDAC/AppLocker or an EDR, and signing it, are covere
 
 ## Contents
 
-1. [The fast path: one command on the target host](#the-fast-path-one-command-on-the-target-host)
+1. [The fast path: one command on the target machine](#the-fast-path-one-command-on-the-target-machine)
 2. [Configure manually](#configure-manually)
 3. [What the agent collects and checks](#what-the-agent-collects-and-checks)
 4. [Privileges](#privileges)
@@ -22,24 +22,33 @@ App Control, Defender, ASR, WDAC/AppLocker or an EDR, and signing it, are covere
 
 Related: [user guide](../docs/user-guide.md) · [check reference](../docs/check-reference.md) · [Windows agent & security software](../docs/windows-agent-security.md) · [deployment guide](../docs/deployment-guide.md) · [README](../README.md)
 
-## The fast path: one command on the target host
+## The fast path: one command on the target machine
 
-1. In the Looksee dashboard, create a Host under the right Site.
-2. Click "Generate agent key" — it shows two ready-to-run commands, one for Linux/macOS
-   and one for Windows (a small toggle switches between them):
+1. In the Looksee dashboard, add an Endpoint (Monitoring → Endpoints → **+ Add
+   endpoint**) in the right Site.
+2. On its **Agent** tab click **Generate install command** — it shows two ready-to-run
+   commands, one for Linux/macOS and one for Windows (a small toggle switches between
+   them):
    ```sh
    curl -fsSL https://your-looksee-domain/install/agent.sh | sudo bash -s -- <key>
    ```
    ```powershell
    $env:LOOKSEE_ENGINE_URL='https://your-looksee-domain'; $env:LOOKSEE_AGENT_KEY='<key>'; iex (irm https://your-looksee-domain/install/agent.ps1)
    ```
-   Copy the one for the target host's OS now — the key is shown exactly once and can't
-   be retrieved again afterward (only reset).
-3. Run that exact command **on the host you want to monitor**, elevated (a user who can
-   `sudo` on Linux/macOS; an Administrator PowerShell on Windows). It detects the host's
-   OS/arch, downloads the matching pre-built binary from this engine, writes its config
-   with the key already filled in, and installs and starts it as a real service —
-   systemd on Linux, launchd on macOS, a Scheduled Task on Windows — in one shot.
+   Copy the one for the target machine's OS now — the key is shown exactly once and
+   can't be retrieved again afterward (only reset).
+3. Run that exact command **on the machine you want to monitor**, elevated (a user who
+   can `sudo` on Linux/macOS; an Administrator PowerShell on Windows). It detects the
+   machine's OS/arch, downloads the matching pre-built binary from this engine, writes
+   its config with the key already filled in, and installs and starts it as a real
+   service — systemd on Linux, launchd on macOS, a Scheduled Task on Windows — in one
+   shot. On Linux it also grants the read access most checks need (see
+   [Privileges](#privileges)); add `--minimal` or `--no-docker` after the key to grant
+   less:
+
+   ```sh
+   curl -fsSL https://your-looksee-domain/install/agent.sh | sudo bash -s -- <key> --no-docker
+   ```
 
 This only works once binaries actually exist on the engine to serve — see "Build" below.
 If you'd rather not run a one-liner from the dashboard site, or want to inspect the script
@@ -50,7 +59,8 @@ engine, or just follow the manual steps below.
 
 ## Configure manually
 
-1. Generate a host's agent key in the dashboard (Hosts → the host → Agent tab).
+1. Generate an endpoint's agent key in the dashboard (Endpoints → the endpoint → Agent
+   tab).
 2. Copy `looksee-agent.example.yaml` to `looksee-agent.yaml` next to the binary and fill
    in `engine_url` and `agent_key`. The other settings are optional:
 
@@ -61,7 +71,7 @@ engine, or just follow the manual steps below.
    | `ntp_server` | `pool.ntp.org` | Server the clock-offset metric compares against |
    | `docker_socket` | `/var/run/docker.sock` or `\\.\pipe\docker_engine` | Docker Engine API socket for container checks |
 
-3. Add checks for the host in the dashboard. The agent picks them up on its next
+3. Add checks for the endpoint in the dashboard. The agent picks them up on its next
    `/api/agent/config` poll — no restart needed — and runs each no more often than its
    own interval. A slow check (a large folder walk, a remote backup repository listing)
    runs in the background; its result goes out with whichever report follows it, so it
@@ -91,13 +101,14 @@ throughput/errors/drops/link state/speed, TCP connection states and listening po
 | 10 min | Clock sync + offset | `timedatectl` + SNTP | `w32tm` + SNTP | SNTP |
 | 10 min | RAID / pools | mdadm, ZFS, storcli | Storage Spaces | — |
 | 30 min | Drive health | `smartctl` (smartmontools 7+) | `smartctl`, else Storage reliability counters | `smartctl` |
-| 6 h | Pending updates | apt, dnf/yum, pacman | Windows Update | `softwareupdate` |
+| 6 h | Pending updates (with security and Ubuntu *phased* flags, and the package list) | apt, dnf/yum, pacman | Windows Update | `softwareupdate` |
+| 6 h | Installed software — sent when it changes, and at least daily | dpkg, rpm, apk, pacman, global npm/pip, Node/Python/PHP versions, lock files listed in checks | installed programs (registry Uninstall keys) | applications |
 | 6 h | Inventory (model, serial, CPU, RAM, OS) | DMI | WMI | `sysctl` |
 | ~5 min | Process inventory (PID, user, CPU, memory, command line) | /proc | process API | process API |
 | ~5 min | Service inventory (state, start type) | `systemctl list-units` + `list-unit-files` | `Win32_Service` | `launchctl list` |
 | ~5 min | Scripts available to custom script checks | `script_dir` | `script_dir` | `script_dir` |
 
-Process command lines are **masked before they leave the host**: values after arguments
+Process command lines are **masked before they leave the machine**: values after arguments
 that look like credentials (`--password=…`, `-token …`, `--api-key …`, `--passphrase …`,
 mysql-style `-pSECRET`) and passwords in URLs (`https://user:pass@…`) become `***`.
 Inventory is sent every 10th report (about every 5 minutes at the default interval).
@@ -109,35 +120,67 @@ folder size, checksum, folder watchdog), log file patterns (rotation-aware), the
 journal, the Windows Event Log, Windows performance counters, Docker containers, Hyper-V
 VMs, WireGuard/tunnel interfaces, UPS via NUT or apcupsd, Borg/restic/Veeam backup age —
 plus ping/TCP/HTTP/DNS/TLS probes when a check is set to **Run from** this agent.
+Exclusions set in Looksee (services, containers, VMs, event IDs, message texts) are
+applied on the agent, so excluded items never count.
+
+**Watchdog (5.0+).** When an endpoint's **Watchdog** tab is turned on, the agent also
+alerts by email and/or a chat channel *on its own* when it can't reach Looksee for the
+chosen number of minutes, and again when it's back. The settings it needs to do that
+(SMTP server and password, channel URLs) are stored in the agent's state directory with
+permissions `0600` — readable only by the agent's own account — and deleted when the
+watchdog is turned off.
 
 Agents older than 3.0.0 keep working: they still report CPU/memory/disk and run service
-and process checks. Checks that need 3.0 show "Needs agent 3.0.0+" until the host is
-updated (Hosts → the host → Agent → Update agent).
+and process checks. Checks that need 3.0 show "Needs agent 3.0.0+" until the endpoint
+is updated (Endpoints → the endpoint → Agent → Update agent). The software checks, the
+watchdog and *Should be: Stopped* service checks need agent 5.0.
 
 ## Privileges
 
 On **Windows** the agent runs as SYSTEM and on **macOS** as root, so everything above
 works out of the box.
 
-On **Linux** the installer deliberately runs it as an unprivileged `looksee-agent` user
-under a hardened systemd unit (`ProtectSystem=strict`, `ProtectHome=yes`,
-`NoNewPrivileges=yes`). Most checks work as-is. A few need access you grant explicitly —
-the agent reports "permission denied — see agent README → Privileges" rather than
-failing silently:
+On **Linux** the agent never runs as root: it runs as its own unprivileged
+`looksee-agent` user under a hardened systemd unit (`ProtectSystem=strict`,
+`ProtectHome=yes`, `NoNewPrivileges=yes`). Some checks need read access that user
+doesn't have on its own. **By default (5.0+) the installer grants it:**
 
-| Feature | What it needs | How to grant it |
-|---|---|---|
-| journal checks, failed-login count | read the journal | `sudo usermod -aG systemd-journal looksee-agent` |
-| log files under `/var/log` | read them | `sudo usermod -aG adm looksee-agent` (Debian/Ubuntu) |
-| Docker containers | the Docker socket | `sudo usermod -aG docker looksee-agent` — note this is effectively root access |
-| SMART drive health | raw disk access | the drop-in below |
-| files or folders under `/home` | see `/home` | the drop-in below (`ProtectHome=read-only`) |
-| backups (Borg/restic) | read the repository + its key | run with the same user/permissions as the backup, or grant read access to the repo |
+| Feature | What it needs | Granted by default by | Left out with |
+|---|---|---|---|
+| journal checks, failed-login count | read the journal | `systemd-journal` group | `--minimal` |
+| log files under `/var/log` | read them | `adm` group (Debian/Ubuntu) | `--minimal` |
+| SMART drive health | raw disk access | the drop-in below (`disk` group, `CAP_SYS_RAWIO`, `CAP_SYS_ADMIN`) | `--minimal` |
+| files, folders and lock files under `/home` | see `/home`, read-only | the drop-in below (`ProtectHome=read-only`) | `--minimal` |
+| Docker containers | the Docker socket | `docker` group, **only if Docker is installed** | `--no-docker` or `--minimal` |
+| backups (Borg/restic) | read the repository + its key | *not granted* — run with the same user/permissions as the backup, or grant read access to the repo | — |
 
-`agent/looksee-agent-privileged.conf` is a ready-made systemd drop-in for SMART and
-`/home`. Apply it only if you need those features:
+**Know what you're granting.** Membership of the `docker` group is effectively root
+access on that machine (anyone who can talk to the Docker socket can start a container
+that mounts the whole disk). It's on by default because container checks are among the
+most used; if this agent's machine is sensitive and you don't need container checks,
+install with `--no-docker`. `CAP_SYS_ADMIN` (for NVMe SMART) is a broad capability; the
+agent only uses it through `smartctl`. `--minimal` grants none of the above — most
+checks still work, and those that can't report "permission denied — see agent README →
+Privileges" rather than failing silently.
 
-The engine serves it, so on the monitored host:
+To change your mind later, re-run the installer with different options (re-running with
+`--minimal` removes the drop-in), or remove a group by hand:
+
+```sh
+sudo gpasswd -d looksee-agent docker      # or adm / systemd-journal
+sudo systemctl restart looksee-agent
+```
+
+Agents installed before 5.0 keep their old, narrower access when they update
+themselves. `agent/looksee-agent-privileged.conf` is the drop-in the installer uses;
+to grant the 5.0 defaults to an existing agent by hand:
+
+```sh
+sudo usermod -aG adm,systemd-journal looksee-agent
+getent group docker >/dev/null && sudo usermod -aG docker looksee-agent   # optional — see above
+```
+
+The engine serves the drop-in, so on the monitored machine:
 
 ```sh
 sudo mkdir -p /etc/systemd/system/looksee-agent.service.d
@@ -146,12 +189,14 @@ sudo systemctl daemon-reload
 sudo systemctl restart looksee-agent
 ```
 
-Group changes take effect after `sudo systemctl restart looksee-agent`. Check with
-`systemctl show looksee-agent -p SupplementaryGroups -p AmbientCapabilities`.
+Group changes take effect after `sudo systemctl restart looksee-agent`. **Check:**
+`id looksee-agent` lists the groups, and
+`systemctl show looksee-agent -p SupplementaryGroups -p AmbientCapabilities -p ProtectHome`
+shows `disk`, `cap_sys_rawio cap_sys_admin` and `read-only` when the drop-in is active.
 
 ## Custom scripts
 
-"Custom script" checks run a script on the host and read its result the Nagios way: exit
+"Custom script" checks run a script on the endpoint and read its result the Nagios way: exit
 `0` = up, `1` = warn, `2` = down, anything else = unknown; the first output line is the
 message; `| label=value` performance data (or the first number in the message) becomes
 the value, so thresholds and graphs work.
@@ -185,7 +230,7 @@ then expect it to *contain* `all pools are healthy`. On Windows, a `.ps1` wrappe
 (e.g. `Get-Service Spooler | Select-Object -ExpandProperty Status`) works the same way.
 Scripts run as the agent's user (`looksee-agent` on Linux, `SYSTEM` on Windows).
 
-Without `script_dir` set, script checks are refused on that host. Names containing a
+Without `script_dir` set, script checks are refused on that endpoint. Names containing a
 path (`../`) are always refused.
 
 ## Build
@@ -321,12 +366,13 @@ sudo ./uninstall-macos.sh --purge          # also removes the binary and config
 
 ## Updating
 
-**Push from the dashboard** (recommended): the Hosts page shows each host's running
-agent version next to the engine's current buildable version, and an "Update agent"
-button once a host has reported at least once. Clicking it flags that host; the agent
+**Push from the dashboard** (recommended): the Endpoints page shows each endpoint's
+running agent version next to the engine's current buildable version, and an "Update
+agent" button once it has reported at least once (or tick several and use **Actions →
+Update agents**). Clicking it flags that endpoint; the agent
 downloads the current build for its own platform and swaps itself in on its next
 check-in (usually within its polling interval), then restarts itself — no re-running
-the install script, no touching the host by hand. Verified for real: an old build
+the install script, no touching the machine by hand. Verified for real: an old build
 running in a real container, flagged for update via the real API, autonomously
 downloaded the new binary, swapped it in, relaunched, and reported the new version back
 — all without any manual step on the host itself. On Windows specifically, the
@@ -344,8 +390,8 @@ running installation.
 
 ## Site collector
 
-When a host is chosen as an endpoint's **site collector** (Endpoints page — see the user
-guide's *Multiple sites*), the engine says so in the agent's config response and the
+When an endpoint is chosen as a site's **site collector** (Sites & locations page — see
+the user guide's *Multiple sites*), the engine says so in the agent's config response and the
 agent (3.2.0+):
 
 1. downloads `manifest.json`, then a Node.js runtime for its platform and the collector
@@ -354,9 +400,9 @@ agent (3.2.0+):
 2. keeps them in a `collector` folder next to its own binary
    (`/var/lib/looksee-agent/collector` on Linux, so the hardened unit can write it);
 3. runs `node --use-system-ca collector.cjs` as a child process with the engine URL and
-   this host's agent key, logging its output with a `[collector]` prefix;
+   this endpoint's agent key, logging its output with a `[collector]` prefix;
 4. restarts it if it exits (5 s, backing off to 60 s), replaces it when the engine
-   publishes a new bundle or Node version, and stops it when the host is no longer a
+   publishes a new bundle or Node version, and stops it when the endpoint is no longer a
    collector. Closing the collector's stdin is the stop signal on every OS, so it can't
    outlive the agent and hold the receiver ports.
 

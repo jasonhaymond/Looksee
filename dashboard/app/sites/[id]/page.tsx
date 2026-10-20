@@ -21,6 +21,7 @@ import { Breadcrumbs, ChecksTable, GroupChips, SummaryLine, type CheckRow, type 
 import { StatusGlyph } from "../../components/Sidebar";
 import { usePageAuth } from "../../components/usePageAuth";
 import { pollEvery } from "../../lib/poll";
+import { SiteSuggestions } from "../../components/SiteSuggestions";
 
 /** The page: loads the tree and the site's settings, then lists its contents. */
 export default function SitePage() {
@@ -126,6 +127,8 @@ export default function SitePage() {
           </p>
         )}
       </section>
+
+      <SiteSuggestions siteId={node.id} onApplied={() => api.tree().then(setTree)} />
 
       <section className="surface rounded-xl p-4">
         <h2 className="mb-2 text-sm font-medium">All checks ({allChecks.length})</h2>

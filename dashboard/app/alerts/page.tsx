@@ -1,3 +1,9 @@
+// The Alert history page (/alerts): every incident, open and resolved, with
+// filters, and Resolve on open ones. Data from /api/alert-rules/events.
+//
+// "use client" makes this a React component that runs in the browser; the
+// engine refuses every call without a session.
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";

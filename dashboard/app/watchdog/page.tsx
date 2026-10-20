@@ -1,27 +1,48 @@
+// The Watchdog page (/watchdog): the two ways to be told when Looksee itself
+// is down, since Looksee can't alert about its own outage.
+//
+// 1. The outbound "dead man's switch": while healthy, the engine pings an
+//    outside service (healthchecks.io, Uptime Kuma…), which alerts when the
+//    pings stop (engine/src/routes/watchdog.ts, services/watchdog.ts).
+// 2. Watchdog agents: endpoints whose Looksee agent alerts by email/chat on
+//    its own when it can't reach Looksee. Set up per endpoint (Endpoints →
+//    an endpoint → Watchdog tab); this page lists them and their status.
+//
+// "use client" makes this a React component that runs in the browser. The
+// engine refuses every call without a session; usePageAuth sends a
+// signed-out visitor to the sign-in page.
+
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { api, type WatchdogView } from "../lib/api";
+import { api, type Endpoint, type WatchdogView } from "../lib/api";
 import { PageHelp } from "../components/PageHelp";
 import { Button, Label, inputClass, relativeTime, useToast } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
 
-// The outbound "dead man's switch": Looksee can alert on everything except
-// its own outage, so it pings an outside service that alerts when the pings
-// stop.
+/** The page: the outbound watchdog's settings, the watchdog agents, and setup help. */
 export default function WatchdogPage() {
   const authed = usePageAuth();
   const [w, setW] = useState<WatchdogView | null>(null);
   const [url, setUrl] = useState("");
   const [failUrl, setFailUrl] = useState("");
   const [interval, setInterval_] = useState("60");
+  // Endpoints set up as watchdog agents.
+  const [agents, setAgents] = useState<Endpoint[]>([]);
   const toast = useToast();
 
-  const load = useCallback(async () => {
-    const v = await api.watchdog();
-    setW(v);
-    setInterval_(String(v.intervalSeconds));
-  }, []);
+  // Loads the outbound watchdog's settings and the endpoints that are
+  // watchdog agents.
+  const load = useCallback(
+    () =>
+      Promise.all([api.watchdog(), api.endpoints()]).then(([v, eps]) => {
+        setW(v);
+        setInterval_(String(v.intervalSeconds));
+        setAgents(eps.filter((e) => e.watchdog?.enabled));
+      }),
+    []
+  );
   useEffect(() => {
     if (authed) load();
   }, [authed, load]);
@@ -93,6 +114,31 @@ export default function WatchdogPage() {
             </Button>
           )}
         </div>
+      </section>
+
+      <section className="surface mb-4 rounded-xl p-4 text-sm">
+        <h3 className="mb-1 font-medium">Watchdog agents</h3>
+        <p className="mb-2 text-xs text-[var(--muted)]">
+          Agents that alert by email or chat themselves when they can&apos;t reach Looksee — no outside service needed. Turn one on from an endpoint&apos;s <strong>Watchdog</strong> tab (Endpoints → the endpoint); one or two in different places is plenty.
+        </p>
+        {agents.length ? (
+          <ul className="space-y-1">
+            {agents.map((a) => (
+              <li key={a.id} className="flex flex-wrap items-center gap-2 text-xs">
+                {a.watchdogStatus?.alerting ? <span className="text-[var(--down)]">✕ alerting</span> : a.watchdogStatus ? <span className="text-[var(--up)]">✓ reaching Looksee</span> : <span className="text-[var(--muted)]">? no report yet</span>}
+                <Link href={`/endpoints/${a.id}`} className="font-medium underline">
+                  {a.name}
+                </Link>
+                <span className="text-[var(--muted)]">
+                  after {a.watchdog!.afterMinutes} min → {[a.watchdog!.emailTo.length ? `${a.watchdog!.emailTo.length} email` : "", a.watchdog!.channelIds.length ? `${a.watchdog!.channelIds.length} channel(s)` : ""].filter(Boolean).join(" + ")} · last report {relativeTime(a.lastSeenAt)}
+                </span>
+                {a.watchdogStatus?.lastError && <span className="text-[var(--down)]">! {a.watchdogStatus.lastError}</span>}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-[var(--muted)]">None yet.</p>
+        )}
       </section>
 
       <section className="surface rounded-xl p-4 text-sm">

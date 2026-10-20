@@ -1,8 +1,9 @@
 // Native chat channels. Each takes the rendered title/body; the shapes are
 // each service's own incoming-message API.
 
+import { own } from "../../lib/own.js";
 const cfg = (config: unknown, key: string) => {
-  const v = config && typeof config === "object" ? (config as Record<string, unknown>)[key] : undefined;
+  const v = config && typeof config === "object" ? own(config as Record<string, unknown>, key) : undefined;
   return v == null ? "" : String(v).trim();
 };
 

@@ -1,6 +1,6 @@
 {
   "name": "looksee-engine",
-  "version": "4.3.1",
+  "version": "5.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -37,6 +37,7 @@
     "nodemailer": "^10.1.0",
     "pg": "^8.23.1",
     "puppeteer-core": "^25.13.0",
+    "re2js": "^2.8.8",
     "web-push": "^3.6.7",
     "ws": "^8.22.0"
   },

@@ -1,8 +1,14 @@
+// API routes for dashboards and their widgets: list, create, rename/refresh
+// rate, delete, and add / move / resize / configure / remove widgets.
+//
+// Security: every route requires a signed-in session.
+
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { dashboards, dashboardWidgets, widgetType } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
+import { own } from "../lib/own.js";
 
 export const dashboardsRouter = Router();
 dashboardsRouter.use(requireAuth);
@@ -88,7 +94,8 @@ dashboardsRouter.post("/:id/widgets", async (req, res) => {
 dashboardsRouter.patch("/widgets/:widgetId", async (req, res) => {
   const updates: Partial<typeof dashboardWidgets.$inferInsert> = {};
   for (const key of ["x", "y", "w", "h"] as const) {
-    if (Number.isFinite(req.body?.[key])) updates[key] = Number(req.body[key]);
+    const v = own(req.body as Record<string, unknown> | undefined, key);
+    if (Number.isFinite(v)) Object.assign(updates, { [key]: Number(v) });
   }
   if (req.body?.config !== undefined) updates.config = req.body.config;
   const [widget] = await db

@@ -1,3 +1,6 @@
+// Dashboard widget: CPU, memory and disk of one endpoint over time, from its
+// agent's reports.
+
 "use client";
 
 import { useEffect, useState } from "react";

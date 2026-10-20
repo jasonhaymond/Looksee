@@ -3,6 +3,7 @@
 // template from the Channels page, and anything it leaves blank falls back
 // to the defaults below.
 
+import { own } from "../../lib/own.js";
 export const ALERT_EVENTS = ["triggered", "resolved", "reminder", "escalated"] as const;
 export type AlertEvent = (typeof ALERT_EVENTS)[number] | "test";
 export type Template = { title?: string; body?: string };
@@ -15,8 +16,12 @@ export type AlertContext = {
   type: string;
   status: string;
   message: string;
-  host: string;
+  // The device the check belongs to (blank if none). `host` is the same
+  // value under its pre-5.0 name, so older templates keep working.
   endpoint: string;
+  host: string;
+  // The network (site) the check belongs to.
+  site: string;
   location: string;
   time: string;
   duration: string;
@@ -30,8 +35,8 @@ export const TEMPLATE_VARIABLES: { name: keyof AlertContext; help: string }[] = 
   { name: "status", help: "UP, DOWN, WARN or UNKNOWN" },
   { name: "message", help: "The check's latest result message" },
   { name: "event", help: "triggered, resolved, reminder, escalated or test" },
-  { name: "host", help: "Host the check belongs to (blank if none)" },
-  { name: "endpoint", help: "Endpoint (network) name" },
+  { name: "endpoint", help: "Endpoint (device) the check belongs to (blank if none)" },
+  { name: "site", help: "Site (network) the check belongs to" },
   { name: "location", help: "Location name (blank if none)" },
   { name: "type", help: "Check type, e.g. HTTP(S)" },
   { name: "time", help: "When it happened (server time)" },
@@ -43,11 +48,11 @@ export const TEMPLATE_VARIABLES: { name: keyof AlertContext; help: string }[] = 
 export const DEFAULT_TEMPLATES: Required<Record<(typeof ALERT_EVENTS)[number], Required<Template>>> = {
   triggered: {
     title: "{{check}} is {{status}}",
-    body: "{{check}} is {{status}}: {{message}}\nHost: {{host}} · Endpoint: {{endpoint}} · {{location}}\n{{time}}\n\nThings to check:\n{{remediation}}\n\n{{url}}",
+    body: "{{check}} is {{status}}: {{message}}\nEndpoint: {{endpoint}} · Site: {{site}} · {{location}}\n{{time}}\n\nThings to check:\n{{remediation}}\n\n{{url}}",
   },
   resolved: {
     title: "{{check}} recovered",
-    body: "{{check}} has recovered (now {{status}}) after {{duration}}.\nHost: {{host}} · Endpoint: {{endpoint}}\n{{url}}",
+    body: "{{check}} has recovered (now {{status}}) after {{duration}}.\nEndpoint: {{endpoint}} · Site: {{site}}\n{{url}}",
   },
   reminder: {
     title: "Still failing: {{check}}",
@@ -60,8 +65,8 @@ export const DEFAULT_TEMPLATES: Required<Record<(typeof ALERT_EVENTS)[number], R
 };
 
 export function render(template: string, ctx: Partial<AlertContext>): string {
-  const out = template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, name: string) => String((ctx as Record<string, unknown>)[name] ?? ""));
-  // Tidy what an empty variable leaves behind: a "Host: " with nothing after
+  const out = template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, name: string) => String(own(ctx as Record<string, unknown>, name) ?? ""));
+  // Tidy what an empty variable leaves behind: an "Endpoint: " with nothing after
   // it, and the " · " separators around it. A line that ends up empty this
   // way is dropped; deliberate blank lines are kept.
   const lines: string[] = [];
@@ -78,8 +83,8 @@ export function render(template: string, ctx: Partial<AlertContext>): string {
 
 export function renderFor(templates: Templates | null | undefined, ctx: AlertContext): { title: string; body: string } {
   const key = ctx.event === "test" ? "triggered" : ctx.event;
-  const custom = templates?.[key] ?? {};
-  const def = DEFAULT_TEMPLATES[key];
+  const custom = own(templates, key) ?? {};
+  const def = own(DEFAULT_TEMPLATES, key)!;
   return { title: render(custom.title || def.title, ctx), body: render(custom.body || def.body, ctx) };
 }
 
@@ -99,8 +104,9 @@ export function sampleContext(): AlertContext {
     type: "Ping",
     status: "DOWN",
     message: "100% packet loss (3 sent)",
+    endpoint: "router",
     host: "router",
-    endpoint: "Home LAN",
+    site: "Home LAN",
     location: "Home",
     time: new Date().toLocaleString(),
     duration: "4 min",

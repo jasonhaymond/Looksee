@@ -23,6 +23,7 @@
 import { db } from "../db/index.js";
 import { checks, endpoints, groupMembers, groups, locations, sites, type GroupRules } from "../db/schema.js";
 import { eq, inArray } from "drizzle-orm";
+import { own } from "../lib/own.js";
 
 // The kinds of object a group can contain or a filter can select.
 export const MEMBER_TYPES = ["location", "site", "endpoint", "check"] as const;
@@ -80,7 +81,7 @@ const STATUS_RANK: Record<string, number> = { up: 0, unknown: 1, warn: 2, down: 
 export function worseStatus(a: string | null, b: string | null): string | null {
   if (!a) return b;
   if (!b) return a;
-  return (STATUS_RANK[b] ?? 1) > (STATUS_RANK[a] ?? 1) ? b : a;
+  return (own(STATUS_RANK, b) ?? 1) > (own(STATUS_RANK, a) ?? 1) ? b : a;
 }
 
 // One row of each kind with the columns filters and the tree need.
@@ -260,13 +261,18 @@ export type Resolved = Record<"locations" | "sites" | "endpoints" | "checks", st
  * @param u the inventory snapshot (load once per request, pass to many groups)
  * @returns member IDs by kind
  */
+/** The list in a Resolved result that holds members of this kind. */
+function listFor(out: Resolved, t: MemberType): string[] {
+  return t === "location" ? out.locations : t === "site" ? out.sites : t === "endpoint" ? out.endpoints : out.checks;
+}
+
 export async function resolveGroup(group: typeof groups.$inferSelect, u: Universe): Promise<Resolved> {
   const out: Resolved = { locations: [], sites: [], endpoints: [], checks: [] };
   if (group.kind === "filter") {
     const t = group.target as MemberType;
     const pool = t === "location" ? u.locations : t === "site" ? u.sites : t === "endpoint" ? u.endpoints : u.checks;
-    const key = (t + "s") as keyof Resolved;
-    for (const obj of pool) if (matchesRules(t, obj, group.rules, u)) out[key].push(obj.id);
+    const list = listFor(out, t);
+    for (const obj of pool) if (matchesRules(t, obj, group.rules, u)) list.push(obj.id);
     return out;
   }
   const members = await db.select().from(groupMembers).where(eq(groupMembers.groupId, group.id));
@@ -280,11 +286,11 @@ export async function resolveGroup(group: typeof groups.$inferSelect, u: Univers
   const gone: string[] = [];
   for (const m of members) {
     const t = m.memberType as MemberType;
-    if (!exists[t]?.has(m.memberId)) {
+    if (!own(exists, t)?.has(m.memberId)) {
       gone.push(m.id);
       continue;
     }
-    out[(t + "s") as keyof Resolved].push(m.memberId);
+    listFor(out, t).push(m.memberId);
   }
   // Tidy memberships of deleted objects (they can't be database foreign keys).
   if (gone.length) await db.delete(groupMembers).where(inArray(groupMembers.id, gone));

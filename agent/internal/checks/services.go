@@ -1,3 +1,8 @@
+// Service and process checks: one service running (or, with expectState
+// "stopped", staying off), a process's count/CPU/memory, and the overview of
+// failed systemd units or stopped automatic Windows services (minus excluded
+// names).
+
 package checks
 
 import (
@@ -23,7 +28,17 @@ func runService(c Cfg) Result {
 	if err != nil {
 		return down(err.Error())
 	}
-	r := Result{Status: "down", Message: name + " is not running"}
+	// Advanced: expectState "stopped" checks a service stays off (Telnet,
+	// Remote Registry, a print spooler on a server that shouldn't print);
+	// severity picks warn or down for the bad state.
+	bad := severity(c, "down")
+	if c.Str("expectState", "running") == "stopped" {
+		if running {
+			return Result{Status: bad, Message: name + " is running but should be stopped"}
+		}
+		return Result{Status: "up", Message: name + " is stopped, as expected"}
+	}
+	r := Result{Status: bad, Message: name + " is not running"}
 	if running {
 		r = Result{Status: "up", Message: name + " is running"}
 	}
@@ -117,7 +132,8 @@ func splitList(s string) map[string]bool {
 // that aren't running, skipping trigger-start services that are meant to
 // sit stopped until something wakes them).
 func runServicesOverview(c Cfg) Result {
-	exclude := splitList(c.Str("exclude", ""))
+	// Services/units to skip (own setting + reusable lists); * and ? wildcards.
+	exclude := c.Excludes(true)
 	var bad []string
 	switch runtime.GOOS {
 	case "linux":
@@ -131,7 +147,7 @@ func runServicesOverview(c Cfg) Result {
 				continue
 			}
 			unit := f[0]
-			if exclude[strings.ToLower(unit)] || exclude[strings.ToLower(strings.TrimSuffix(unit, ".service"))] {
+			if nameExcluded(unit, exclude) || nameExcluded(strings.TrimSuffix(unit, ".service"), exclude) {
 				continue
 			}
 			bad = append(bad, unit)
@@ -162,7 +178,7 @@ func runServicesOverview(c Cfg) Result {
 		// exit code 0; only an error exit is a failure unless asked.
 		includeClean := c.Bool("includeCleanStops", false)
 		for _, r := range rows {
-			if exclude[strings.ToLower(r.Name)] || exclude[strings.ToLower(r.DisplayName)] || (r.ExitCode == 0 && !includeClean) {
+			if nameExcluded(r.Name, exclude) || nameExcluded(r.DisplayName, exclude) || (r.ExitCode == 0 && !includeClean) {
 				continue
 			}
 			bad = append(bad, r.Name)

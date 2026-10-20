@@ -1,3 +1,10 @@
+// API routes for the Security page: settings (allowlist, lockout, 2FA policy),
+// security events, alert rules for security events, IP blocks and trusted IPs,
+// and active sessions.
+//
+// Security: every route requires a signed-in session; changing the allowlist
+// can't lock out the address the change comes from.
+
 import { Router } from "express";
 import { and, desc, eq, gte, ilike, isNull, or, gt, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -6,6 +13,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { clientIp, ipInList, parseIpOrCidr } from "../lib/ipMatch.js";
 import { SESSION_COOKIE_NAME, sessionId } from "../lib/session.js";
 import { SECURITY_EVENT_KINDS, blockIp, getSecuritySettings, invalidateSecurityCache, notifySecurity, recordSecurityEvent } from "../services/security.js";
+import { own } from "../lib/own.js";
 
 export const securityRouter = Router();
 securityRouter.use(requireAuth);
@@ -74,7 +82,10 @@ securityRouter.post("/test-notification", async (_req, res) => {
 // ---- events ------------------------------------------------------------
 
 securityRouter.get("/events", async (req, res) => {
-  const q = (k: string) => (typeof req.query[k] === "string" && req.query[k] ? String(req.query[k]) : undefined);
+  const q = (k: string) => {
+    const v = own(req.query as Record<string, unknown>, k);
+    return typeof v === "string" && v ? v : undefined;
+  };
   const hours = intIn(q("hours") ?? 168, 1, 24 * 365)!;
   const limit = intIn(q("limit") ?? 300, 1, 2000)!;
   const rows = await db
@@ -191,14 +202,14 @@ securityRouter.delete("/trusted-ips/:id", async (req, res) => {
 });
 
 securityRouter.get("/sessions", async (req, res) => {
-  const current = req.cookies?.[SESSION_COOKIE_NAME];
+  const current = own(req.cookies as Record<string, string> | undefined, SESSION_COOKIE_NAME);
   const rows = await db.query.sessions.findMany({ where: and(eq(sessions.userId, req.user!.id), gt(sessions.expiresAt, new Date())), orderBy: (s, { desc }) => desc(s.lastSeenAt) });
   res.json(rows.map((s) => ({ id: sessionId(s.token), ip: s.ip, userAgent: s.userAgent, createdAt: s.createdAt, lastSeenAt: s.lastSeenAt, expiresAt: s.expiresAt, current: s.token === current })));
 });
 
 // id "others" signs out every session except this one.
 securityRouter.delete("/sessions/:id", async (req, res) => {
-  const current = req.cookies?.[SESSION_COOKIE_NAME];
+  const current = own(req.cookies as Record<string, string> | undefined, SESSION_COOKIE_NAME);
   const rows = await db.query.sessions.findMany({ where: eq(sessions.userId, req.user!.id) });
   const doomed = rows.filter((s) => (req.params.id === "others" ? s.token !== current : sessionId(s.token) === req.params.id)).map((s) => s.token);
   if (doomed.length) await db.delete(sessions).where(inArray(sessions.token, doomed));

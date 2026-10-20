@@ -1,7 +1,17 @@
+// Receivers for what devices send unprompted — syslog, SNMP traps, NetFlow/IPFIX
+// and sFlow — without database access, so the site collector uses the same
+// code.
+//
+// Security: they accept unauthenticated UDP/TCP, so by default only private
+// addresses may send (RECEIVER_ALLOWED_SOURCES), senders are rate-limited, and
+// messages are size-capped.
+
 import dgram from "node:dgram";
 import net from "node:net";
 import * as snmp from "net-snmp";
 import { type Flow, TemplateCache, parseNetflowV5, parseSflow, parseTemplated, servicePort } from "./flows.js";
+import { own } from "../../lib/own.js";
+import { stripMappedIp } from "../../lib/ids.js";
 
 // Listening and parsing for syslog, SNMP traps and flow exports, with no
 // database access: the engine plugs in a sink that writes to Postgres, a
@@ -27,7 +37,7 @@ function ipv4ToInt(ip: string): number | null {
   return ((p[0] << 24) >>> 0) + (p[1] << 16) + (p[2] << 8) + p[3];
 }
 
-export const stripMapped = (ip: string) => ip.replace(/^::ffff:/, "");
+export const stripMapped = stripMappedIp;
 
 // Receivers accept unauthenticated UDP/TCP, so by default only private
 // address space may send to them (RECEIVER_ALLOWED_SOURCES overrides; "*"
@@ -52,9 +62,13 @@ export function sourceAllowed(address: string, spec = process.env.RECEIVER_ALLOW
       }
       if (!ip.includes(":")) return false;
       if (bits === 128) return ip === base;
-      if (base.toLowerCase() === "fc00::" && bits === 7) return /^f[cd]/i.test(ip);
-      if (base.toLowerCase() === "fe80::" && bits === 10) return /^fe[89ab]/i.test(ip);
-      return ip.toLowerCase().startsWith(base.toLowerCase().replace(/::$/, ""));
+      // Plain prefix tests on the lower-cased address (no regular expressions):
+      // fc00::/7 = addresses starting fc or fd; fe80::/10 = fe8, fe9, fea, feb.
+      const lowerIp = ip.toLowerCase();
+      const lowerBase = base.toLowerCase();
+      if (lowerBase === "fc00::" && bits === 7) return lowerIp.startsWith("fc") || lowerIp.startsWith("fd");
+      if (lowerBase === "fe80::" && bits === 10) return ["fe8", "fe9", "fea", "feb"].some((p) => lowerIp.startsWith(p));
+      return lowerIp.startsWith(lowerBase.endsWith("::") ? lowerBase.slice(0, -2) : lowerBase);
     });
 }
 
@@ -67,8 +81,8 @@ export function parseSyslog(raw: string): { facility: number | null; severity: n
   const n = Number(pri[1]);
   const rest = text.slice(pri[0].length);
   const v5424 = rest.match(/^1 (\S+) (\S+) (\S+) (\S+) (\S+) (-|\[.*?\])\s?(.*)$/s);
-  if (v5424) return { facility: n >> 3, severity: n & 7, host: v5424[2] === "-" ? null : v5424[2], app: v5424[3] === "-" ? null : v5424[3], message: v5424[7].replace(/^﻿/, "") };
-  const bsd = rest.match(/^([A-Z][a-z]{2}\s+\d{1,2} \d{2}:\d{2}:\d{2}) (\S+) ([^:[\s]+)(?:\[\d+\])?:\s?(.*)$/s);
+  if (v5424) return { facility: n >> 3, severity: n & 7, host: v5424[2] === "-" ? null : v5424[2], app: v5424[3] === "-" ? null : v5424[3], message: v5424[7].replace(/^\uFEFF/, "") };
+  const bsd = rest.match(/^([A-Z][a-z]{2}\s+\d{1,2} \d{2}:\d{2}:\d{2}) (\S+) ([^:[\s]+)(?:\[\d+\]|):\s?(.*)$/s);
   if (bsd) return { facility: n >> 3, severity: n & 7, host: bsd[2], app: bsd[3], message: bsd[4] };
   return { facility: n >> 3, severity: n & 7, host: null, app: null, message: rest };
 }
@@ -165,7 +179,7 @@ export class FlowAggregator {
 }
 
 export function portFromEnv(name: string, fallback: number): number | null {
-  const raw = process.env[name];
+  const raw = own(process.env, name);
   if (raw === "0" || raw === "off" || raw === "") return null;
   const n = Number(raw ?? fallback);
   return Number.isInteger(n) && n > 0 ? n : null;

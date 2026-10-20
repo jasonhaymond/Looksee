@@ -20,7 +20,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { worst, type Status } from "../thresholds.js";
-import { type Config, type ProbeOutcome, bool, down, errMsg, numOr, str, warn } from "./types.js";
+import { type ApiJson, type Config, type ProbeOutcome, bool, down, errMsg, numOr, str, warn } from "./types.js";
 import { httpRequest } from "./http.js";
 
 // execFile runs a program directly (no shell, so arguments can't be
@@ -71,7 +71,7 @@ async function probeRedfish(config: Config): Promise<ProbeOutcome> {
     const res = await httpRequest(path.startsWith("http") ? path : `${base}${path}`, { headers, insecure, timeoutMs: 15_000 });
     if (res.status === 401) throw new Error("Redfish authentication failed (HTTP 401)");
     if (res.status !== 200) throw new Error(`GET ${path} returned HTTP ${res.status}`);
-    return JSON.parse(res.body) as Record<string, any>;
+    return JSON.parse(res.body) as Record<string, ApiJson>;
   };
   try {
     let status: Status = "up";
@@ -218,7 +218,7 @@ export async function probeProxmox(config: Config): Promise<ProbeOutcome> {
     const res = await httpRequest(`${base}/api2/json${path}`, { headers, insecure, timeoutMs: 15_000 });
     if (res.status === 401) throw new Error("Proxmox rejected the API token (HTTP 401)");
     if (res.status !== 200) throw new Error(`GET ${path} returned HTTP ${res.status}`);
-    return (JSON.parse(res.body) as { data: any }).data;
+    return (JSON.parse(res.body) as { data: ApiJson }).data;
   };
   const target = str(config, "target", "node");
   const name = str(config, "name");
@@ -320,7 +320,25 @@ const envelope = (body: string) =>
  * matches the opening tag (with any attributes), then captures text up to the
  * closing tag, e.g. tag("<a x='1'>hi</a>", "a") → "hi".
  */
-const tag = (xml: string, name: string) => xml.match(new RegExp(`<${name}[^>]*>([^<]*)</${name}>`))?.[1];
+const tag = (xml: string, name: string): string | undefined => {
+  // Plain text search (no pattern built from the name): find "<name", the
+  // end of that opening tag, then the closing "</name>".
+  let at = 0;
+  for (;;) {
+    const open = xml.indexOf(`<${name}`, at);
+    if (open < 0) return undefined;
+    const next = xml.charAt(open + name.length + 1);
+    // "<name>" or "<name attr=…>", not "<namesake>".
+    if (next === ">" || next === " " || next === "\t" || next === "\n") {
+      const gt = xml.indexOf(">", open);
+      const close = xml.indexOf(`</${name}>`, gt);
+      if (gt < 0 || close < 0) return undefined;
+      const text = xml.slice(gt + 1, close);
+      return text.includes("<") ? undefined : text;
+    }
+    at = open + 1;
+  }
+};
 
 /**
  * Pulls objects out of a vSphere RetrievePropertiesEx reply. Each <objects>

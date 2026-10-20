@@ -20,16 +20,18 @@
 // Matches a full ISO-8601 timestamp with an explicit zone, e.g.
 // "2026-10-13T14:05:12.000Z" or "2026-10-13T14:05+02:00". The zone is required:
 // a time without one is ambiguous, so it's left alone rather than guessed at.
-const ISO_WITH_ZONE = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})(?![\w:])/g;
+// Seconds (with or without a fraction) are optional: written as three
+// alternatives rather than nested optional groups.
+const ISO_WITH_ZONE = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}\.\d+|:\d{2}|)(?:Z|[+-]\d{2}:?\d{2})(?![\w:])/g;
 
 // Matches the engine's human-readable UTC form, e.g. "2026-10-13 14:05 UTC" or
 // "2026-10-13 14:05:30 UTC". Captures the date (1) and the time (2) so they can
 // be rebuilt into an ISO string the browser can parse.
-const SPACED_UTC = /\b(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}(?::\d{2})?) UTC\b/g;
+const SPACED_UTC = /\b(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}|\d{2}:\d{2}) UTC\b/g;
 
 // Matches a string that is *nothing but* an ISO timestamp, e.g. a details
 // table cell holding "2026-10-13T14:05:12.000Z".
-const BARE_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+const BARE_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}\.\d+|:\d{2}|)(?:Z|[+-]\d{2}:?\d{2})$/;
 
 /**
  * Formats one instant in the viewer's time zone and locale, e.g.

@@ -1,3 +1,11 @@
+// API routes for notification channels (email, webhook, web push, Slack,
+// Teams, Telegram…): list, create, edit, message templates and preview, send a
+// test, delete.
+//
+// Security: every route requires a signed-in session; a channel's delivery
+// settings (webhook URLs, bot tokens) are write-only — they're never sent back
+// to the dashboard after saving.
+
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -5,6 +13,7 @@ import { notificationChannels } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { deliver } from "../services/alerting.js";
 import { ALERT_EVENTS, DEFAULT_TEMPLATES, TEMPLATE_VARIABLES, renderFor, sampleContext, type Templates } from "../services/notifications/templates.js";
+import { own, setOwn } from "../lib/own.js";
 
 export const channelsRouter = Router();
 channelsRouter.use(requireAuth);
@@ -16,11 +25,11 @@ function cleanTemplates(raw: unknown): Templates {
   const out: Templates = {};
   if (!raw || typeof raw !== "object") return out;
   for (const ev of ALERT_EVENTS) {
-    const t = (raw as Record<string, unknown>)[ev];
+    const t = own(raw as Record<string, unknown>, ev);
     if (!t || typeof t !== "object") continue;
     const title = typeof (t as { title?: unknown }).title === "string" ? (t as { title: string }).title.slice(0, 500) : "";
     const body = typeof (t as { body?: unknown }).body === "string" ? (t as { body: string }).body.slice(0, 4000) : "";
-    if (title.trim() || body.trim()) out[ev] = { ...(title.trim() ? { title } : {}), ...(body.trim() ? { body } : {}) };
+    if (title.trim() || body.trim()) setOwn(out, ev, { ...(title.trim() ? { title } : {}), ...(body.trim() ? { body } : {}) });
   }
   return out;
 }
@@ -28,7 +37,11 @@ function cleanTemplates(raw: unknown): Templates {
 // config may hold secrets (webhook URLs with tokens, bot tokens) — write-
 // only from the admin UI once saved, per the security baseline. Templates
 // aren't secret and come back so they can be edited.
-const publicView = ({ config: _omit, ...rest }: typeof notificationChannels.$inferSelect) => rest;
+const publicView = (row: typeof notificationChannels.$inferSelect) => {
+  const view: Partial<typeof notificationChannels.$inferSelect> = { ...row };
+  delete view.config;
+  return view;
+};
 
 channelsRouter.get("/", async (_req, res) => {
   const rows = await db.query.notificationChannels.findMany({ orderBy: (c, { asc }) => asc(c.name) });

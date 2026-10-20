@@ -1,3 +1,11 @@
+// API routes for endpoints (devices: servers, PCs, switches, printers): list,
+// details, inventory, IP history, create, edit, delete, agent keys and install
+// commands, agent updates, watchdog settings, metrics, Wake-on-LAN,
+// suggestions, role/security templates and bulk actions.
+//
+// Security: every route requires a signed-in session; an endpoint's agent key
+// is shown once when issued and never returned again (only replaced).
+
 import { Router } from "express";
 import crypto from "node:crypto";
 import { and, desc, eq, gte, inArray, or } from "drizzle-orm";
@@ -11,6 +19,9 @@ import { invalidateMaintenanceCache } from "../services/maintenance.js";
 import { ENDPOINT_METRICS } from "../services/endpointMetrics.js";
 import { addressHistory } from "../services/addresses.js";
 import { createAlertRule, parseAlertRule, type AlertRuleParams } from "../services/alertRuleFactory.js";
+import { parseWatchdog } from "../services/watchdogAgents.js";
+import { hostFacts, templatesFor } from "../services/roleTemplates.js";
+import { primaryAddress } from "../services/suggestions.js";
 
 // The full process/service lists can be thousands of rows — they're served
 // by /:id/inventory only, never in list or detail responses.
@@ -43,24 +54,31 @@ endpointsRouter.get("/", async (req, res) => {
 // The host-metric catalog (label, unit, which instance it filters on) the
 // check form builds its metric picker from.
 endpointsRouter.get("/metric-catalog", (_req, res) => {
-  res.json(ENDPOINT_METRICS.map(({ read, ...def }) => def));
+  // Everything except read (a function, not data).
+  res.json(
+    ENDPOINT_METRICS.map((m) => {
+      const def: Partial<typeof m> = { ...m };
+      delete def.read;
+      return def;
+    })
+  );
 });
 
 endpointsRouter.get("/:id", async (req, res) => {
   const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
   if (!host) {
-    res.status(404).json({ error: "Host not found" });
+    res.status(404).json({ error: "Endpoint not found" });
     return;
   }
   res.json(publicHost(host));
 });
 
 // Processes and services the agent last reported, plus the scripts in its
-// script_dir — the Hosts page tabs and the check form's pickers.
+// script_dir — the Endpoints page tabs and the check form's pickers.
 endpointsRouter.get("/:id/inventory", async (req, res) => {
   const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
   if (!host) {
-    res.status(404).json({ error: "Host not found" });
+    res.status(404).json({ error: "Endpoint not found" });
     return;
   }
   res.json({
@@ -91,8 +109,7 @@ endpointsRouter.post("/", async (req, res) => {
   const macAddress = req.body?.macAddress ? String(req.body.macAddress) : null;
   const tags = Array.isArray(req.body?.tags) ? req.body.tags.map(String) : [];
   const [host] = await db.insert(endpoints).values({ name, siteId, hostname, os, macAddress, tags }).returning();
-  const { agentApiKey, ...rest } = host;
-  res.status(201).json(rest);
+  res.status(201).json(publicHost(host));
 });
 
 endpointsRouter.patch("/:id", async (req, res) => {
@@ -105,11 +122,10 @@ endpointsRouter.patch("/:id", async (req, res) => {
   if (Array.isArray(req.body?.tags)) updates.tags = [...new Set(req.body.tags.map(String))] as string[];
   const [host] = await db.update(endpoints).set(updates).where(eq(endpoints.id, req.params.id)).returning();
   if (!host) {
-    res.status(404).json({ error: "Host not found" });
+    res.status(404).json({ error: "Endpoint not found" });
     return;
   }
-  const { agentApiKey, ...rest } = host;
-  res.json(rest);
+  res.json(publicHost(host));
 });
 
 // Issues (or reissues) the agent bearer token for this host. Shown exactly
@@ -123,7 +139,7 @@ endpointsRouter.post("/:id/agent-key", async (req, res) => {
     .where(eq(endpoints.id, req.params.id))
     .returning();
   if (!host) {
-    res.status(404).json({ error: "Host not found" });
+    res.status(404).json({ error: "Endpoint not found" });
     return;
   }
   // Copy-pasteable commands per platform: each downloads the right binary,
@@ -141,6 +157,39 @@ endpointsRouter.post("/:id/agent-key", async (req, res) => {
   res.json({ agentApiKey, installCommands });
 });
 
+// PUT /api/endpoints/:id/watchdog { enabled, afterMinutes, emailTo, channelIds }
+// Makes this endpoint's agent a watchdog: if it can't reach Looksee for
+// afterMinutes, it alerts the given addresses/channels itself. Its next
+// config poll picks the settings up (services/watchdogAgents.ts says what
+// the agent receives, including delivery secrets — only ever for an
+// endpoint set up here).
+endpointsRouter.put("/:id/watchdog", async (req, res) => {
+  const { value, error } = await parseWatchdog(req.body ?? {});
+  if (error || !value) {
+    res.status(400).json({ error: error ?? "Invalid watchdog settings" });
+    return;
+  }
+  const [host] = await db.update(endpoints).set({ watchdog: value }).where(eq(endpoints.id, req.params.id)).returning();
+  if (!host) {
+    res.status(404).json({ error: "Endpoint not found" });
+    return;
+  }
+  res.json(publicHost(host));
+});
+
+// POST /api/endpoints/:id/watchdog/test — asks this watchdog agent to send a
+// test message to its addresses/channels on its next config poll; its
+// result shows in the endpoint's watchdog status after the following report.
+endpointsRouter.post("/:id/watchdog/test", async (req, res) => {
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
+  if (!host?.watchdog?.enabled) {
+    res.status(400).json({ error: "This endpoint isn't a watchdog agent" });
+    return;
+  }
+  await db.update(endpoints).set({ watchdog: { ...host.watchdog, testRequestedAt: new Date().toISOString() } }).where(eq(endpoints.id, host.id));
+  res.json({ requested: true });
+});
+
 // Push-to-update: flags this host so its agent updates itself on its next
 // config poll (see routes/agent.ts's GET /config, which consumes this flag
 // one-shot). Doesn't wait for or confirm the update — the host's
@@ -149,7 +198,7 @@ endpointsRouter.post("/:id/agent-key", async (req, res) => {
 endpointsRouter.post("/:id/request-update", async (req, res) => {
   const [host] = await db.update(endpoints).set({ updateRequested: true }).where(eq(endpoints.id, req.params.id)).returning();
   if (!host) {
-    res.status(404).json({ error: "Host not found" });
+    res.status(404).json({ error: "Endpoint not found" });
     return;
   }
   res.json({ requested: true });
@@ -178,7 +227,7 @@ endpointsRouter.delete("/:id", async (req, res) => {
 endpointsRouter.post("/:id/wake", async (req, res) => {
   const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
   if (!host?.macAddress) {
-    res.status(400).json({ error: "Set this host's MAC address first" });
+    res.status(400).json({ error: "Set this endpoint's MAC address first" });
     return;
   }
   try {
@@ -207,7 +256,7 @@ async function suggestionsFor(endpointId: string) {
 endpointsRouter.get("/:id/suggestions", async (req, res) => {
   const found = await suggestionsFor(req.params.id);
   if (!found) {
-    res.status(404).json({ error: "Host not found" });
+    res.status(404).json({ error: "Endpoint not found" });
     return;
   }
   res.json(found.suggestions);
@@ -247,6 +296,49 @@ endpointsRouter.post("/:id/suggestions/apply", async (req, res) => {
     overrides: req.body?.overrides && typeof req.body.overrides === "object" ? req.body.overrides : undefined,
   });
   res.json({ created });
+});
+
+// GET /api/endpoints/:id/role-templates — the server-role and security
+// templates (services/roleTemplates.ts): whether this endpoint looks like
+// each role, and the checks each would add that it doesn't have yet.
+endpointsRouter.get("/:id/role-templates", async (req, res) => {
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
+  if (!host) {
+    res.status(404).json({ error: "Endpoint not found" });
+    return;
+  }
+  const existing = await db.query.checks.findMany({ where: eq(checks.endpointId, host.id) });
+  res.json(templatesFor(hostFacts(host, primaryAddress((host.lastSnapshot ?? {}) as never)), existing));
+});
+
+// POST /api/endpoints/:id/role-templates/:templateId/apply { keys?, alertRule? }
+// Creates the template's missing checks (or only the chosen keys) on this
+// endpoint, optionally each with an alert rule.
+endpointsRouter.post("/:id/role-templates/:templateId/apply", async (req, res) => {
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
+  if (!host) {
+    res.status(404).json({ error: "Endpoint not found" });
+    return;
+  }
+  const existing = await db.query.checks.findMany({ where: eq(checks.endpointId, host.id) });
+  const template = templatesFor(hostFacts(host, primaryAddress((host.lastSnapshot ?? {}) as never)), existing).find((t) => t.id === req.params.templateId);
+  if (!template) {
+    res.status(404).json({ error: "Template not found" });
+    return;
+  }
+  const keys = Array.isArray(req.body?.keys) ? req.body.keys.map(String) : null;
+  const chosen = keys ? template.checks.filter((c) => keys.includes(c.key)) : template.checks;
+  if (!chosen.length) {
+    res.json({ created: 0 });
+    return;
+  }
+  const created = await db
+    .insert(checks)
+    .values(chosen.map((c) => ({ name: c.name, siteId: host.siteId, endpointId: host.id, type: c.type as typeof checks.$inferInsert.type, config: c.config, intervalSeconds: c.intervalSeconds ?? 60, tags: [`role:${template.label}`] })))
+    .returning({ id: checks.id });
+  const rule = parseAlertRule(req.body?.alertRule);
+  if (rule) for (const c of created) await createAlertRule(c.id, rule);
+  res.json({ created: created.length });
 });
 
 // Multi-select actions from the endpoints table.

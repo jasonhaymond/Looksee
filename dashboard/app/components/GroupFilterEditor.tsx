@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { api, type GroupFields, type GroupRules, type MemberType } from "../lib/api";
 import { inputClass } from "./ui";
+import { own } from "../lib/own";
 
 // Readable names for the operators the engine accepts.
 const OP_LABEL: Record<string, string> = {
@@ -51,7 +52,7 @@ export function GroupFilterEditor({ target, rules, onChange }: { target: MemberT
   }, [target, rules]);
 
   if (!meta) return null;
-  const fields = meta.fields[target];
+  const fields = own(meta.fields, target) ?? [];
   /** Replaces condition i with a changed copy. */
   const setCond = (i: number, patch: Partial<GroupRules["conditions"][number]>) =>
     onChange(target, { ...rules, conditions: rules.conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)) });
@@ -68,7 +69,7 @@ export function GroupFilterEditor({ target, rules, onChange }: { target: MemberT
         >
           {(Object.keys(TARGET_LABEL) as MemberType[]).map((t) => (
             <option key={t} value={t}>
-              {TARGET_LABEL[t]}
+              {own(TARGET_LABEL, t)}
             </option>
           ))}
         </select>
@@ -91,7 +92,7 @@ export function GroupFilterEditor({ target, rules, onChange }: { target: MemberT
           <select value={c.op} onChange={(e) => setCond(i, { op: e.target.value })} aria-label="Comparison" className={`${inputClass} !w-auto`}>
             {meta.ops.map((o) => (
               <option key={o} value={o}>
-                {OP_LABEL[o] ?? o}
+                {own(OP_LABEL, o) ?? o}
               </option>
             ))}
           </select>
@@ -110,7 +111,7 @@ export function GroupFilterEditor({ target, rules, onChange }: { target: MemberT
         ) : preview ? (
           <>
             <span className="font-medium">
-              Matches {preview.total} {TARGET_LABEL[target].toLowerCase()} now
+              Matches {preview.total} {own(TARGET_LABEL, target)?.toLowerCase()} now
             </span>
             {preview.matches.length > 0 && <span className="text-[var(--muted)]">: {preview.matches.slice(0, 30).map((m) => m.name).join(", ")}{preview.total > 30 ? ", …" : ""}</span>}
           </>

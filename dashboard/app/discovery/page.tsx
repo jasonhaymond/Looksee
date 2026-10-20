@@ -1,3 +1,8 @@
+// The Discovery page (/discovery): scan a subnet (from the server or a site's
+// collector), see the devices found, and add them as endpoints with suggested
+// checks. "use client" makes this a React component that runs in the browser;
+// the engine refuses every call without a session.
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -8,6 +13,7 @@ import { AlertOptions, Button, Checkbox, EmptyState, Label, Modal, alertRulePayl
 import type { Channel } from "../lib/api";
 import { usePageAuth } from "../components/usePageAuth";
 import { pollEvery } from "../lib/poll";
+import { own } from "../lib/own";
 
 // Per device: create a host? which suggested checks (by index)?
 type Pick = { host: boolean; checks: Set<number> };
@@ -52,26 +58,20 @@ export default function DiscoveryPage() {
     return () => clearInterval(t);
   }, [scan]);
 
-  // New devices default to: host on, first suggested check (reachability) on.
-  useEffect(() => {
-    if (!scan) return;
-    setPicks((prev) => {
-      const next = { ...prev };
-      for (const d of scan.results) if (!next[d.ip]) next[d.ip] = { host: !d.knownEndpointId, checks: new Set(d.knownEndpointId ? [] : [0]) };
-      return next;
-    });
-  }, [scan]);
+  // What's ticked for a device: the admin's choice, else the default —
+  // host on and the first suggested check (reachability) on, for devices
+  // that aren't hosts yet.
+  const pickOf = (d: { ip: string; knownEndpointId?: string | null }): Pick => own(picks, d.ip) ?? { host: !d.knownEndpointId, checks: new Set(d.knownEndpointId ? [] : [0]) };
 
   const devices = scan?.results ?? [];
-  const chosen = devices.filter((d) => picks[d.ip]?.host || picks[d.ip]?.checks.size);
-  const toggleCheck = (ip: string, i: number) =>
-    setPicks((p) => {
-      const cur = p[ip] ?? { host: false, checks: new Set<number>() };
-      const checks = new Set(cur.checks);
-      if (checks.has(i)) checks.delete(i);
-      else checks.add(i);
-      return { ...p, [ip]: { ...cur, checks } };
-    });
+  const chosen = devices.filter((d) => pickOf(d).host || pickOf(d).checks.size);
+  const toggleCheck = (d: (typeof devices)[number], i: number) => {
+    const cur = pickOf(d);
+    const checks = new Set(cur.checks);
+    if (checks.has(i)) checks.delete(i);
+    else checks.add(i);
+    setPicks((p) => ({ ...p, [d.ip]: { ...cur, checks } }));
+  };
 
   if (!authed) return null;
   return (
@@ -95,7 +95,7 @@ export default function DiscoveryPage() {
           }
         }}
       >
-        <Label label="Scan from" help="The Looksee server scans networks it can reach itself. A site with a site collector scans from that site's collector host instead.">
+        <Label label="Scan from" help="The Looksee server scans networks it can reach itself. A site with a site collector scans from that site's collector instead.">
           <select value={scanFrom} onChange={(e) => setScanFrom(e.target.value)} className={`${inputClass} w-56`}>
             <option value="">Looksee server</option>
             {sites
@@ -138,7 +138,7 @@ export default function DiscoveryPage() {
           {devices.length > 0 && (
             <div className="space-y-2">
               {devices.map((d) => {
-                const p = picks[d.ip] ?? { host: false, checks: new Set<number>() };
+                const p = pickOf(d);
                 return (
                   <div key={d.ip} className="rounded-xl surface p-3 text-sm">
                     <div className="flex flex-wrap items-center gap-3">
@@ -149,17 +149,33 @@ export default function DiscoveryPage() {
                         {d.pingable ? "answers ping" : "no ping"}
                         {d.openPorts.length ? ` · ${d.openPorts.map((o) => o.service).join(", ")}` : ""}
                       </span>
-                      {d.knownEndpointId && <span className="rounded bg-[var(--border)] px-1.5 py-0.5 text-[10px]">already a host</span>}
+                      {d.knownEndpointId && <span className="rounded bg-[var(--border)] px-1.5 py-0.5 text-[10px]">already an endpoint</span>}
                     </div>
                     {d.snmp?.sysDescr && <p className="mt-1 truncate text-xs text-[var(--muted)]">{d.snmp.sysDescr}</p>}
+                    {/* SNMP templates made for this kind of device (matched by its
+                        sysObjectID); each link opens that template's Apply dialog
+                        with this address filled in. */}
+                    {d.snmpTemplates && d.snmpTemplates.length > 0 && (
+                      <p className="mt-1 text-xs">
+                        <span className="text-[var(--muted)]">SNMP template: </span>
+                        {d.snmpTemplates.slice(0, 3).map((t, i) => (
+                          <span key={t.id}>
+                            {i > 0 && ", "}
+                            <a className="underline" href={`/snmp-templates?apply=${encodeURIComponent(t.id)}&address=${encodeURIComponent(d.ip)}`}>
+                              {t.name}
+                            </a>
+                          </span>
+                        ))}
+                      </p>
+                    )}
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
                       <label className="flex items-center gap-1.5">
-                        <Checkbox checked={p.host} onChange={(v) => setPicks((x) => ({ ...x, [d.ip]: { ...p, host: v } }))} label={`Create host for ${d.ip}`} />
-                        Create host
+                        <Checkbox checked={p.host} onChange={(v) => setPicks((x) => ({ ...x, [d.ip]: { ...p, host: v } }))} label={`Create endpoint for ${d.ip}`} />
+                        Create endpoint
                       </label>
                       {d.suggestedChecks.map((c, i) => (
                         <label key={i} className="flex items-center gap-1.5">
-                          <Checkbox checked={p.checks.has(i)} onChange={() => toggleCheck(d.ip, i)} label={c.name} />
+                          <Checkbox checked={p.checks.has(i)} onChange={() => toggleCheck(d, i)} label={c.name} />
                           {typeLabel(c.type)}
                         </label>
                       ))}
@@ -190,10 +206,11 @@ export default function DiscoveryPage() {
                   const res = await api.addDiscovered(scan.id, {
                     siteId,
                     alertRule: alertRulePayload(alert),
-                    devices: chosen.map((d) => ({ ip: d.ip, name: d.hostname ?? d.snmp?.sysName ?? d.ip, mac: d.mac, createEndpoint: picks[d.ip].host, checks: d.suggestedChecks.filter((_, i) => picks[d.ip].checks.has(i)) })),
+                    devices: chosen.map((d) => ({ ip: d.ip, name: d.hostname ?? d.snmp?.sysName ?? d.ip, mac: d.mac, createEndpoint: pickOf(d).host, checks: d.suggestedChecks.filter((_, i) => pickOf(d).checks.has(i)) })),
                   });
-                  toast.show(`Added ${res.endpointsCreated} host(s) and ${res.checksCreated} check(s).`);
-                  setPicks({});
+                  toast.show(`Added ${res.endpointsCreated} endpoint(s) and ${res.checksCreated} check(s).`);
+                  // Untick everything just added (the defaults would tick it again).
+                  setPicks(Object.fromEntries(devices.map((d) => [d.ip, { host: false, checks: new Set<number>() }])));
                 }}
               >
                 Add selected

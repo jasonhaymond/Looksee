@@ -29,6 +29,7 @@ import {
   type MemberType,
   type Universe,
 } from "../services/groups.js";
+import { isUuid } from "../lib/ids.js";
 
 export const groupsRouter = Router();
 // Without this, anyone could read the inventory or reshape groups (and so
@@ -66,12 +67,10 @@ function parseMembers(v: unknown): { type: MemberType; id: string }[] | { error:
   if (!Array.isArray(v)) return { error: "members must be a list of { type, id }" };
   if (v.length > 5000) return { error: "Too many members in one request" };
   const out: { type: MemberType; id: string }[] = [];
-  // Matches a UUID such as 3f2b6c1e-0a4d-4e7b-9c1d-2b3a4c5d6e7f, so a
-  // malformed ID is refused here rather than as a database error.
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  // A malformed ID (not a UUID) is refused here rather than as a database error.
   for (const m of v as { type?: unknown; id?: unknown }[]) {
     if (!MEMBER_TYPES.includes(m?.type as MemberType)) return { error: `Unknown member type "${String(m?.type)}"` };
-    if (!uuid.test(String(m?.id))) return { error: `"${String(m?.id).slice(0, 40)}" isn't a valid ID` };
+    if (!isUuid(String(m?.id))) return { error: `"${String(m?.id).slice(0, 40)}" isn't a valid ID` };
     out.push({ type: m.type as MemberType, id: String(m.id) });
   }
   return out;

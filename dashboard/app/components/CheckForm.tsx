@@ -1,10 +1,15 @@
+// The form for creating and editing checks: type picker, the type's own
+// settings (with Advanced ones folded away), targets (one check per endpoint
+// or site), schedule, alerting, and the SNMP walk browser with OID names.
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { api, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type MetricDef, type WalkRow } from "../lib/api";
+import { api, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type MetricDef, type OidInfo, type WalkRow } from "../lib/api";
 import { CATEGORIES, CHECK_TYPES, TYPE_BY_KEY, defaultConfigFor, normalizeConfig, validateConfig, type Field } from "../lib/checkTypes";
 import { AlertOptions, Button, Label, Modal, MultiPicker, alertRulePayload, emptyAlertOptions, inputClass, type AlertOptionsValue, type PickItem } from "./ui";
 import { Tooltip } from "./Tooltip";
+import { own } from "../lib/own";
 
 let catalogPromise: Promise<MetricDef[]> | null = null;
 const loadCatalog = () => (catalogPromise ??= api.endpointMetricCatalog());
@@ -25,7 +30,7 @@ const loadEndpoint = (id: string) => cached(endpointCache, id, () => api.endpoin
 const loadInventory = (id: string) => cached(inventoryCache, id, () => api.endpointInventory(id));
 
 const SNMP_TYPES = new Set(["snmp"]);
-// Settings that usually name the target device, for "use each host's
+// Settings that usually name the target device, for "use each endpoint's
 // address" when one form creates checks on several endpoints.
 const ADDRESS_KEYS = ["host", "ip", "url", "hostname"];
 
@@ -250,7 +255,7 @@ function MetricFields({ config, set, host, inv }: { config: Record<string, unkno
   const suggestions = metric?.instance ? inventoryItems(metric.instance, host, inv) : [];
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <Label label="Metric *" help={metric?.help ?? "What to measure on the host."} className="sm:col-span-2">
+      <Label label="Metric *" help={metric?.help ?? "What to measure on the endpoint."} className="sm:col-span-2">
         <select value={String(config.metric ?? "")} onChange={(e) => set("metric", e.target.value)} className={inputClass}>
           <option value="">Choose a metric…</option>
           {groups.map((g) => (
@@ -298,7 +303,7 @@ function MetricFields({ config, set, host, inv }: { config: Record<string, unkno
           </Label>
         </>
       )}
-      {host && !host.lastSnapshot && <p className="text-xs text-[var(--warn)] sm:col-span-2">This host hasn&apos;t sent a 3.x agent report yet{host.agentVersion ? ` (it reports agent v${host.agentVersion})` : ""} — update its agent on the Endpoints page to see real names here.</p>}
+      {host && !host.lastSnapshot && <p className="text-xs text-[var(--warn)] sm:col-span-2">This endpoint hasn&apos;t sent a 3.x agent report yet{host.agentVersion ? ` (it reports agent v${host.agentVersion})` : ""} — update its agent on the Endpoints page to see real names here.</p>}
     </div>
   );
 }
@@ -306,7 +311,7 @@ function MetricFields({ config, set, host, inv }: { config: Record<string, unkno
 function ThresholdFields({ config, set, unit, hint, latency }: { config: Record<string, unknown>; set: (k: string, v: unknown) => void; unit?: string; hint?: string; latency?: boolean }) {
   const num = (key: string, label: string, placeholder?: string) => (
     <Label label={label}>
-      <input type="number" value={config[key] == null ? "" : String(config[key])} onChange={(e) => set(key, e.target.value)} placeholder={placeholder} className={inputClass} />
+      <input type="number" value={own(config, key) == null ? "" : String(own(config, key))} onChange={(e) => set(key, e.target.value)} placeholder={placeholder} className={inputClass} />
     </Label>
   );
   return (
@@ -345,7 +350,7 @@ function Section({ title, children, defaultOpen = true }: { title: string; child
 }
 
 // Browse every value a device exposes under an OID, and click one to use it.
-function SnmpWalkDialog({ config, siteId, checkId, onPick, onClose }: { config: Record<string, unknown>; siteId: string; checkId?: string; onPick: (row: WalkRow) => void; onClose: () => void }) {
+function SnmpWalkDialog({ config, siteId, checkId, onPick, onAddExtra, onClose }: { config: Record<string, unknown>; siteId: string; checkId?: string; onPick: (row: WalkRow) => void; onAddExtra: (row: WalkRow) => void; onClose: () => void }) {
   const [root, setRoot] = useState(String(config.oid || "1.3.6.1.2.1"));
   const [rows, setRows] = useState<WalkRow[] | null>(null);
   const [truncated, setTruncated] = useState(false);
@@ -378,8 +383,15 @@ function SnmpWalkDialog({ config, siteId, checkId, onPick, onClose }: { config: 
     }
   }
 
+  // "Look up an OID": search the engine's built-in dictionary by name.
+  const [lookup, setLookup] = useState("");
+  const [found, setFound] = useState<OidInfo[] | null>(null);
+  async function search() {
+    setFound(lookup.trim() ? await api.snmpOids(lookup.trim()) : null);
+  }
+
   const q = filter.trim().toLowerCase();
-  const shown = (rows ?? []).filter((r) => !q || `${r.oid} ${r.type} ${r.value}`.toLowerCase().includes(q));
+  const shown = (rows ?? []).filter((r) => !q || `${r.oid} ${r.name ?? ""} ${r.description ?? ""} ${r.type} ${r.value} ${r.display ?? ""}`.toLowerCase().includes(q));
   return (
     <Modal title={`SNMP walk — ${String(config.host ?? "")}`} onClose={onClose} wide>
       <div className="space-y-3 text-sm">
@@ -389,7 +401,28 @@ function SnmpWalkDialog({ config, siteId, checkId, onPick, onClose }: { config: 
             Walk
           </Button>
         </div>
-        <p className="text-xs text-[var(--muted)]">1.3.6.1.2.1 is the standard MIB-2 tree; 1.3.6.1.4.1 holds vendor values; 1.3.6.1 walks everything (can be slow). Click a row to use its OID.</p>
+        <p className="text-xs text-[var(--muted)]">1.3.6.1.2.1 is the standard MIB-2 tree; 1.3.6.1.4.1 holds vendor values; 1.3.6.1 walks everything (can be slow). Click a row to use its OID — known OIDs show their name and a readable value.</p>
+        <details className="rounded border border-[var(--border)] p-2 text-xs">
+          <summary className="cursor-pointer">Look up an OID by name</summary>
+          <div className="mt-2 flex gap-2">
+            <input value={lookup} onChange={(e) => setLookup(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), search())} placeholder="e.g. ifHCInOctets, battery, toner, sysUpTime" className={inputClass} aria-label="OID name" />
+            <Button onClick={search}>Search</Button>
+          </div>
+          {found && (
+            <ul className="mt-2 max-h-48 space-y-1 overflow-auto">
+              {!found.length && <li className="text-[var(--muted)]">Nothing in the built-in dictionary — walk the device and look for the value instead.</li>}
+              {found.map((o) => (
+                <li key={o.oid} className="flex flex-wrap items-baseline gap-2">
+                  <button type="button" className="font-mono underline" onClick={() => setRoot(o.oid)} title="Walk from here">
+                    {o.mib}::{o.name}
+                  </button>
+                  <span className="font-mono text-[var(--muted)]">{o.oid}{o.column ? ".<row>" : ".0"}</span>
+                  <span className="text-[var(--muted)]">{o.description}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
         {status && <p className="text-xs text-[var(--muted)]">{status}</p>}
         {rows && (
           <>
@@ -400,17 +433,35 @@ function SnmpWalkDialog({ config, siteId, checkId, onPick, onClose }: { config: 
                 <thead className="sticky top-0 bg-[var(--panel-2)] text-left text-[var(--muted)]">
                   <tr>
                     <th className="px-2 py-1 font-normal">OID</th>
+                    <th className="px-2 py-1 font-normal">Name</th>
                     <th className="px-2 py-1 font-normal">Type</th>
                     <th className="px-2 py-1 font-normal">Value</th>
+                    <th className="px-2 py-1 font-normal" aria-label="Add to Extra OIDs" />
                   </tr>
                 </thead>
                 <tbody>
                   {shown.slice(0, 2000).map((r) => (
                     <tr key={r.oid} onClick={() => onPick(r)} className="cursor-pointer border-t border-[var(--border)] hover:bg-[var(--accent)]/10">
                       <td className="px-2 py-1 font-mono">{r.oid}</td>
+                      <td className="px-2 py-1 font-mono" title={r.description ? `${r.mib}: ${r.description}` : undefined}>
+                        {r.name ?? <span className="text-[var(--muted)]">—</span>}
+                      </td>
                       <td className="px-2 py-1 text-[var(--muted)]">{r.type}</td>
-                      <td className="max-w-xs truncate px-2 py-1" title={r.value}>
-                        {r.value}
+                      <td className="max-w-xs truncate px-2 py-1" title={r.display && r.display !== r.value ? `Raw value: ${r.value}` : r.value}>
+                        {r.display ?? r.value}
+                      </td>
+                      <td className="px-2 py-1">
+                        <button
+                          type="button"
+                          className="whitespace-nowrap text-[var(--muted)] underline hover:text-[var(--text)]"
+                          title="Add to Extra OIDs, to use in Calculate"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAddExtra(r);
+                          }}
+                        >
+                          + extra
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -468,8 +519,8 @@ export function CheckForm({
   const [multiValues, setMultiValues] = useState<Record<string, string[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [host, setEndpoint] = useState<EndpointDetail | null>(null);
-  const [inv, setInv] = useState<EndpointInventory | null>(null);
+  const [loadedHost, setEndpoint] = useState<EndpointDetail | null>(null);
+  const [loadedInv, setInv] = useState<EndpointInventory | null>(null);
   const [walking, setWalking] = useState(false);
 
   const siteName = useMemo(() => new Map(sites.map((e) => [e.id, e.name])), [sites]);
@@ -477,14 +528,13 @@ export function CheckForm({
   // The host whose inventory feeds the pickers: the (first) chosen host.
   const selectedEndpointId = targetEndpointIds[0] || probeEndpointId;
   useEffect(() => {
-    if (!selectedEndpointId) {
-      setEndpoint(null);
-      setInv(null);
-      return;
-    }
+    if (!selectedEndpointId) return;
     loadEndpoint(selectedEndpointId).then(setEndpoint).catch(() => setEndpoint(null));
     loadInventory(selectedEndpointId).then(setInv).catch(() => setInv(null));
   }, [selectedEndpointId]);
+  // With no endpoint chosen, nothing from a previously chosen one is shown.
+  const host = selectedEndpointId ? loadedHost : null;
+  const inv = selectedEndpointId ? loadedInv : null;
 
   const set = (key: string, value: unknown) => setConfig((c) => ({ ...c, [key]: value }));
   const visibleFields = def.fields.filter((f) => !f.showIf || f.showIf(config));
@@ -504,14 +554,14 @@ export function CheckForm({
     const normalized = normalizeConfig(type, config);
     const pickedCheck = multiField ? { ...normalized, [multiField[0]]: multiField[1][0] } : normalized;
     const needTarget = editing
-      ? (def.needsEndpoint && !endpointId ? "Choose the host this check runs on." : null) ?? (!siteId ? "Choose a site." : null)
+      ? (def.needsEndpoint && !endpointId ? "Choose the endpoint this check runs on." : null) ?? (!siteId ? "Choose a site." : null)
       : def.needsEndpoint
         ? endpointIds.length
           ? null
-          : "Choose at least one host."
+          : "Choose at least one endpoint."
         : endpointIds.length || siteIds.length
           ? null
-          : "Choose at least one site or host.";
+          : "Choose at least one site or endpoint.";
     const invalid = validateConfig(type, pickedCheck) ?? (!name.trim() ? "Name is required." : null) ?? needTarget;
     if (invalid) {
       setError(invalid);
@@ -574,8 +624,8 @@ export function CheckForm({
 
       <Section title={editing ? "Basics" : "Basics & where"}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Label label="Name *" className="sm:col-span-2" help={!editing ? "With several endpoints or sites, {{host}}, {{address}} and {{site}} are filled in for each one." : undefined}>
-            <input autoFocus={!editing} value={name} onChange={(e) => setName(e.target.value)} placeholder={multiTarget ? `e.g. ${def.label} — {{host}}` : `e.g. ${def.label} — office router`} className={inputClass} />
+          <Label label="Name *" className="sm:col-span-2" help={!editing ? "With several endpoints or sites, {{endpoint}}, {{address}} and {{site}} are filled in for each one." : undefined}>
+            <input autoFocus={!editing} value={name} onChange={(e) => setName(e.target.value)} placeholder={multiTarget ? `e.g. ${def.label} — {{endpoint}}` : `e.g. ${def.label} — office router`} className={inputClass} />
           </Label>
           {editing ? (
             <>
@@ -588,9 +638,9 @@ export function CheckForm({
                   ))}
                 </select>
               </Label>
-              <Label label={def.needsEndpoint ? "Endpoint *" : "Endpoint (optional)"} help={def.needsEndpoint ? "The machine whose agent runs this check." : "Ties the check to a host for grouping; doesn't change where it runs."}>
+              <Label label={def.needsEndpoint ? "Endpoint *" : "Endpoint (optional)"} help={def.needsEndpoint ? "The machine whose agent runs this check." : "Ties the check to an endpoint for grouping; doesn't change where it runs."}>
                 <select value={endpointId} onChange={(e) => setEndpointId(e.target.value)} className={inputClass}>
-                  <option value="">{def.needsEndpoint ? "Choose a host…" : "None"}</option>
+                  <option value="">{def.needsEndpoint ? "Choose an endpoint…" : "None"}</option>
                   {endpoints.map((h) => (
                     <option key={h.id} value={h.id}>
                       {h.name}
@@ -604,8 +654,8 @@ export function CheckForm({
             <>
               <div className="sm:col-span-2">
                 <div className="mb-1 inline-flex items-center text-xs text-[var(--muted)]">
-                  {def.needsEndpoint ? "Endpoints * — one check per host" : "Endpoints (optional) — one check per host"}
-                  <Tooltip text={def.needsEndpoint ? "The agent on each chosen host runs its own copy of this check." : "Pick endpoints to create one check per host (in that host's site). Leave empty to create per site instead."} />
+                  {def.needsEndpoint ? "Endpoints * — one check per endpoint" : "Endpoints (optional) — one check per endpoint"}
+                  <Tooltip text={def.needsEndpoint ? "The agent on each chosen endpoint runs its own copy of this check." : "Pick endpoints to create one check per endpoint (in that endpoint's site). Leave empty to create per site instead."} />
                 </div>
                 <MultiPicker items={endpointItems} selected={endpointIds} onChange={setEndpointIds} placeholder="Search endpoints…" height="max-h-40" groupLabel="Site" />
               </div>
@@ -619,7 +669,7 @@ export function CheckForm({
                 <p className="text-xs text-[var(--muted)] sm:col-span-2">
                   Creating {endpointIds.length} checks.{" "}
                   <button type="button" className="underline" onClick={() => addressFields.forEach((f) => set(f.key, f.key === "url" ? "https://{{address}}/" : "{{address}}"))}>
-                    Target each host&apos;s own address
+                    Target each endpoint&apos;s own address
                   </button>{" "}
                   ({addressFields.map((f) => f.label).join(", ")} → {"{{address}}"}).
                 </p>
@@ -627,7 +677,7 @@ export function CheckForm({
             </>
           )}
           {def.remoteProbe && (
-            <Label label="Run from" help="The engine itself, or a host's agent — for targets only reachable from inside that host's network.">
+            <Label label="Run from" help="The engine itself, or an endpoint's agent — for targets only reachable from inside that endpoint's network.">
               <select value={probeEndpointId} onChange={(e) => setProbeEndpointId(e.target.value)} className={inputClass}>
                 <option value="">Looksee engine</option>
                 {agentEndpoints.map((h) => (
@@ -752,8 +802,24 @@ export function CheckForm({
           siteId={editing ? siteId : (endpointIds.length ? endpoints.find((h) => h.id === endpointIds[0])?.siteId : siteIds[0]) ?? ""}
           checkId={check?.id}
           onClose={() => setWalking(false)}
+          onAddExtra={(row) => {
+            // A name for the expression: the OID's dictionary name (letters
+            // and digits only), else v1, v2…; counters are read as a rate.
+            setConfig((c) => {
+              const lines = String(c.extraOids ?? "").split("\n").filter((l) => l.trim());
+              const base = (row.name ?? "").split(".")[0].replace(/[^A-Za-z0-9_]/g, "") || "v";
+              let name = /^[A-Za-z_]/.test(base) ? base : `v${base}`;
+              for (let i = 2; lines.some((l) => l.trim().startsWith(`${name} `) || l.trim().startsWith(`${name}=`)); i++) name = `${base}${i}`;
+              const counter = row.hint?.asRate || /Counter/.test(row.type);
+              return { ...c, extraOids: [...lines, `${name} = ${counter ? `rate(${row.oid})` : row.oid}`].join("\n") };
+            });
+          }}
           onPick={(row) => {
-            setConfig((c) => ({ ...c, preset: "", oid: row.oid, ...(/Counter/.test(row.type) ? { asRate: true } : {}) }));
+            // Fill in what the OID dictionary knows: counters as a rate, the
+            // unit and scale; the check name defaults to the OID's name.
+            const hint = row.hint ?? (/Counter/.test(row.type) ? { asRate: true } : {});
+            setConfig((c) => ({ ...c, preset: "", oid: row.oid, ...(hint.asRate ? { asRate: true } : {}), ...(hint.unit && !c.unit ? { unit: hint.unit } : {}), ...(hint.scale && !c.scale ? { scale: hint.scale } : {}) }));
+            if (row.name && !name) setName(row.name);
             setWalking(false);
           }}
         />

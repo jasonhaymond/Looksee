@@ -1,3 +1,10 @@
+// API routes for the outbound watchdog (Looksee pinging an outside service
+// that alerts when the pings stop): read settings, change them, send a ping
+// now.
+//
+// Security: every route requires a signed-in session; ping URLs hold the
+// outside service's secret, so they're write-only (shown only as "saved").
+
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -5,6 +12,7 @@ import { watchdogSettings } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { describeUrl, getWatchdog, pingNow, selfCheck } from "../services/watchdog.js";
 import { recordSecurityEvent } from "../services/security.js";
+import { own } from "../lib/own.js";
 
 export const watchdogRouter = Router();
 watchdogRouter.use(requireAuth);
@@ -36,13 +44,15 @@ watchdogRouter.patch("/", async (req, res) => {
   await getWatchdog();
   const u: Partial<typeof watchdogSettings.$inferInsert> = { updatedAt: new Date() };
   for (const key of ["url", "failUrl"] as const) {
-    if (req.body?.[key] === undefined) continue;
-    const v = httpUrl(req.body[key]);
+    const raw = own(req.body as Record<string, unknown> | undefined, key);
+    if (raw === undefined) continue;
+    const v = httpUrl(raw);
     if (v && typeof v === "object") {
       res.status(400).json(v);
       return;
     }
-    u[key] = v;
+    if (key === "url") u.url = v;
+    else u.failUrl = v;
   }
   if (req.body?.enabled !== undefined) u.enabled = Boolean(req.body.enabled);
   if (req.body?.intervalSeconds !== undefined) u.intervalSeconds = Math.min(3600, Math.max(30, Math.round(Number(req.body.intervalSeconds) || 60)));

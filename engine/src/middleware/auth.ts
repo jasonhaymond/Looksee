@@ -1,23 +1,32 @@
+// Sign-in checks that run before protected routes.
+//
+// requireAuth: the dashboard's session cookie must match an unexpired session
+// in the database, or the request gets 401. requireAgentAuth: an agent's (or
+// site collector's) bearer key must belong to an endpoint. Without these,
+// anyone who can reach the server could read or change everything. Middleware
+// are functions Express runs before a route's own code.
+
 import type { NextFunction, Request, Response } from "express";
 import { eq, gt, and } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { sessions, users, endpoints } from "../db/schema.js";
 import { SESSION_COOKIE_NAME } from "../lib/session.js";
 import { getSecuritySettings, recordSecurityEvent } from "../services/security.js";
+import { own } from "../lib/own.js";
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: { id: string; email: string };
-      agentEndpoint?: { id: string; siteId: string };
-    }
+// Adds the signed-in user / authenticated agent to Express's request type
+// (TypeScript "module augmentation": extends a library's own type).
+declare module "express-serve-static-core" {
+  interface Request {
+    user?: { id: string; email: string };
+    agentEndpoint?: { id: string; siteId: string };
   }
 }
 
 // Single-admin-user auth: any valid, non-expired session cookie is enough —
 // there's no role check because there's only one role. See CLAUDE.md.
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const token = req.cookies?.[SESSION_COOKIE_NAME];
+  const token = own(req.cookies as Record<string, string> | undefined, SESSION_COOKIE_NAME);
   if (!token) {
     res.status(401).json({ error: "Not authenticated" });
     return;

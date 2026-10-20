@@ -41,7 +41,7 @@ function describe(w: MaintenanceWindow) {
   if (w.startsAt && w.endsAt) return `${new Date(w.startsAt).toLocaleString()} → ${new Date(w.endsAt).toLocaleString()}`;
   if (w.daysOfWeek?.length) {
     const zone = !w.timeZone ? " (server's time)" : w.timeZone !== browserTimeZone() ? ` (${w.timeZone} time)` : "";
-    return `Every ${w.daysOfWeek.map((d) => DAYS[d]).join(", ")} at ${w.startTime}${zone} for ${w.durationMinutes} min`;
+    return `Every ${w.daysOfWeek.map((d) => DAYS.at(d)).join(", ")} at ${w.startTime}${zone} for ${w.durationMinutes} min`;
   }
   return "—";
 }
@@ -73,15 +73,15 @@ export default function MaintenancePage() {
 
   // Fetches everything the page shows in parallel. useCallback keeps the same
   // function between re-draws so the effect below doesn't re-run needlessly.
-  const load = useCallback(async () => {
-    const [w, s, e, c, g] = await Promise.all([api.maintenance(), api.sites(), api.endpoints(), api.checks(), api.groups()]);
+  const load = useCallback(() =>
+    Promise.all([api.maintenance(), api.sites(), api.endpoints(), api.checks(), api.groups()]).then(([w, s, e, c, g]) => {
     setWindows(w);
     setSites(s);
     setEndpoints(e);
     setChecks(c);
     setGroups(g);
     setLoaded(true);
-  }, []);
+  }), []);
 
   // useEffect runs after the page appears: check the session first, and send
   // a signed-out visitor to the login page.

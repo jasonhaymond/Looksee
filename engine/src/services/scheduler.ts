@@ -1,9 +1,15 @@
+// The check scheduler: every 10 seconds, finds checks that are due, hands
+// checks in collector sites to their collector, runs the rest (with limits so
+// heavy checks can't all start at once), and recovers pushed values that are set
+// to recover on their own.
+
 import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { checks, sites, endpoints, ENGINE_CHECK_TYPES } from "../db/schema.js";
 import { COLLECTOR_CHECK_TYPES } from "../db/checkTypes.js";
 import { runProbe, type ProbeResult } from "./prober.js";
 import { recordCheckResult, resolveCheck } from "./alerting.js";
+import { prepareConfig } from "./checkConfig.js";
 import { logger } from "../lib/logger.js";
 
 const TICK_MS = 10_000;
@@ -112,7 +118,7 @@ export async function takeCollectorChecks<T extends typeof checks.$inferSelect>(
       const name = collector?.name ?? "the collector host";
       const message = collector?.collectorLastSeenAt
         ? `Site collector on ${name} is offline since ${collector.collectorLastSeenAt.toISOString()}`
-        : `Waiting for the site collector on ${name} to start — its agent needs to be 3.2.0 or newer (see the Hosts page)`;
+        : `Waiting for the site collector on ${name} to start — its agent needs to be 3.2.0 or newer (see the Endpoints page)`;
       await recordCheckResult(c.id, { status: "unknown", message });
     }
   }
@@ -124,7 +130,9 @@ export async function runOneCheck(check: typeof checks.$inferSelect): Promise<Pr
   runningByType.set(check.type, (runningByType.get(check.type) ?? 0) + 1);
   try {
     await db.update(checks).set({ lastRunAt: new Date() }).where(eq(checks.id, check.id));
-    const outcome = await runProbe(check.type, (check.config as Record<string, unknown>) ?? {}, {
+    // The check's own exclusions plus any reusable exclusion lists that
+    // apply, and a referenced check's latest value (services/checkConfig.ts).
+    const outcome = await runProbe(check.type, await prepareConfig(check), {
       checkId: check.id,
       endpointId: check.endpointId,
       siteId: check.siteId,

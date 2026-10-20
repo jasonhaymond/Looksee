@@ -266,7 +266,7 @@ describe("infrastructure APIs", () => {
 
 describe("SNMP against an in-process agent", () => {
   const port = 20000 + Math.floor(Math.random() * 20000);
-  let agent: { close: () => void; getMib: () => any; getAuthorizer: () => any };
+  let agent: ReturnType<typeof snmp.createAgent>;
   let uptime = 500000;
   beforeAll(() => {
     agent = snmp.createAgent({ port, disableAuthorization: true, address: "127.0.0.1" }, () => undefined);
@@ -279,7 +279,7 @@ describe("SNMP against an in-process agent", () => {
       oid: "1.3.6.1.2.1.1.3",
       scalarType: snmp.ObjectType.TimeTicks,
       maxAccess: RO,
-      handler: (r: any) => {
+      handler: (r: { instanceNode: { value: unknown }; done: () => void }) => {
         r.instanceNode.value = uptime;
         r.done();
       },
@@ -358,6 +358,39 @@ describe("SNMP against an in-process agent", () => {
     const filtered = await runProbe("snmp_interfaces", { ...base(), interfaceFilter: "^port1$" });
     expect(filtered.status).toBe("up");
     expect((filtered.details as unknown[]).length).toBe(1);
+  });
+
+  // Proves "Calculate" works on the value read (value), on several extra
+  // OIDs read in the same poll (by name, without a main OID), with a counter
+  // read as a rate, and that bad Extra OID lines are refused.
+  it("calculates a result from the value and other OIDs", async () => {
+    const one = await runProbe("snmp", { ...base(), oid: "1.3.6.1.2.1.2.2.1.5.1", expression: "value / 1e6" });
+    expect(one.value).toBe(1000);
+    const util = await runProbe("snmp", {
+      ...base(),
+      extraOids: "inb = 1.3.6.1.2.1.2.2.1.10.1\nout = 1.3.6.1.2.1.2.2.1.16.1\nspeed = 1.3.6.1.2.1.2.2.1.5.1",
+      expression: "(inb + out) * 8 / speed * 100",
+      unit: "%",
+    });
+    expect(util.value).toBeCloseTo(0.0024, 6);
+    expect(util.message).toContain("inb=1000");
+    const mixed = await runProbe("snmp", { ...base(), oid: "1.3.6.1.2.1.2.2.1.10.1", extraOids: "out = 1.3.6.1.2.1.2.2.1.16.1", expression: "out - value" });
+    expect(mixed.value).toBe(1000);
+    // A counter as a rate: the first run is only a baseline.
+    const rate1 = await runProbe("snmp", { ...base(), extraOids: "inb = rate(1.3.6.1.2.1.2.2.1.10.1)", expression: "inb * 8" });
+    expect(rate1.skip).toBe(true);
+    const rate2 = await runProbe("snmp", { ...base(), extraOids: "inb = rate(1.3.6.1.2.1.2.2.1.10.1)", expression: "inb * 8" }, { state: rate1.state! });
+    expect(rate2.value).toBe(0);
+    expect((await runProbe("snmp", { ...base(), extraOids: "value = 1.3.6.1.2.1.1.3.0", expression: "value" })).message).toMatch(/reserved/);
+    expect((await runProbe("snmp", { ...base(), extraOids: "x = drop table", expression: "x" })).status).toBe("warn");
+    expect((await runProbe("snmp", { ...base(), extraOids: "x = 1.3.6.1.2.1.99.99.0", expression: "x" })).status).toBe("down");
+  });
+
+  // Proves excluded interfaces are skipped by the interface table check.
+  it("skips excluded interfaces", async () => {
+    const r = await runProbe("snmp_interfaces", { ...base(), exclude: ["port2"] });
+    expect(r.status).toBe("up");
+    expect((r.details as { name: string }[]).map((x) => x.name)).not.toContain("port2");
   });
 
   it("rejects an unsupported SNMPv3 protocol instead of silently using SHA-1", async () => {

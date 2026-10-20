@@ -1,7 +1,10 @@
+// A check's recent history in a compact strip with a latency sparkline.
+
 "use client";
 
 import { useCheckHistory } from "../lib/useCheckHistory";
 import { Sparkline } from "./Sparkline";
+import { own } from "../lib/own";
 
 const STATUS_LINE_COLOR: Record<string, string> = {
   up: "var(--up)",
@@ -20,7 +23,7 @@ export function CheckHistory({ checkId, currentStatus }: { checkId: string; curr
       <span>
         {uptimePercent ?? "—"}% up <span className="opacity-70">(last {results.length})</span>
       </span>
-      {latencies.length >= 2 && <Sparkline values={latencies} color={STATUS_LINE_COLOR[currentStatus]} />}
+      {latencies.length >= 2 && <Sparkline values={latencies} color={own(STATUS_LINE_COLOR, currentStatus) ?? "var(--muted)"} />}
     </div>
   );
 }

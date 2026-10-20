@@ -1,14 +1,24 @@
+// API routes for checks: list, create (one or many targets at once), edit,
+// delete, bulk actions, run now, results and statistics, resolve, recovery
+// URLs, excluding results from statistics, what a check ignores, and the SNMP
+// walk browser with its OID dictionary.
+//
+// Security: every route requires a signed-in session; check secrets are
+// write-only (lib/secrets.ts); IDs are checked before they reach the database;
+// bulk actions run the same rules as single ones.
+
 import { Router } from "express";
 import crypto from "node:crypto";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { checks, checkResults, checkDependencies, alertRules, alertRuleChannels, maintenanceWindows, endpoints, sites } from "../db/schema.js";
+import { checks, checkResults, checkDependencies, alertRules, maintenanceWindows, endpoints, sites } from "../db/schema.js";
 import { CHECK_TYPE_META, COLLECTOR_CHECK_TYPES, isCheckType, ENDPOINT_SCOPED_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/checkTypes.js";
 import { requireAuth } from "../middleware/auth.js";
 import { maskCheck, mergeSecrets } from "../lib/secrets.js";
 import { runOneCheck } from "../services/scheduler.js";
 import { queueCollectorJob, runsOnCollector, siteCollectorFor } from "../services/sites.js";
 import { browseSnmp } from "../services/probes/snmp.js";
+import { annotateWalk, searchOids } from "../services/probes/mibs.js";
 import { collectorJobs } from "../db/schema.js";
 import { activeMaintenance, invalidateMaintenanceCache, windowAppliesTo } from "../services/maintenance.js";
 import { copyAlertRules, createAlertRule, parseAlertRule } from "../services/alertRuleFactory.js";
@@ -16,6 +26,9 @@ import { remediationFor } from "../services/remediation.js";
 import { resolveCheck } from "../services/alerting.js";
 import { logger } from "../lib/logger.js";
 import { alertEvents } from "../db/schema.js";
+import { exclusionsFor } from "../services/exclusions.js";
+import { own } from "../lib/own.js";
+import { isUuid } from "../lib/ids.js";
 
 export const checksRouter = Router();
 checksRouter.use(requireAuth);
@@ -99,7 +112,10 @@ checksRouter.post("/snmp-walk", async (req, res) => {
     return;
   }
   try {
-    res.json(await browseSnmp(config));
+    // Names, descriptions and readable values from the built-in OID
+    // dictionary (services/probes/mibs.ts) are added to every row.
+    const walked = await browseSnmp(config);
+    res.json({ ...walked, rows: annotateWalk(walked.rows) });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -119,7 +135,15 @@ checksRouter.get("/snmp-walk/:jobId", async (req, res) => {
     res.status(502).json({ error: job.result ?? "The site collector couldn't walk the device" });
     return;
   }
-  res.json(JSON.parse(job.result ?? '{"rows":[]}'));
+  // The collector sends plain rows; names and readable values are added here.
+  const walked = JSON.parse(job.result ?? '{"rows":[]}') as { rows?: { oid: string; type: string; value: string }[]; truncated?: boolean };
+  res.json({ ...walked, rows: annotateWalk(Array.isArray(walked.rows) ? walked.rows : []) });
+});
+
+// GET /api/checks/snmp-oids?q=battery — find OIDs in the built-in dictionary
+// by name, description, MIB or OID prefix (the "Look up an OID" box).
+checksRouter.get("/snmp-oids", (req, res) => {
+  res.json(searchOids(typeof req.query.q === "string" ? req.query.q.slice(0, 100) : ""));
 });
 
 checksRouter.get("/types", (_req, res) => {
@@ -167,10 +191,11 @@ checksRouter.post("/", async (req, res) => {
   res.status(201).json(maskCheck(check));
 });
 
-// {{host}}, {{address}} and {{endpoint}} in the name or any text setting
-// are filled in per target, so one form can create "ping <each host>".
+// {{endpoint}} (the device; {{host}} is its pre-5.0 name), {{address}} and
+// {{site}} in the name or any text setting are filled in per target, so one
+// form can create "ping <each endpoint>".
 function fillPlaceholders<T>(value: T, vars: Record<string, string>): T {
-  if (typeof value === "string") return value.replace(/\{\{\s*(host|address|endpoint)\s*\}\}/g, (_m, k: string) => vars[k] ?? "") as T;
+  if (typeof value === "string") return value.replace(/\{\{\s*(host|address|endpoint|site)\s*\}\}/g, (_m, k: string) => own(vars, k) ?? "") as T;
   if (Array.isArray(value)) return value.map((v) => fillPlaceholders(v, vars)) as T;
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fillPlaceholders(v, vars)])) as T;
   return value;
@@ -203,7 +228,7 @@ checksRouter.post("/batch", async (req, res) => {
     const endpoint = allSites.get(siteId);
     const label = host?.name ?? endpoint?.name ?? String(t.endpointId ?? t.siteId ?? "?");
     if (!endpoint || (t.endpointId && !host)) {
-      errors.push({ target: label, error: "endpoint or host not found" });
+      errors.push({ target: label, error: "site or endpoint not found" });
       continue;
     }
     const err = validate(type, host?.id ?? null, probeEndpointId, intervalSeconds);
@@ -211,7 +236,7 @@ checksRouter.post("/batch", async (req, res) => {
       errors.push({ target: label, error: err });
       continue;
     }
-    const vars = { host: host?.name ?? "", address: host?.hostname || host?.name || "", endpoint: endpoint.name };
+    const vars = { endpoint: host?.name ?? "", host: host?.name ?? "", address: host?.hostname || host?.name || "", site: endpoint.name };
     let name = fillPlaceholders(baseName, vars);
     // Several targets with a name that doesn't mention one would all look
     // identical in the list.
@@ -431,7 +456,7 @@ checksRouter.post("/:id/results/exclude", async (req, res) => {
   const ids: string[] = Array.isArray(req.body?.resultIds)
     ? req.body.resultIds
         .map(String)
-        .filter((v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v))
+        .filter((v: string) => isUuid(v))
         .slice(0, 5000)
     : [];
   const from = req.body?.from ? new Date(String(req.body.from)) : null;
@@ -449,6 +474,18 @@ checksRouter.post("/:id/results/exclude", async (req, res) => {
   const changed = await db.update(checkResults).set({ excluded: exclude, excludedReason: reason }).where(where).returning({ id: checkResults.id });
   logger.info("checks", `${changed.length} result(s) of check ${checkId} ${exclude ? "excluded from" : "counted again in"} statistics${reason ? `: ${reason}` : ""}`, `Check results were ${exclude ? "excluded from" : "returned to"} uptime and SLA figures.`);
   res.json({ changed: changed.length });
+});
+
+// GET /api/checks/:id/exclusions — every item this check ignores and where
+// it comes from (its own setting, or a named exclusion list), so the
+// dashboard can show why something isn't being alerted on.
+checksRouter.get("/:id/exclusions", async (req, res) => {
+  const check = isUuid(req.params.id) ? await db.query.checks.findFirst({ where: eq(checks.id, req.params.id) }) : undefined;
+  if (!check) {
+    res.status(404).json({ error: "Check not found" });
+    return;
+  }
+  res.json(await exclusionsFor(check));
 });
 
 // Recent result history for one check. `since` (ISO timestamp) narrows to a

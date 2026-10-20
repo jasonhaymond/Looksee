@@ -2,8 +2,13 @@
 
 Day-to-day usage of Looksee once it's running — adding things to monitor, managing many
 of them at once, building dashboards, and getting notified when something breaks. The
-same guide is built into the app: click **Help** in the top bar, or **Learn more** at
-the top of any page.
+same guide is built into the app: click **Help & user guide** in the sidebar, or
+**Learn more** at the top of any page.
+
+> **Coming from 4.x?** 5.0 renamed things to match how people talk about them. What 4.x
+> called an **endpoint** (a network) is now a **site**; what it called a **host** (a
+> machine) is now an **endpoint**. Nothing was lost — the upgrade renames your data in
+> place. Alert templates using `{{endpoint}}` and `{{host}}` were updated automatically.
 
 Related guides: [check-reference.md](check-reference.md) (what every check type does and
 how to check the same thing by hand), [security-guide.md](security-guide.md) (sign-in,
@@ -19,75 +24,98 @@ two-factor, IP restriction, attack alerts), [windows-agent-security.md](windows-
 2. [Getting around](#getting-around)
 3. [Checks](#checks)
    - [Adding a check](#adding-a-check)
-   - [Adding the same check to many hosts or endpoints](#adding-the-same-check-to-many-hosts-or-endpoints)
+   - [Adding the same check to many endpoints or sites](#adding-the-same-check-to-many-endpoints-or-sites)
    - [Picking from what the agent found](#picking-from-what-the-agent-found)
    - [Thresholds: warn and critical](#thresholds-warn-and-critical)
    - [Finding and filtering checks](#finding-and-filtering-checks)
    - [Working with many checks at once](#working-with-many-checks-at-once)
    - [Duplicating checks](#duplicating-checks)
    - [A check's page: history, charts and incidents](#a-checks-page-history-charts-and-incidents)
+   - [Leaving results out of statistics](#leaving-results-out-of-statistics)
+   - [Resolving and recovery](#resolving-and-recovery)
    - [When a check fails: things to check](#when-a-check-fails-things-to-check)
    - [Custom scripts with expected output](#custom-scripts-with-expected-output)
    - [SNMP: walks, counters and the walk browser](#snmp-walks-counters-and-the-walk-browser)
+   - [SNMP: calculating a value](#snmp-calculating-a-value)
    - [Printers](#printers)
+   - [Software and security checks](#software-and-security-checks)
+   - [Calculated values](#calculated-values)
    - [Check type reference](#check-type-reference)
-4. [Hosts](#hosts)
+4. [Endpoints](#endpoints)
    - [Processes and services](#processes-and-services)
    - [MAC addresses and IP changes](#mac-addresses-and-ip-changes)
-   - [Suggested checks](#suggested-checks)
-5. [Locations and endpoints](#endpoints)
-6. [Multiple sites](#multiple-sites)
-7. [Discovery](#discovery)
-8. [Heartbeats and pushed values](#heartbeats-and-pushed-values)
-9. [Channels and message templates](#channels)
-10. [Alerts, escalation, and dependencies](#alerts-escalation-and-dependencies)
-11. [Alert history](#alert-history)
-12. [Maintenance](#maintenance)
-13. [SLA reports](#sla-reports)
-14. [Traps and syslog](#traps-and-syslog)
-15. [Top talkers](#top-talkers)
-16. [Status pages](#status-pages)
-17. [Dashboards and widgets](#dashboards-and-widgets)
-18. [Security](#security)
-19. [Watchdog](#watchdog)
-20. [Times and time zones](#times-and-time-zones)
-21. [Light and dark theme](#light-and-dark-theme)
-22. [Backups and logs](#backups-and-logs)
+   - [Suggested checks and templates](#suggested-checks)
+5. [Sites and locations](#sites)
+6. [Groups](#groups)
+7. [Exclusions](#exclusions)
+8. [SNMP templates](#snmp-templates)
+9. [Multiple sites](#multiple-sites)
+10. [Discovery](#discovery)
+11. [Heartbeats and pushed values](#heartbeats-and-pushed-values)
+12. [Channels and message templates](#channels)
+13. [Alerts, escalation, and dependencies](#alerts-escalation-and-dependencies)
+14. [Alert history](#alert-history)
+15. [Maintenance](#maintenance)
+16. [SLA reports](#sla-reports)
+17. [Traps and syslog](#traps-and-syslog)
+18. [Top talkers](#top-talkers)
+19. [Status pages](#status-pages)
+20. [Dashboards and widgets](#dashboards-and-widgets)
+21. [Security](#security)
+22. [Watchdog](#watchdog) (including [watchdog agents](#watchdog-agents))
+23. [Times and time zones](#times-and-time-zones)
+24. [Light and dark theme](#light-and-dark-theme)
+25. [Backups and logs](#backups-and-logs)
 
 ## How Looksee is organized
 
+Everything sits in one tree: **Location → Site → Endpoint → Check.**
+
 - A **location** is a physical place — "Home", "Main office", "Church". It's optional:
-  it groups endpoints so you can filter, summarize and silence a whole place at once.
-- An **endpoint** is a network at a location ("Home LAN", "Office VLAN 20", "Client A").
-- A **host** is a machine running the Looksee agent. Hosts belong to an endpoint (and so
-  to its location).
-- A **check** is one thing being monitored. Every check belongs to an endpoint, and
-  optionally to a host. A check is run by one of three things:
+  it groups sites so you can filter, summarize and silence a whole place at once.
+- A **site** is a network at a location ("Home LAN", "Office VLAN 20", "Client A").
+- An **endpoint** is one device on a site — a server, PC, switch, printer, UPS. It may
+  run the Looksee agent, but doesn't have to: a printer watched over SNMP is an endpoint
+  too. Any endpoint with an agent can also be its site's
+  [site collector](#multiple-sites).
+- A **check** is one thing being monitored. Every check belongs to a site, and
+  optionally to an endpoint. A check is run by one of three things:
   - the **engine** itself (ping, HTTP, DNS, SNMP, databases, Proxmox, …) — no agent
     needed;
-  - the **agent** on a host (services, files, logs, Docker, backups, scripts, …);
+  - the **agent** on an endpoint (services, files, logs, Docker, backups, scripts, …);
   - **report evaluation** — the engine judges the metrics every agent report already
-    carries (CPU, disks, SMART, updates, …).
+    carries (CPU, disks, SMART, updates, installed software, …).
+- A **group** is your own set of things that cuts across the tree — "Domain
+  controllers", "Everything tagged `client-a`", "All printers". See [Groups](#groups).
 - Every result is **up**, **warn**, **down**, or **unknown**. A check in a maintenance
   window shows **maintenance**; a turned-off check shows **disabled**. Status is always
   written out as well as colored.
 
 ## Getting around
 
-The top bar groups the pages:
+The **sidebar** on the left has two parts. The top lists the pages:
 
-| Menu | Pages |
+| Section | Pages |
 |---|---|
-| Dashboards | Your widget dashboards (the home page) |
-| Monitoring | Checks, Hosts, Endpoints & locations, Discovery |
-| Alerting | Alert history, Channels, Maintenance |
+| Overview | Dashboards (the home page) |
+| Monitoring | Checks, Endpoints, Sites & locations, Groups, Discovery, SNMP templates |
+| Alerting | Alert history, Channels, Maintenance, Exclusions |
 | Insights | SLA reports, Traps & syslog, Top talkers, Status pages |
-| System | Security, Watchdog, Backups, Logs |
-| Help | This guide, the check reference, and the security guides |
+| System | Security, Watchdog, Backups, Logs, Help & user guide |
 
-On a phone the same groups are behind the **Menu** button. The theme button (◐ ☀ ☾)
-switches between system, light and dark. Each page starts with a one-line explanation
-and a **Learn more** link to the matching section of this guide.
+Click a section name to fold it away; the sidebar remembers what you opened.
+
+Below the pages is the **tree** of everything monitored: locations, their sites, each
+site's endpoints, and each endpoint's checks, then your groups. Every row shows a status
+symbol and how many problems are under it. Click the arrow to open a level, or the name
+to open its page — a location, site, endpoint or group page lists everything under it
+with its status. Type in **Find a site, endpoint or check…** to narrow the tree.
+
+On a phone or narrow window the sidebar is behind the **☰ Menu** button at the top. The
+theme button (◐ ☀ ☾), **Enable push notifications** and **Sign out** are at the bottom
+of the sidebar. **Help & user guide** holds this guide, the check reference and the
+security guides. Each page starts with a one-line explanation and a
+**Learn more** link to the matching section of this guide.
 
 ## Checks
 
@@ -100,19 +128,22 @@ and a **Learn more** link to the matching section of this guide.
    [check reference](check-reference.md).
 3. Fill in **Basics & where**:
    - **Name** — how it appears everywhere.
-   - **Hosts** — for agent checks, the machine(s) whose agent runs it. For everything
-     else this is optional; picking hosts creates one check per host.
-   - **Endpoints** — when no host is picked, the endpoint(s) the check belongs to (one
+   - **Endpoints** — for agent checks, the device(s) whose agent runs it. For everything
+     else this is optional; picking endpoints creates one check per endpoint.
+   - **Sites** — when no endpoint is picked, the site(s) the check belongs to (one
      check each).
-   - **Run from** (ping, TCP, HTTP, DNS, TLS only) — the engine, or a host's agent.
-     Choose an agent to test something only reachable from inside that host's network.
+   - **Run from** (ping, TCP, HTTP, DNS, TLS only) — the engine, or an endpoint's agent.
+     Choose an agent to test something only reachable from inside that endpoint's
+     network.
    - **Check every** — the interval in seconds.
 4. Fill in **Settings**. Required fields are marked `*`; hover the `?` icons for help.
-   Fields that name something on a host (service, process, container, script, mount,
+   Fields that name something on an endpoint (service, process, container, script, mount,
    interface) have a **Browse** button — see
    [Picking from what the agent found](#picking-from-what-the-agent-found).
-5. Optionally set **Thresholds** (below) and open **Advanced** for the retry interval,
-   tags, dependencies, and less common options.
+5. Optionally set **Thresholds** (below). Every type works with its defaults; the
+   **Advanced** section holds the less common options (timeouts, retries, text to send
+   and expect, exclusions, calculations), plus the retry interval, tags, dependencies
+   and **Recovers together with** (see [Resolving and recovery](#resolving-and-recovery)).
 6. Under **Alerts**, tick the channels to notify and set the same options an alert rule
    has (failures in a row, warn or down, reminders, escalation). Leave everything
    unticked for no alerts.
@@ -122,28 +153,36 @@ and a **Learn more** link to the matching section of this guide.
 **What success looks like:** the check shows **UP** (or a deliberate WARN/DOWN) with a
 "Last result" message, and "Checked" counts up from a few seconds ago.
 
-### Adding the same check to many hosts or endpoints
+### Adding the same check to many endpoints or sites
 
-In the add form, tick several **Hosts** (or, for checks that don't need a host, several
-**Endpoints**). One check is created for each, with the same settings and alert rule.
+In the add form, tick several **Endpoints** (or, for checks that don't need one, several
+**Sites**). One check is created for each, with the same settings and alert rule.
 
-- Use `{{host}}`, `{{address}}` (the host's hostname/IP, or its name) and `{{endpoint}}`
-  in the **Name** or any text setting; they're filled in per target. For example, a
-  Ping check named `Ping {{host}}` with Host `{{address}}` pings each host at its own
-  address.
-- For engine checks with an address field, **Target each host's own address** fills
+- Use `{{endpoint}}`, `{{address}}` (the endpoint's hostname/IP, or its name) and
+  `{{site}}` in the **Name** or any text setting; they're filled in per target. For
+  example, a Ping check named `Ping {{endpoint}}` with Host `{{address}}` pings each
+  endpoint at its own address. (`{{host}}` still works and means the same as
+  `{{endpoint}}`.)
+- For engine checks with an address field, **Target each endpoint's own address** fills
   those fields with `{{address}}` for you.
 - If a name has no placeholder, the target's name is appended so the checks stay
   distinguishable.
-- Targets that don't fit (e.g. a host-only check type with no host) are skipped and
-  listed; the rest are still created.
+- Targets that don't fit (e.g. an agent check type for an endpoint with no agent) are
+  skipped and listed; the rest are still created.
+
+To add a whole *set* of checks at once, use a template instead: role and security
+templates on an endpoint's **Suggested checks** tab (see
+[Suggested checks and templates](#suggested-checks)), or an
+[SNMP template](#snmp-templates) for a network device.
 
 ### Picking from what the agent found
 
-Settings that name something on a host — a service, process, Docker container, script,
-mount, network interface, drive or sensor — show what that host's agent last reported:
+Settings that name something on an endpoint — a service, process, Docker container,
+script, mount, network interface, drive or sensor — show what that endpoint's agent last
+reported:
 
-1. Pick the host first (the first picked host's inventory is used when several are).
+1. Pick the endpoint first (the first picked endpoint's inventory is used when several
+   are).
 2. Click **Browse (N)** next to the field. Services show whether they're running and
    how they start; processes show how many are running, their memory and their user.
 3. Search or filter, then tick one item — or, while creating, **several** to make one
@@ -171,11 +210,11 @@ On the Checks page:
 
 - The **status chips** (All, Problems, Down, Warn, …) show counts and filter with one
   click. **Problems** = down or warn.
-- The **search box** matches names, types, hosts, endpoints, last messages, tags and
+- The **search box** matches names, types, endpoints, sites, last messages, tags and
   configuration (so searching an IP finds every check pointing at it).
-- The dropdowns filter by **location**, **endpoint**, **host**, **kind** (category) and
+- The dropdowns filter by **location**, **site**, **endpoint**, **kind** (category) and
   **tag**.
-- **Group by** sorts the list into sections by location, endpoint, host, kind, status,
+- **Group by** sorts the list into sections by location, site, endpoint, kind, status,
   or nothing. Click a section header to collapse it. Your choice is remembered in this
   browser.
 - Within each section, failing checks sort to the top.
@@ -192,11 +231,13 @@ On the Checks page:
 | State | Enable / Disable | Turn checks on or off |
 | State | Run now | Run engine checks immediately (agent checks update on the agent's next report) |
 | State | Maintenance… | Start a maintenance window for N minutes on just these checks |
+| State | Resolve… | Mark failing checks recovered now — see [Resolving and recovery](#resolving-and-recovery) |
 | Alerts | Add alert rule… | Add the same rule (channels, failures in a row, reminders, escalation) to each |
 | Alerts | Remove alert rules | Remove every rule from them |
 | Alerts | Depends on… | Set which checks they depend on (empty clears) |
 | Organize | Add tags… / Remove tags… | Comma-separated tags |
-| Organize | Move to endpoint… / Set host… | Re-home the checks |
+| Organize | Move to site… / Set endpoint… | Re-home the checks |
+| Organize | Add to group… | Put them in a [group](#groups) (or start a new one) |
 | Organize | Duplicate… | Copy them — see [Duplicating checks](#duplicating-checks) |
 | Schedule | Run from… | Run ping/TCP/HTTP/DNS/TLS checks from the engine or a chosen agent |
 | Schedule | Interval… / Retry interval… | Change how often they run (retry: how often while failing; 0 clears) |
@@ -213,11 +254,11 @@ rule…** to alert on every WAN check at once.
 Select checks, then **Actions → Duplicate…** and choose where the copies go:
 
 - **Same place** — a copy next to each original, named `… (copy)`.
-- **To other endpoints** — one copy per picked endpoint. A check tied to a host keeps
-  it only if that host is in the destination; agent checks that need a host are
-  skipped there (copy them to hosts instead).
-- **To other hosts** — one copy per picked host, placed in that host's endpoint. Ideal
-  for "monitor this service on these five servers too".
+- **To other sites** — one copy per picked site. A check tied to an endpoint keeps it
+  only if that endpoint is in the destination site; agent checks that need an endpoint
+  are skipped there (copy them to endpoints instead).
+- **To other endpoints** — one copy per picked endpoint, placed in that endpoint's site.
+  Ideal for "monitor this service on these five servers too".
 
 Copies stay **enabled** and keep each original's **alert rules** (with their channels)
 and **dependencies**, so they start monitoring and alerting straight away.
@@ -239,7 +280,63 @@ a link) to open its own page at `/checks/<id>` — bookmarkable and shareable:
 - **History & incidents** — every alert incident in the range with how long it lasted,
   the latest structured details (interface tables, walk results, matched lines), and
   every result (tick **Only problems** to hide the ups).
-- **Settings** and **Alert rules** tabs — the same editors as the quick panel.
+- **Settings** and **Alert rules** tabs — the same editors as the quick panel. Every
+  part of an existing alert rule can be changed with its **Edit** button.
+- **Exclusions applied** — the exclusion lists and own exclusions this check currently
+  uses (see [Exclusions](#exclusions)).
+
+### Leaving results out of statistics
+
+Sometimes a failure wasn't real — a planned outage you forgot to schedule, a
+misconfigured check, a test. On the check's page you can leave results out of uptime %,
+SLA reports and status pages without deleting them:
+
+- **One result** — click **Exclude** at the end of its row in the result list. It's
+  dimmed and labelled *Excluded from statistics*. **Count again** undoes it.
+- **A time range** — click **Exclude a time range…**, enter the start, end and a reason
+  (shown next to the excluded results), then **Exclude**. Tick the option to count a
+  range again to reverse it.
+
+**Check:** the uptime % at the top of the page changes after the next refresh, and the
+SLA report for that period no longer counts the excluded time. Excluded results are
+still listed (and still in the history) so nothing is hidden.
+
+### Resolving and recovery
+
+A check normally recovers when its next result is healthy. You can also recover it
+yourself, or let something else do it:
+
+- **Resolve… (by hand).** On a failing check's page, its quick panel, or the **Alert
+  history** row, click **Resolve…**, optionally add a note, and click **Resolve**. On
+  the Checks page, tick several and use **Actions → Resolve…**. This records an *up*
+  result now (with who did it and your note), closes the alert incident and sends the
+  usual recovery message. A check that polls (ping, HTTP…) reports its real status again
+  on its next run; a trap/syslog check ignores events from before the moment you
+  resolved it.
+- **A clearing event.** On an **SNMP trap received** or **Syslog message received**
+  check, **Clears when text matches** recovers it straight away when a matching event
+  arrives — e.g. `linkUp` after `linkDown`, or `on line power` after `on battery`.
+- **No new events for a while.** On the same check types (and **Push a value**),
+  **Recover on its own after (minutes)** marks it recovered once no new matching event
+  has arrived for that long.
+- **Another check recovering.** Under **Advanced → Recovers together with**, pick a
+  check; when that one recovers, this one is marked recovered too — e.g. a trap check
+  that should clear when the device's ping check is up again. These can chain.
+- **The recovery URL.** Every check that isn't a heartbeat/push check can have a
+  **Recovery URL** (on its page, under the Overview): another system — a ticketing tool,
+  a repair script — calls it to mark the check recovered:
+
+  ```bash
+  curl -fsS "https://looksee.example.com/api/hb/<token>?status=up&msg=fixed+by+script"
+  ```
+
+  It only accepts *up* — it can't report a failure. The URL is the only credential:
+  **Regenerate** if it leaks (the old one stops working at once) or **Turn off**.
+  Heartbeat and push checks already accept `?status=up` on their own URL.
+
+**Check:** after resolving, the check shows **UP** with your note in the message, its
+incident on **Alert history** shows as resolved, and the channels received a recovery
+message.
 
 ### When a check fails: things to check
 
@@ -253,8 +350,8 @@ default templates). They're starting points, not a diagnosis.
 ### Custom scripts with expected output
 
 The **Custom script** check runs a script that already sits in the agent's `script_dir`
-on that host and checks what it prints. Looksee never sends commands to run — you put
-the scripts on the host (see [agent/README.md](../agent/README.md#custom-scripts)), and
+on that endpoint and checks what it prints. Looksee never sends commands to run — you
+put the scripts on the endpoint (see [agent/README.md](../agent/README.md#custom-scripts)), and
 the check form's **Browse** lists the ones the agent found there.
 
 - **Without an expected output**, the exit code decides: 0 = up, 1 = warn, 2 = down
@@ -285,12 +382,58 @@ spike. 64-bit counters (Counter64, e.g. `ifHCInOctets`) are fully supported.
 **Walk this device…** (in the form, once Host is filled in) shows every value the device
 exposes under an OID — `1.3.6.1.2.1` (standard MIB-2) by default, `1.3.6.1.4.1` for
 vendor values. Search the list and click a row to use its OID; counters switch on
-"report per-second rate" automatically. For an endpoint with a site collector, the walk
-runs from the collector.
+"report per-second rate" automatically. For a site with a site collector, the walk runs
+from the collector.
+
+Looksee has a built-in dictionary of about 170 common OIDs — the standard system,
+interface, storage and UPS values, the Printer MIB, and the counters printers from HP,
+Brother, Canon, Ricoh, Xerox, Kyocera, Lexmark and Konica Minolta keep in their own
+part of the tree. In the walk results:
+
+- **Name** shows what a known OID is (e.g. `ifHCInOctets`, `prtMarkerSuppliesLevel`),
+  and for other vendor OIDs which company they belong to (e.g. *Brother (enterprise
+  2435)*).
+- **Value** is shown readably where Looksee knows how: uptime as days and hours, sizes
+  with units, status numbers as words (`1` → *up*, `3` → *on battery*).
+- **Look up an OID by name** searches the dictionary without walking — type
+  `ifHCInOctets`, `battery`, `toner` or `sysUpTime` and click **Search**. If the name
+  isn't there, walk the device and look for the value instead.
+- **Add to Extra OIDs** (the **+ extra** button on a row) adds that OID to the check's
+  *Extra OIDs* list for the calculation below, instead of making it the main OID.
+
+### SNMP: calculating a value
+
+Under **Advanced** on an SNMP value check:
+
+- **Calculate** does maths on the value read, after *Multiply by*: `value / 10`,
+  `value * 8 / 1e6` (bytes/s to Mbit/s), `round(value / 1024, 1)`. Allowed: `+ - * / %
+  ^`, brackets, and `min max abs round floor ceil sqrt log10`. Nothing else is accepted
+  — it's a calculator, not code.
+- **Extra OIDs (name = OID)** reads more values from the same device in the same poll,
+  one per line, for **Calculate** to use by name. `rate(…)` turns a counter into a
+  per-second rate. With extra OIDs, the main OID is optional. Example — a disk's
+  percentage used from two values:
+
+  ```text
+  used = 1.3.6.1.2.1.25.2.3.1.6.1
+  size = 1.3.6.1.2.1.25.2.3.1.5.1
+  ```
+
+  with **Calculate** `used / size * 100` and a **Unit label** of ` %`.
+- **ref** in the expression stands for another check's latest value, picked under
+  **ref = this check's latest value** — e.g. a counter as a percentage of a capacity
+  another check reads.
+
+The calculated number becomes the check's value, so thresholds, charts and SLA reports
+all use it. **Check:** click **Run now**; the result's value is the calculated number,
+and a mistake (an unknown name, division by zero) shows as **unknown** with the reason.
+To combine values from *different* devices or check types, use a
+[Calculated value](#calculated-values) check instead.
 
 ### Printers
 
-Three SNMP templates cover printers:
+Apply the **Printer** [SNMP template](#snmp-templates) for your brand to get all of the
+checks below at once, plus page counts. Individually, three presets cover printers:
 
 - **Printer: lowest toner/ink %** — supply levels from the Printer MIB.
 - **Printer: errors** — paper jams, no paper, door open, offline, no toner, service
@@ -303,6 +446,71 @@ Three SNMP templates cover printers:
   so if yours doesn't. For printers without it, the Windows print server's event log
   (*Microsoft-Windows-PrintService/Operational*, event IDs 372 and 805) can be watched
   with a **Windows Event Log** check on the print server.
+
+### Software and security checks
+
+Agent 5.0 reports the software installed on each endpoint — Debian/Ubuntu, RPM, Alpine
+and Arch packages, Windows programs, macOS apps, global npm and pip packages, and the
+Node.js/Python/PHP runtimes — about once a day, or sooner when it changes. Three check
+types use it:
+
+- **Upgradable packages** — the packages with updates waiting. **Fail when** a security
+  update is waiting (the default), any update is, or never (just report). The result
+  lists the packages. Ubuntu **phased updates** — updates Ubuntu holds back from most
+  machines while it rolls them out gradually, which `apt` won't install yet anyway — are
+  left out unless you tick **Advanced → Include Ubuntu phased updates**. Packages you
+  exclude (e.g. `linux-image-*`) aren't counted or shown.
+- **Installed software changed** — alerts when software is installed, removed or changes
+  version, with the list of what changed. Limit it to some sources with **Only watch**,
+  and add **lock files** under Advanced to watch an application's own dependencies.
+- **Vulnerable or unsupported software** — looks every package up on
+  [OSV.dev](https://osv.dev) (known vulnerabilities) and the OS and runtimes on
+  [endoflife.date](https://endoflife.date) (support end dates). Set the severity that
+  warns and the one that's down, and whether an unsupported OS or runtime is warn or
+  down (and how many days before its end of life to start warning). **Accepted risks**
+  takes one item per line — a package name or an advisory ID, then `#` and why:
+
+  ```text
+  libssl1.1 # needed by the old ERP client until it's replaced in March
+  CVE-2024-1234 # the vulnerable feature isn't used here
+  ```
+
+  Reasons are shown with every result, so the next person sees why it was accepted.
+  **Also check lock files** adds `package-lock.json`, `npm-shrinkwrap.json`,
+  `Pipfile.lock`, `requirements.txt` or `composer.lock` files on that endpoint (only
+  files with those names are read).
+
+  **Privacy:** this check sends package names and versions (never hostnames or
+  addresses) from the Looksee server to OSV.dev and endoflife.date. Untick both lookups
+  under Advanced to keep everything local. Results are cached (vulnerabilities for 7
+  days, end-of-life dates for 1 day), so the lookups are light.
+
+**Check:** on an endpoint running agent 5.0, add **Upgradable packages**; the result
+names the waiting packages within a few minutes. On Ubuntu, compare with
+`apt list --upgradable` — phased ones show there as *deferred due to phasing* when you
+run `sudo apt-get -s upgrade`.
+
+There are also ready-made **security baselines** for Windows, Linux and macOS (antivirus,
+firewall, disk encryption, security updates, vulnerable software, failed and new
+sign-ins, and on Windows audit-log clearing and new admin accounts) — see
+[Suggested checks and templates](#suggested-checks). The **OS service** check's
+**Advanced → Should be: Stopped** makes a check that a risky or unneeded service (Telnet,
+Remote Registry) stays off.
+
+### Calculated values
+
+A **Calculated value** check works out a number from up to four other checks' latest
+values — UPS load in watts from load % and capacity, two disks' combined free space,
+the difference between two temperature sensors.
+
+1. Add a check of type **Calculated value**.
+2. Pick the checks under **a =**, **b =**, **c =** and **d =** (only the ones you use).
+3. Enter the **Expression**, e.g. `a / 100 * b`. The same operators and functions as SNMP
+   **Calculate** are allowed.
+4. Optionally set a **Unit label** and thresholds.
+
+If an input is older than **Inputs must be newer than (minutes)** (15 by default), the
+result is **unknown** instead of a number worked out from stale data.
 
 ### Check type reference
 
@@ -317,51 +525,67 @@ brief:
 | Databases & apps | Database (PostgreSQL, MySQL/MariaDB, SQL Server, Redis, MongoDB), Prometheus metric, web server status page, app integrations |
 | Network devices & hardware | SNMP value/template (incl. printers, UPS), SNMP interfaces, trap/syslog received, server hardware (Redfish/IPMI) |
 | Virtualization & containers | Proxmox VE, VMware, Hyper-V (agent), Docker (agent) |
-| Host metrics (agent) | Host metric (60+), disk forecast, reboot detection, change detection, agent online |
+| Endpoint metrics (agent) | Endpoint metric (60+), disk forecast, reboot detection, change detection, agent online |
+| Software & security (agent) | Upgradable packages, installed software changed, vulnerable or unsupported software |
 | Services, files and OS (agent) | OS service, process, failed/stopped services, scheduled task/timer, custom script, file/folder, log file, journal, Windows Event Log, perf counter, VPN tunnel, UPS, backup job |
-| Push & smart | Heartbeat, push a value, anomaly |
+| Push & smart | Heartbeat, push a value, calculated value, anomaly |
 
-## Hosts
+## Endpoints
 
-**Monitoring → Hosts** lists every host: online/offline (from its last report), address,
-MAC and OS, agent version (with "update available" when the engine has a newer build),
-how many checks it has and how many have problems. Filter by location, endpoint or text
-(name, IP, MAC, OS, tag).
+An **endpoint** is one device: a server, PC, switch, printer, UPS, camera. **Monitoring →
+Endpoints** lists every one: online/offline (from its agent's last report, for endpoints
+with an agent), address, MAC and OS, agent version (with "update available" when the
+engine has a newer build), how many checks it has and how many have problems. Filter by
+location, site or text (name, IP, MAC, OS, tag). Click a name to open the endpoint's own
+page (also reachable from the sidebar tree) with everything under it.
 
-**Adding a host and installing the agent:**
+An endpoint doesn't need the agent. A printer, switch or UPS is an endpoint with SNMP,
+ping or HTTP checks against its address; the agent adds everything that has to be read
+from inside the machine.
 
-1. Click **+ Add host**, enter a name (and optionally address, OS, MAC address), choose
-   the endpoint, and click **Add host**.
-2. The host opens. Go to its **Agent** tab and click **Generate install command**.
-3. Copy the command for the host's OS — it's shown **once** — and run it on that machine
+**Adding an endpoint and installing the agent:**
+
+1. Click **+ Add endpoint**, enter a name (and optionally hostname/IP, OS, MAC address),
+   choose the site, and click **Add endpoint**.
+2. For a device without the agent, you're done — add checks to it. To install the agent,
+   open the endpoint, go to its **Agent** tab and click **Generate install command**.
+3. Copy the command for the endpoint's OS — it's shown **once** — and run it on that machine
    in an elevated terminal (`sudo` on Linux/macOS, Administrator PowerShell on Windows).
    On Windows, see [windows-agent-security.md](windows-agent-security.md) if Smart App
    Control, SmartScreen or antivirus blocks it.
-4. Within about 30 seconds the host shows **online** and its **Overview** tab fills in.
+   On Linux the installer gives the agent the read access it needs by default (system
+   logs, the journal, Docker, SMART) while it still runs as its own unprivileged user —
+   see [agent/README.md](../agent/README.md#privileges) for what that means and the
+   `--minimal` option.
+4. Within about 30 seconds the endpoint shows **online** and its **Overview** tab fills
+   in.
 
-**A host's tabs:**
+**An endpoint's tabs:**
 
 - **Overview** — live CPU, memory, load, uptime, every filesystem, every network
   interface (link, speed, traffic, **MAC address**, addresses), firewall/encryption/
   update/clock/Defender state, drives (SMART), RAID/pools, temperatures, and hardware
   inventory.
-- **Checks** — the checks on this host and their status (click one for its page).
-- **Suggested checks** — see [Suggested checks](#suggested-checks).
+- **Checks** — the checks on this endpoint and their status (click one for its page).
+- **Suggested checks** — suggestions and templates; see
+  [Suggested checks and templates](#suggested-checks).
 - **Processes** and **Services** — see below.
 - **IP history** — see [MAC addresses and IP changes](#mac-addresses-and-ip-changes).
 - **Agent** — version, **Update agent** (it updates itself on its next check-in), and
   regenerating the install command.
-- **Edit** — name, endpoint, address, OS, MAC address, tags.
+- **Watchdog** — have this endpoint's agent tell you when *Looksee itself* is
+  unreachable; see [Watchdog agents](#watchdog-agents).
+- **Edit** — name, site, address, OS, MAC address, tags.
 - **Wake (WoL)** — shown when a MAC address is set; sends a Wake-on-LAN packet from the
   engine (or the site collector for a remote site).
 
-**Bulk actions** (tick hosts, then **Actions ▴**): add suggested checks (with an alert
-rule if you like), enable/disable their checks, maintenance, update agents, wake, move
-to an endpoint (their checks move too), add or remove tags, or delete.
+**Bulk actions** (tick endpoints, then **Actions ▴**): add suggested checks (with an
+alert rule if you like), enable/disable their checks, maintenance, update agents, wake,
+move to a site (their checks move too), add to a group, add or remove tags, or delete.
 
 ### Processes and services
 
-Agent 4.0+ keeps a full inventory of each host, refreshed about every 5 minutes:
+Agent 4.0+ keeps a full inventory of each endpoint, refreshed about every 5 minutes:
 
 - **Processes** — every running process with PID, user, CPU %, memory and command line.
   Search, and sort by memory, CPU or name.
@@ -375,16 +599,16 @@ a check. Older agents report names only; update them from the Agent tab.
 ### MAC addresses and IP changes
 
 Looksee records which IP address each MAC address was seen with, from three sources: the
-agent's own interface list, discovery scans, and ARP checks. On a host:
+agent's own interface list, discovery scans, and ARP checks. On an endpoint:
 
 - The **Overview** interface table shows each interface's MAC.
-- **IP history** lists every IP each of the host's MACs has had, when it was first and
+- **IP history** lists every IP each of the endpoint's MACs has had, when it was first and
   last seen, and where the sighting came from.
-- The host's **MAC address** is filled in automatically from the agent the first time
+- The endpoint's **MAC address** is filled in automatically from the agent the first time
   (never overwriting one you entered), which also enables Wake-on-LAN.
 
 To be **alerted when an IP changes**, add an **IP address change (by MAC)** check: pick
-the host (it watches all of the host's MACs) or enter a MAC. When a MAC appears at a new
+the endpoint (it watches all of its MACs) or enter a MAC. When a MAC appears at a new
 address the check goes warn (or down) for the hold period — long enough for an alert
 rule to fire — with a message like `IP changed: aa:bb:… changed from 10.0.0.23 to
 10.0.0.57`. Its value is the number of changes in the last 24 hours. IPv6 is ignored
@@ -393,8 +617,9 @@ a known device by its MAC even after its IP changed.
 
 ### Suggested checks
 
-A host's **Suggested checks** tab recommends checks from everything the agent found,
-grouped:
+An endpoint's **Suggested checks** tab recommends checks from everything the agent found
+— running services, processes, installed packages, listening ports — and leaves out
+what's already monitored there. Grouped:
 
 - **Health & resources** — CPU, memory, swap, load, each real disk (usage, inodes,
   read-only, forecast), each physical interface, SMART, RAID/ZFS, updates, reboot
@@ -406,38 +631,163 @@ grouped:
 - **Containers** — every Docker container (up to 25 by name) plus restart loops.
 - **Logs** — unexpected shutdowns, service crashes and disk errors (Windows), critical
   journal entries (Linux).
-- **Network reachability** — for each well-known port the host listens on, a check from
-  Looksee that the service answers over the network (HTTP/HTTPS + certificate, SSH,
-  database ports, RDP, SMB, MQTT, Proxmox, …), plus ping.
+- **Network reachability** — for each well-known port the endpoint listens on, a check
+  from Looksee that the service answers over the network (HTTP/HTTPS + certificate, SSH,
+  database ports, RDP, SMB, MQTT, Proxmox, …), plus ping. An existing HTTPS check gets a
+  matching certificate-expiry suggestion.
+- **Software** — upgradable packages, software changes and vulnerable software, for
+  agents that report installed software.
 
 Untick anything you don't want, optionally choose **Alerts for the new checks** (the
 same options as any alert rule), and click **Add N checks**. Already-added suggestions
 disappear from the list.
 
-## Endpoints
+**Templates.** Below the suggestions are ready-made sets of checks for what a machine
+*does*:
 
-**Monitoring → Endpoints & locations** shows endpoints grouped by **location**, each
-location with a status summary.
+- **Server roles** — web server, database server, DNS, mail, file server, domain
+  controller, hypervisor, Docker host, backup server, print server.
+- **Security baselines** — Windows, Linux and macOS (see
+  [Software and security checks](#software-and-security-checks)).
+
+A template marked **✓ looks like this** matches software the agent found running (only
+running, enabled services count); any template can be applied anyway. Each shows how many
+checks it would add and how many are already there; open **What it adds** to see them,
+then click **Apply**. Checks the endpoint already has are skipped. **Check:** the endpoint's **Checks** tab lists the new checks, and they report
+within one interval.
+
+For network devices without an agent, use an [SNMP template](#snmp-templates) instead.
+
+## Sites
+
+**Monitoring → Sites & locations** shows sites grouped by **location**, each location
+with a status summary. A site is a network at a place ("Home LAN", "Office VLAN 20",
+"Client A"); endpoints and checks belong to a site, and through it to its location.
 
 **Locations:**
 
 1. Click **+ Add location**, enter a name (and optionally an address and notes), tick
-   the endpoints (networks) at that place, and **Save**.
-2. From a location's **Location** menu: edit it and its endpoints, start **maintenance
-   for the whole location** (every check in every endpoint there), view its checks, or
-   delete it (its endpoints stay, just without a location).
-3. Filter the Checks, Hosts and Alert history pages by location, and group the Checks
-   page by location.
+   the sites (networks) at that place, and **Save**.
+2. From a location's **Location** menu: **Edit / choose sites…**, start **Maintenance for
+   this location…** (every check in every site there), view its checks, or **Delete
+   location…** (its sites stay, just without a location).
+3. Filter the Checks, Endpoints and Alert history pages by location, and group the
+   Checks page by location.
 
-**Endpoints:** **+ Add endpoint** or **Edit** to name, describe and place them (pick a
+**Sites:** **+ Add site** or **Edit** to name, describe and place them (pick a
 **Location**). Bulk actions: **Maintenance…**, **Enable/Disable all checks**, **Set
-location…**, **Merge into…** (moves every host and check into another endpoint, then
-removes the emptied ones), and **Delete…** (deletes their hosts and checks too — type
+location…**, **Merge into…** (moves every endpoint and check into another site, then
+removes the emptied ones), and **Delete…** (deletes their endpoints and checks too — type
 `delete` to confirm; use Merge if you want to keep them).
 
-An endpoint at another site can have a **site collector** and **public IPs** — see the
-next section. Its row then shows the collector's state and the IPs it accepts direct
-pushes from.
+A site at another place can have a **site collector** and **public IPs** — see
+[Multiple sites](#multiple-sites). Its row then shows the collector's state and the IPs
+it accepts direct pushes from.
+
+**A site's page** (click it in the sidebar tree) lists its endpoints and checks with
+their status, and **Suggested checks** — checks worked out from the site's name
+and description, its endpoints and the checks it already has (for example a gateway ping
+and DNS check for a site with none, or certificate checks for its web servers). Untick
+anything you don't want and click **Add N checks**.
+
+## Groups
+
+A **group** is your own set of things, across the whole tree — "Domain controllers",
+"Client A's printers", "Everything tagged `backup`". **Monitoring → Groups** lists them;
+they also appear at the bottom of the sidebar tree with their status.
+
+1. Click **+ New group**, enter a name (and optionally a description) and choose a kind:
+   - **Manual — I'll pick the members.** Any mix of locations, sites, endpoints and
+     checks. Add members on the group's page (**Add members**), or with **Add to group**
+     on any location, site, endpoint or check page, or **Actions → Add to group…** on
+     the Checks and Endpoints lists. A member that's a location, site or endpoint brings
+     everything under it.
+   - **Filter — members match rules, automatically.** Choose what the group selects
+     (locations, sites, endpoints or checks), whether **all of** or **any of** the
+     conditions must match, and add conditions such as *Tag is `backup`*, *Operating
+     system contains `Windows`*, *Check type is `ping`*, *Site name starts with
+     `Client A`*, *Status is `down`*. Comparisons ignore case. **Matching now** shows
+     what the rules select as you edit; membership is worked out again every time it's
+     used, so new endpoints that match join automatically.
+2. Click **Create group**. **Check:** the group's page lists its members and **Covers** the
+   checks under them.
+
+On a group's page:
+
+- **Maintenance…** — a window for N minutes covering whatever is in the group *while it
+  runs*. Scheduled windows on the Maintenance page can target groups too.
+- **Add alert rule…**, **Run now**, **Enable**, **Disable** — applied to every check the
+  group covers.
+- **Rename…** and **Delete group** — deleting removes only the group; its members are
+  not touched, and maintenance windows aimed at it stop applying.
+
+[Exclusion lists](#exclusions) can apply to the checks of chosen groups.
+
+## Exclusions
+
+Some things a check sees are noise you never want to hear about — a `/snap/*` mount, a
+`veth*` Docker interface, Windows event 10016, a `*-migrate` container that exits on
+purpose. Exclusions make checks ignore them.
+
+**Inside one check:** most checks that look at several items have an **Exclude …**
+field under Advanced (mounts, interfaces, disk devices, sensors, services, containers,
+VMs, packages, event IDs, message texts), one item per line.
+
+**Reusable lists:** **Alerting → Exclusions** holds lists you write once and apply to
+many checks.
+
+1. Click **+ New exclusion list** and name it.
+2. Choose **What the items are**: message texts, Windows event IDs, mount points /
+   drives, network interfaces, disk devices, sensors and fans, services, Docker
+   containers, Hyper-V virtual machines, or packages. The kind decides which check types
+   the list affects.
+3. Enter the **Items (one per line)**. Names are whole names with case ignored; `*`
+   matches anything and `?` one character (`veth*`, `loop?`). Message texts match
+   anywhere in the message.
+4. Choose where it applies: **All checks that use this kind of item**, or only the checks
+   of chosen **groups**.
+5. Click **Create list**. Lists can be turned off and on without deleting them.
+
+**Check:** open an affected check — its page shows **Exclusions applied** with each list
+and item it's using. The next result leaves those items out (agent checks pick the change
+up within about a minute, on the agent's next configuration refresh).
+
+Exclusions affect what a check *sees*. To leave a whole result out of uptime and SLA
+figures after the fact, see [Leaving results out of statistics](#leaving-results-out-of-statistics).
+
+## SNMP templates
+
+An SNMP template is a set of SNMP checks for one kind of device — "everything I check on
+a Brother printer", "the usual UPS checks". Apply it to a device and Looksee creates
+every check at once, with your thresholds. **Monitoring → SNMP templates** has:
+
+- **Built-in** templates: printers (any brand, plus HP, Brother, Canon, Ricoh, Xerox,
+  Kyocera, Lexmark, Epson, Konica Minolta, Sharp, OKI, Samsung and Toshiba with their own
+  page counters), UPS (standard and APC), Synology NAS, Linux and other Net-SNMP
+  machines, Cisco, Dell iDRAC, and any switch (every port). They're read-only; **Copy**
+  one to change it.
+- **Your templates** — click **+ New template** (or **Copy** a built-in one). For each
+  check give a name and choose what it reads — a single OID, a walk, a preset, or every
+  port — with optional calculation, extra OIDs, unit and thresholds (the same options as
+  an [SNMP check](#snmp-calculating-a-value)). **Suggest for devices whose sysObjectID
+  starts with** takes a vendor's OID prefix (e.g. `1.3.6.1.4.1.2435` for Brother) so
+  Discovery suggests the template for matching devices.
+
+**Applying a template:**
+
+1. Click **Apply to a device…** on a template.
+2. Choose the **Site**, optionally the **Endpoint** the device is (its checks then show
+   on its page and its hostname is used), the **Address**, and the SNMP version and
+   credentials (community for v1/v2c; user, auth and privacy settings for v3).
+3. Under **Create these checks**, untick any you don't want, and confirm.
+
+**Check:** the new checks appear on the Checks page and report within one interval. A
+check that reads something the device doesn't have turns **unknown** with "no such
+object" — delete it or fix the OID in your own copy of the template.
+
+**From Discovery:** a scanned device whose SNMP sysObjectID matches a template shows
+**SNMP template: …** — click it to open that template's Apply dialog with the address
+filled in.
 
 ## Multiple sites
 
@@ -446,7 +796,7 @@ they only reach the Looksee server's network. For another location — a branch 
 client site, a relative's house — you have two options, and you can use both:
 
 - **A site collector (recommended).** Pick one always-on machine at the site that runs
-  the Looksee agent. Its agent also runs a *site collector*: it runs that endpoint's
+  the Looksee agent. Its agent also runs a *site collector*: it runs that site's
   network checks from inside the site, receives the site's syslog, SNMP traps and flows,
   and runs its discovery scans, SNMP walks and Wake-on-LAN. Everything goes back to your
   Looksee server as outbound HTTPS — **no port forwarding or VPN at the site**.
@@ -458,25 +808,26 @@ client site, a relative's house — you have two options, and you can use both:
 
 1. **Install the agent (3.2.0 or newer) on a machine at the site** that stays on — a
    small Linux box, a NAS that runs containers, a Windows PC. Use the normal install
-   command from **Monitoring → Hosts** (see [agent/README.md](../agent/README.md)); put
-   the host in the site's endpoint. The machine only needs outbound HTTPS to your Looksee
-   server. **Check:** the host shows **online** on the Hosts page with agent v3.2.0+.
-2. Open **Monitoring → Endpoints & locations**, click **Edit** on the site's endpoint,
-   choose the host under **Site collector**, and **Save**.
+   command from **Monitoring → Endpoints** (see [agent/README.md](../agent/README.md));
+   put the endpoint in that site. The machine only needs outbound HTTPS to your Looksee
+   server. **Check:** the endpoint shows **online** on the Endpoints page with agent
+   v3.2.0+.
+2. Open **Monitoring → Sites & locations**, click **Edit** on the site, choose the
+   endpoint under **Site collector**, and **Save**.
 3. Within about 30 seconds the agent downloads the collector — a Node.js runtime (about
    45 MB, once) and the collector itself (13 MB) — from *your* Looksee server, checks
-   each file's SHA-256, and starts it. **Check:** the endpoint row reads
-   `Site collector: <host> — online (v4.0.0)`, and the host's row on the Hosts page reads
-   `Site collector for <endpoint> — online`. "Waiting to start" means the agent is older
+   each file's SHA-256, and starts it. **Check:** the site row reads
+   `Site collector: <endpoint> — online (v5.0.0)`, and the endpoint's row on the Endpoints
+   page reads `Site collector for <site> — online`. "Waiting to start" means the agent is older
    than 3.2.0 or hasn't polled yet; "not running — …" shows the reason (e.g. the
    collector hasn't been built on the server — see the deployment guide).
-4. **Add checks to that endpoint as usual.** Ping, TCP, HTTP, SNMP, DNS, certificates and
+4. **Add checks to that site as usual.** Ping, TCP, HTTP, SNMP, DNS, certificates and
    every other network type now run from the site. In **Monitoring → Checks** they read
-   `via site collector <host>`. **Run now** queues the run on the collector; the result
+   `via site collector <endpoint>`. **Run now** queues the run on the collector; the result
    appears within about 15 seconds.
-5. **Point the site's devices at the collector host's LAN address** for anything they
+5. **Point the site's devices at the collector machine's LAN address** for anything they
    push: syslog to UDP/TCP **1514**, SNMP traps to UDP **1162**, NetFlow/IPFIX to UDP
-   **2055**, sFlow to UDP **6343**. Allow those from the LAN in the collector host's
+   **2055**, sFlow to UDP **6343**. Allow those from the LAN in the collector machine's
    firewall, e.g. on Linux with ufw (replace the range with the site's LAN):
 
    ```bash
@@ -498,17 +849,18 @@ client site, a relative's house — you have two options, and you can use both:
    `logger -n <collector-ip> -P 1514 -d "looksee test"`.
 6. **Discovery, SNMP walks and Wake-on-LAN** follow automatically: on **Monitoring →
    Discovery**, choose the site under **Scan from**; **Walk this device…** and **Wake
-   (WoL)** for that endpoint run on the collector.
+   (WoL)** for that site run on the collector.
 
 To stop using a collector, set **Site collector** back to **Looksee server**; the agent
-stops the collector within about 15 seconds and the endpoint's checks run from the
-server again. A collector host can serve several endpoints at the same physical site.
+stops the collector within about 15 seconds and the site's checks run from the server
+again. A collector endpoint can serve several sites (networks) at the same physical
+place.
 
 **Standard ports 514/162 on a Linux collector.** The Linux agent runs as an unprivileged
 user, so by default the collector listens on 1514/1162. Most devices let you set the
 port. If one can't, set `COLLECTOR_SYSLOG_PORT=514` and/or `COLLECTOR_TRAP_PORT=162` in
 `engine/.env` on the Looksee server (applies to every collector) and, on each Linux
-collector host, allow binding low ports:
+collector machine, allow binding low ports:
 
 ```bash
 sudo mkdir -p /etc/systemd/system/looksee-agent.service.d
@@ -526,10 +878,10 @@ collectors run as SYSTEM/root and need nothing extra.
 |---|---|
 | Every network check type: ping, TCP, HTTP, DNS, certificates, SNMP, interfaces, UDP, protocols, email round-trip, databases, traceroute, real browser, NTP, DHCP, gRPC, MQTT, WebSocket, registries, ARP presence, domain expiry, public IP, IPMI/Redfish, Proxmox, VMware, Prometheus, web-server status, app integrations | **Trap/Syslog received** checks (they match the events the collector forwards), heartbeats and pushed values, anomaly, agent heartbeat, disk forecast, IP address change |
 | Receiving syslog, traps, NetFlow/IPFIX/sFlow | Alerting, history, dashboards, reports |
-| Discovery scans, SNMP walks and Wake-on-LAN for that endpoint | |
+| Discovery scans, SNMP walks and Wake-on-LAN for that site | |
 
-Agent checks (services, files, logs, …) always run on their own host's agent, wherever
-it is. **Real browser** checks on a collector need Chrome/Chromium on the collector host;
+Agent checks (services, files, logs, …) always run on their own endpoint's agent,
+wherever it is. **Real browser** checks on a collector need Chrome/Chromium on the collector machine;
 **traceroute** needs `traceroute`/`tracert` there.
 
 ### When a collector goes offline
@@ -538,25 +890,25 @@ it is. **Real browser** checks on a collector need Chrome/Chromium on the collec
   configuration (it survives a restart too) and buffers up to 5,000 results and 20,000
   events, sending them when the connection returns.
 - If the server hears nothing from a collector for 3 minutes (or 3 check intervals,
-  whichever is longer), that endpoint's collector-run checks turn **Unknown** with
+  whichever is longer), that site's collector-run checks turn **Unknown** with
   "Site collector on … is offline since …" — so a dead site doesn't look healthy. Add an
-  **Agent online** check on the collector host to be alerted when that happens.
+  **Agent online** check on the collector machine to be alerted when that happens.
 - If the collector process crashes, the agent restarts it after 5 seconds (backing off
-  to a minute if it keeps failing); the reason shows on the Endpoints and Hosts pages.
+  to a minute if it keeps failing); the reason shows on the Sites and Endpoints pages.
 
 ### Direct push without a collector
 
 For a site where you can't (or don't want to) run an agent, its devices can send
 syslog/traps/flows straight to your Looksee server:
 
-1. **Monitoring → Endpoints & locations → Edit** the site's endpoint and enter its
-   public (WAN) IP address(es) under **Public IPs**, comma-separated. Save.
+1. **Monitoring → Sites & locations → Edit** the site and enter its public (WAN) IP
+   address(es) under **Public IPs (direct push)**, comma-separated. Save.
 2. At the **Looksee server's** location, forward UDP 1514, 1162, 2055, 6343 and TCP 1514
    from your router to the Looksee server, and allow them in the server's firewall *from
    those public IPs only* — see [deployment guide §5](deployment-guide.md#5-firewall).
 3. Point the site's devices at your Looksee server's public address on those ports.
 
-**Check:** messages appear under **Insights → Traps & syslog** with the endpoint's name
+**Check:** messages appear under **Insights → Traps & syslog** with the site's name
 under the sender's IP. Know the trade-offs: the traffic crosses the internet
 unencrypted, and devices behind the site's NAT all appear as the site's public IP (the
 syslog hostname still tells them apart). A site collector avoids both.
@@ -575,11 +927,13 @@ one.
    of ports (SSH, HTTP(S), SMB, RDP, printers, Proxmox, databases), because many devices
    ignore ping. It then looks up names, MAC addresses and SNMP descriptions. Every
    MAC/IP pair found is recorded for [IP change tracking](#mac-addresses-and-ip-changes).
-3. For each device, tick **Create host** and whichever suggested checks you want (ping,
-   HTTPS + certificate, SSH, RDP, SNMP interfaces, printer toner, Proxmox…). Devices
-   already in Looksee — matched by MAC address, hostname or IP — are labelled and start
-   unticked.
-4. Choose the endpoint at the bottom, click **Alerts:** to attach an alert rule to the
+3. For each device, tick **Create endpoint** and whichever suggested checks you want
+   (ping, HTTPS + certificate, SSH, RDP, SNMP interfaces, printer toner, Proxmox…).
+   Devices already in Looksee — matched by MAC address, hostname or IP — are labelled
+   *already an endpoint* and start unticked. A device whose SNMP identity matches an
+   [SNMP template](#snmp-templates) shows **SNMP template: …** — click it to apply the
+   whole set.
+4. Choose the site at the bottom, click **Alerts:** to attach an alert rule to the
    checks you add (optional), and click **Add selected**.
 
 A scan only sees networks reachable from where it runs. MAC addresses are only available
@@ -635,7 +989,7 @@ a field blank to use the default. Insert any of these variables:
 | `{{status}}` | UP, DOWN, WARN or UNKNOWN |
 | `{{message}}` | The check's latest result message |
 | `{{event}}` | triggered, resolved, reminder or escalated |
-| `{{host}}`, `{{endpoint}}`, `{{location}}` | Where it is (blank if none) |
+| `{{endpoint}}`, `{{site}}`, `{{location}}` | Where it is (blank if none). `{{host}}` is the same as `{{endpoint}}` |
 | `{{type}}` | Check type |
 | `{{time}}` | When it happened |
 | `{{duration}}` | How long the incident has been open |
@@ -643,11 +997,12 @@ a field blank to use the default. Insert any of these variables:
 | `{{url}}` | Link to the check's page in Looksee |
 
 The editor shows a live preview with sample data. Empty variables disappear cleanly
-(no dangling "Host: ·").
+(no dangling "Endpoint: ·").
 
 ## Alerts, escalation, and dependencies
 
-**Alert rules** live on each check's **Alerts** tab, in the **Alerts** section when
+**Alert rules** live on each check's **Alerts** tab (click **Edit** on a rule to change
+any part of it), in the **Alerts** section when
 adding checks (also on suggested checks and discovery), or are added to many checks with
 the bulk action. A rule has:
 
@@ -677,11 +1032,12 @@ Looksee also holds alerts back automatically when:
 its check recovered:
 
 - Range chips (24 hours to 1 year) and **All / Open / Resolved**.
-- Filters for **location**, **endpoint**, **host**, and a search over check names and
+- Filters for **location**, **site**, **endpoint**, and a search over check names and
   messages.
 - A summary line: how many incidents, how many still open, and total problem time.
 - Each row: status, the check (click for its page), where it is, when it started, how
-  long it lasted, and the alert message.
+  long it lasted, and the alert message. An open incident has **Resolve** — see
+  [Resolving and recovery](#resolving-and-recovery).
 
 A single check's incidents are also on its own page. Incidents only exist for checks with
 an alert rule.
@@ -697,20 +1053,23 @@ recording results, but no alerts are sent and SLA reports leave that time out.
    browser that scheduled it, so "Sunday 02:00" stays 02:00 where you are whatever the
    server's clock is set to. A weekly window from another zone shows that zone's name
    next to its time; one created before 4.2 says *(server's time)*.
-3. Choose what it applies to: everything, chosen endpoints, chosen hosts (including
-   checks their agents run), or chosen checks.
+3. Choose what it applies to: everything, chosen sites, chosen endpoints (including
+   checks their agents run), chosen [groups](#groups) (whatever is in them while the
+   window runs), or chosen checks.
 4. Click **Schedule**. While active it's marked **active now**, and affected checks show
    **MAINTENANCE**.
 
-For an unplanned job, use the **Maintenance…** bulk action on the Checks, Hosts or
-Endpoints page, or a location's **Maintenance for this location…** — it starts a window
+For an unplanned job, use the **Maintenance…** bulk action on the Checks, Endpoints or
+Sites page, a group's **Maintenance…**, or a location's **Maintenance for this
+location…** — it starts a window
 right now for N minutes. **End now** closes a one-time window early; weekly windows can
 be turned off and on.
 
 ## SLA reports
 
 **Insights → SLA reports** shows each check's uptime over the last 1, 7, 30, 90 or 365
-days, optionally for one endpoint.
+days, optionally for one site. Results you
+[left out of statistics](#leaving-results-out-of-statistics) don't count.
 
 - **Uptime** is time-weighted: each result counts for the time until the next one, so a
   check that's down for 10 minutes loses 10 minutes whatever its interval.
@@ -758,7 +1117,7 @@ family, clients, or colleagues.
 3. Save, then **Open public page**. The page lives at `https://<your-looksee>/status/<slug>`.
 
 Visitors see only an overall banner, each check's name and current state, and 90 days
-of daily uptime bars — never hosts, addresses, or messages. Untick **Published** to take
+of daily uptime bars — never endpoints, addresses, or messages. Untick **Published** to take
 a page offline without deleting it.
 
 ## Dashboards and widgets
@@ -768,19 +1127,21 @@ The home page holds one or more **dashboards**, each a grid of widgets you can r
 its own auto-refresh interval.
 
 **Adding widgets:** click **+ Add widget**, pick the widget type from the cards, then
-pick what it shows from a searchable list (filter by endpoint; checks also match by type
-and host). For status tiles, uptime history and host widgets you can tick **several** —
+pick what it shows from a searchable list (filter by site; checks also match by type
+and endpoint). For status tiles, uptime history and endpoint widgets you can tick
+**several** —
 one widget is added for each. The list doesn't move or refresh while you're choosing.
 
 Widget types:
 
 - **Status tile** — one check's status, latest problem message and recent history.
-- **Problems right now** — counts by status for one endpoint (or everything) plus what's
+- **Problems right now** — counts by status for one site (or everything) plus what's
   down or warning.
-- **Endpoint summary** — a whole endpoint's checks at a glance.
+- **Site summary** — a whole site's checks at a glance.
 - **Uptime history** — one check's uptime % and latency over a chosen range.
-- **Host metrics** / **Network bandwidth** — a host's CPU/RAM/disk or RX/TX sparklines.
-- **All hosts** — every host's online/offline state.
+- **Endpoint metrics** / **Network bandwidth** — an endpoint's CPU/RAM/disk or RX/TX
+  sparklines.
+- **All endpoints** — every agent endpoint's online/offline state.
 - **Top talkers** — the busiest network conversations (needs flow data).
 - **Alert history**, **Backup status**, **Clock**, **Note**, **Section header**.
 
@@ -831,11 +1192,37 @@ The URLs contain the service's secret token, so they're never shown again once s
 Prefer a service that polls you instead (UptimeRobot, Better Stack)? Point an HTTPS
 monitor at `https://<your-looksee>/api/health` with the keyword `"status":"ok"`.
 
+### Watchdog agents
+
+The watchdog above needs an outside service. **Watchdog agents** use your own machines
+instead: the agent on an endpoint (ideally at a *different* place from the Looksee
+server — a relative's PC, an office server) checks every minute that it can reach
+Looksee, and if it can't for a while, it sends the alert itself, straight from that
+machine.
+
+1. Open an endpoint with agent 5.0 or newer and go to its **Watchdog** tab.
+2. Tick **Make this endpoint's agent a watchdog** and set **Alert after (minutes)** — 5 is a
+   good start.
+3. Choose how it tells you (one or both):
+   - **Email to** — comma-separated addresses, sent through the SMTP server set on the
+     Channels page.
+   - **Also post to:** any of your Telegram, Slack, Teams or webhook channels.
+4. **Save**, then **Send test** — the agent sends a test message on its next check-in
+   (within a minute).
+
+**Check:** the test arrives, and **What the agent last reported** shows **✓ Reaching
+Looksee** with a recent time (**✕ Alerting** while it can't). **System → Watchdog** lists every watchdog agent and its state.
+
+The agent sends one message when Looksee becomes unreachable and one when it's back.
+To do this the agent stores the email server's settings and channel URLs on that machine
+(readable only by the agent's own account) — choose endpoints you trust. Turning the
+watchdog off removes them from the agent at its next check-in.
+
 ## Times and time zones
 
 Every date and time in the dashboard is shown in **your device's time zone** — result
 times, alert history, logs, charts, and times inside check messages (for example
-"Host rebooted at …" or "last report …"). The engine stores everything in UTC, so the
+"Rebooted at …" or "last report …"). The engine stores everything in UTC, so the
 same moment shows correctly for anyone, wherever they are.
 
 - **Weekly maintenance windows** run in the time zone of the browser that scheduled them
@@ -852,7 +1239,7 @@ should match your local time, not UTC.
 
 ## Light and dark theme
 
-The theme button in the top bar cycles **System → Light → Dark**. *System* follows your
+The theme button at the bottom of the sidebar cycles **System → Light → Dark**. *System* follows your
 device's setting. The choice is remembered per browser. Both themes use the same
 status colors (always shown with a text label too), checked for contrast.
 

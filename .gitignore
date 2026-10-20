@@ -5,6 +5,11 @@ dist/
 *.log
 npm-debug.log*
 
+# Server-specific Docker Compose settings (e.g. Postgres memory tuning, see
+# docs/migration-guide.md §14) — read automatically by `docker compose`,
+# never tracked, so updates don't conflict with them.
+docker-compose.override.yml
+
 # engine
 engine/dist/
 engine/.backup-ssh/

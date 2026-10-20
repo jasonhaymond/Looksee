@@ -1,3 +1,8 @@
+// The Sites & locations page (/sites): sites grouped by location with status
+// counts, create/edit (collector, public IPs), and bulk actions. "use client"
+// makes this a React component that runs in the browser; the engine refuses
+// every call without a session.
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -8,6 +13,7 @@ import { PageHelp } from "../components/PageHelp";
 import { ActionMenu, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, Label, Modal, MultiPicker, PromptDialog, StatusBadge, inputClass, useSelection, useToast } from "../components/ui";
 import { displayStatus } from "../components/CheckDetail";
 import { collectorState } from "../components/collector";
+import { own, setOwn } from "../lib/own";
 
 export default function SitesPage() {
   const router = useRouter();
@@ -22,14 +28,14 @@ export default function SitesPage() {
   const [dialog, setDialog] = useState<"delete" | "merge" | "maint" | "location" | null>(null);
   const toast = useToast();
 
-  const load = useCallback(async () => {
-    const [e, h, c, l] = await Promise.all([api.sites(), api.endpoints(), api.checks(), api.locations()]);
+  const load = useCallback(() =>
+    Promise.all([api.sites(), api.endpoints(), api.checks(), api.locations()]).then(([e, h, c, l]) => {
     setSites(e);
     setEndpoints(h);
     setChecks(c);
     setLocations(l);
     setLoaded(true);
-  }, []);
+  }), []);
 
   useEffect(() => {
     api
@@ -54,7 +60,7 @@ export default function SitesPage() {
       if (!s) continue;
       s.checks++;
       const st = displayStatus(c);
-      s.counts[st] = (s.counts[st] ?? 0) + 1;
+      setOwn(s.counts, st, (own(s.counts, st) ?? 0) + 1);
     }
     return m;
   }, [sites, endpoints, checks]);
@@ -75,7 +81,7 @@ export default function SitesPage() {
   ].filter((s) => s.location || s.items.length);
   const sumCounts = (items: Site[]) => {
     const out: Record<string, number> = {};
-    for (const e of items) for (const [k, v] of Object.entries(stats.get(e.id)?.counts ?? {})) out[k] = (out[k] ?? 0) + v;
+    for (const e of items) for (const [k, v] of Object.entries(stats.get(e.id)?.counts ?? {})) setOwn(out, k, (own(out, k) ?? 0) + v);
     return out;
   };
 
@@ -113,9 +119,9 @@ export default function SitesPage() {
                 </div>
                 <div className="flex gap-3 text-xs">
                   {["down", "warn", "up", "maintenance"].map((st) =>
-                    counts[st] ? (
+                    own(counts, st) ? (
                       <span key={st} className="inline-flex items-center gap-1">
-                        <StatusBadge status={st} compact /> {counts[st]} {st}
+                        <StatusBadge status={st} compact /> {own(counts, st)} {st}
                       </span>
                     ) : null
                   )}
@@ -176,9 +182,9 @@ export default function SitesPage() {
                 </div>
                 <div className="flex gap-3 text-xs">
                   {["down", "warn", "up", "maintenance"].map((st) =>
-                    s.counts[st] ? (
+                    own(s.counts, st) ? (
                       <span key={st} className="inline-flex items-center gap-1">
-                        <StatusBadge status={st} compact /> {s.counts[st]}
+                        <StatusBadge status={st} compact /> {own(s.counts, st)}
                       </span>
                     ) : null
                   )}
@@ -244,7 +250,7 @@ export default function SitesPage() {
       {dialog === "delete" && (
         <ConfirmDialog
           title={`Delete ${sel.ids.length} site(s)?`}
-          message={<p>Also deletes every host and check inside them, with all history. To keep them, use “Merge into…” instead.</p>}
+          message={<p>Also deletes every endpoint and check inside them, with all history. To keep them, use “Merge into…” instead.</p>}
           confirmWord="delete"
           actionLabel={`Delete ${sel.ids.length}`}
           onConfirm={() => bulk("delete", {}, "Deleted")}
@@ -276,7 +282,7 @@ function SiteLine({ site, endpoints }: { site: Site; endpoints: Endpoint[] }) {
     <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs">
       {site.collectorEndpointId && (
         <span className={state?.tone === "bad" ? "text-[var(--down)]" : state?.tone === "warn" ? "text-[var(--warn)]" : "text-[var(--muted)]"} title={collector?.collectorError ?? undefined}>
-          Site collector: {collector?.name ?? "removed host"} — {state?.label ?? "unknown"}
+          Site collector: {collector?.name ?? "removed endpoint"} — {state?.label ?? "unknown"}
         </span>
       )}
       {site.publicIps.length > 0 && <span className="text-[var(--muted)]">Direct push from {site.publicIps.join(", ")}</span>}
@@ -381,7 +387,7 @@ function SiteDialog({ site, locations, endpoints, onClose, onSaved }: { site: Si
         </Label>
         <Label
           label="Site collector"
-          help="For a site the Looksee server can't reach directly. The chosen host's agent runs this site's network checks (ping, SNMP, HTTP…), receives its syslog/traps/flows, and runs its discovery scans and Wake-on-LAN — all sent back over HTTPS, no port forwarding. Leave on 'Looksee server' for the server's own network."
+          help="For a site the Looksee server can't reach directly. The chosen endpoint's agent runs this site's network checks (ping, SNMP, HTTP…), receives its syslog/traps/flows, and runs its discovery scans and Wake-on-LAN — all sent back over HTTPS, no port forwarding. Leave on 'Looksee server' for the server's own network."
         >
           <select value={collectorEndpointId} onChange={(e) => setCollectorEndpointId(e.target.value)} className={inputClass}>
             <option value="">Looksee server (its own network)</option>
@@ -424,6 +430,6 @@ function agentAtLeast(actual: string | null, required: string) {
   if (actual === "dev") return true;
   const a = actual.split(".").map((n) => parseInt(n, 10) || 0);
   const r = required.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) if ((a[i] ?? 0) !== (r[i] ?? 0)) return (a[i] ?? 0) > (r[i] ?? 0);
+  for (let i = 0; i < 3; i++) if ((a.at(i) ?? 0) !== (r.at(i) ?? 0)) return (a.at(i) ?? 0) > (r.at(i) ?? 0);
   return true;
 }

@@ -1,5 +1,15 @@
-import { type Config, type ProbeContext, type ProbeOutcome, bool, down, errMsg, str, warn } from "./types.js";
+// Checks for apps that publish metrics: Prometheus exporters (any metric,
+// label filters, rates), web server status pages (nginx, Apache, Caddy…), and
+// app integrations (Nextcloud, Home Assistant, Pi-hole, Plex, custom JSON).
+//
+// Admin-typed label patterns run on RE2 (lib/userRegex.ts), and scraped label
+// names are stored with setOwn (lib/own.ts) so scraped data can't reach object
+// internals.
+
+import { type ApiJson, type Config, type ProbeContext, type ProbeOutcome, bool, down, errMsg, str, warn } from "./types.js";
 import { httpRequest, jsonPathGet, parseHeaders } from "./http.js";
+import { own, setOwn } from "../../lib/own.js";
+import { compileUserRegex } from "../../lib/userRegex.js";
 
 export type PromSample = { name: string; labels: Record<string, string>; value: number };
 
@@ -8,11 +18,14 @@ export function parsePrometheus(text: string): PromSample[] {
   const out: PromSample[] = [];
   for (const line of text.split(/\r?\n/)) {
     if (!line || line.startsWith("#")) continue;
-    const m = line.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)(\{(.*)\})?\s+(\S+)/);
+    const m = line.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\}|)\s+(\S+)/);
     if (!m) continue;
     const labels: Record<string, string> = {};
-    if (m[3]) for (const l of m[3].matchAll(/([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"/g)) labels[l[1]] = l[2].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-    const v = m[4] === "+Inf" ? Infinity : m[4] === "-Inf" ? -Infinity : Number(m[4]);
+    // Groups: 1 = metric name, 2 = what's inside {…} (if any), 3 = value.
+    // Label names come from the scraped server, so they're stored with
+    // setOwn — a label called "__proto__" can't reach object internals.
+    if (m[2]) for (const l of m[2].matchAll(/([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"/g)) setOwn(labels, l[1], l[2].replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
+    const v = m[3] === "+Inf" ? Infinity : m[3] === "-Inf" ? -Infinity : Number(m[3]);
     if (!Number.isNaN(v)) out.push({ name: m[1], labels, value: v });
   }
   return out;
@@ -31,10 +44,11 @@ export function labelMatcher(spec: string): (labels: Record<string, string>) => 
     });
   return (labels) =>
     rules.every(({ key, op, val }) => {
-      const actual = labels[key] ?? "";
+      const actual = own(labels, key) ?? "";
       if (op === "=") return actual === val;
       if (op === "!=") return actual !== val;
-      const re = new RegExp(`^(?:${val})$`);
+      // A whole-value match on RE2 (lib/userRegex.ts), like Prometheus's own =~.
+      const re = compileUserRegex(val, { whole: true });
       return op === "=~" ? re.test(actual) : !re.test(actual);
     });
 }
@@ -52,7 +66,7 @@ function aggregate(values: number[], how: string): number {
 // baseline instead of reporting a negative rate.
 export function counterRate(raw: number, ctx: ProbeContext, key = "raw"): { rate: number | null; state: Record<string, unknown> } {
   const now = Date.now();
-  const prevRaw = ctx.state[key] as number | undefined;
+  const prevRaw = own(ctx.state, key) as number | undefined;
   const prevAt = ctx.state[`${key}At`] as number | undefined;
   const state = { ...ctx.state, [key]: raw, [`${key}At`]: now };
   if (prevRaw == null || prevAt == null || raw < prevRaw || now <= prevAt) return { rate: null, state };
@@ -132,7 +146,7 @@ export async function probeWebserverStatus(config: Config, ctx: ProbeContext): P
       state = r.state;
       if (r.rate != null) values[`${k}_per_sec`] = round2(r.rate);
     }
-    const value = values[metric];
+    const value = own(values, metric);
     if (value == null) return { status: "up", latencyMs, message: `Collecting a baseline for ${metric}`, state, skip: metric.endsWith("_per_sec") };
     return { status: "up", latencyMs, message: Object.entries(values).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", "), value, details: values, state };
   } catch (err) {
@@ -153,7 +167,7 @@ export async function probeAppIntegration(config: Config): Promise<ProbeOutcome>
     const res = await httpRequest(`${base}${path}`, { headers: { Accept: "application/json", ...headers }, insecure, ...opts });
     if (res.status === 401 || res.status === 403) throw new Error(`${app} rejected the credentials (HTTP ${res.status})`);
     if (res.status >= 400) throw new Error(`${path} returned HTTP ${res.status}`);
-    return JSON.parse(res.body) as any;
+    return JSON.parse(res.body) as ApiJson;
   };
   const done = (value: number | null, message: string, status: ProbeOutcome["status"] = "up", details?: unknown): ProbeOutcome => ({ status, latencyMs: Date.now() - start, message, value, details });
   try {
@@ -170,7 +184,7 @@ export async function probeAppIntegration(config: Config): Promise<ProbeOutcome>
           active_users: data?.activeUsers?.last5minutes,
           updates_available: data?.nextcloud?.system?.apps?.num_updates_available,
         };
-        const v = map[metric];
+        const v = own(map, metric);
         return v == null ? done(null, `${metric} not reported by serverinfo`, "warn") : done(round2(v), `${metric.replace(/_/g, " ")}: ${round2(v)}`);
       }
       case "home_assistant": {
@@ -213,13 +227,13 @@ export async function probeAppIntegration(config: Config): Promise<ProbeOutcome>
           const summary = await getJson("/api/stats/summary", { sid });
           const values = { percent_blocked: summary.queries?.percent_blocked, queries_today: summary.queries?.total, domains_blocked: summary.gravity?.domains_being_blocked };
           if (blocking.blocking !== "enabled") return done(null, `Ad blocking is ${blocking.blocking}`, "down", values);
-          const v = (values as Record<string, number | undefined>)[metric];
+          const v = own(values as Record<string, number | undefined>, metric);
           return done(v != null ? round2(v) : null, `Blocking enabled — ${round2(values.percent_blocked ?? 0)}% of ${values.queries_today ?? 0} queries blocked`, "up", values);
         }
         const v5 = await getJson(`/admin/api.php?summaryRaw&auth=${encodeURIComponent(token)}`);
         if (v5.status !== "enabled") return done(null, `Ad blocking is ${v5.status ?? "unknown"}`, "down");
         const values: Record<string, number> = { percent_blocked: v5.ads_percentage_today, queries_today: v5.dns_queries_today, domains_blocked: v5.domains_being_blocked };
-        return done(values[metric] != null ? round2(values[metric]) : null, `Blocking enabled — ${round2(values.percent_blocked)}% blocked`, "up", values);
+        return done(own(values, metric) != null ? round2(own(values, metric)!) : null, `Blocking enabled — ${round2(values.percent_blocked)}% blocked`, "up", values);
       }
       case "custom_json": {
         const res = await getJson(str(config, "path", "/"), token ? { Authorization: `Bearer ${token}` } : {});

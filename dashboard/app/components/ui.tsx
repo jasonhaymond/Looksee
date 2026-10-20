@@ -1,7 +1,12 @@
+// Shared building blocks for every page: status badges and colours, buttons,
+// labelled fields, dialogs (modal, confirm, prompt), multi-select and bulk
+// bars, pickers, alert-rule options, toasts, and small formatters.
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "./Tooltip";
+import { own } from "../lib/own";
 
 // Shared building blocks for the management pages, so every table, filter
 // bar and bulk-action flow looks and behaves the same.
@@ -20,7 +25,7 @@ export const STATUS_COLOR: Record<string, string> = {
 export function StatusBadge({ status, compact = false }: { status: string; compact?: boolean }) {
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: STATUS_COLOR[status] ?? "var(--muted)" }} />
+      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: own(STATUS_COLOR, status) ?? "var(--muted)" }} />
       {!compact && <span className="text-[10px] font-medium tracking-wide text-[var(--muted)]">{status.toUpperCase()}</span>}
     </span>
   );
@@ -48,9 +53,10 @@ export function Button({
     primary: "bg-[var(--accent)] font-medium text-[var(--on-accent)] hover:brightness-110",
     danger: "border border-[var(--down)]/60 text-[var(--down)] hover:bg-[var(--down)]/10",
     ghost: "text-[var(--muted)] hover:text-[var(--text)]",
-  }[variant];
+  };
+  const style = own(styles, variant);
   return (
-    <button type={type} onClick={onClick} disabled={disabled} title={title} className={`rounded-md px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40 ${styles} ${className}`}>
+    <button type={type} onClick={onClick} disabled={disabled} title={title} className={`rounded-md px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40 ${style} ${className}`}>
       {children}
     </button>
   );
@@ -146,17 +152,16 @@ export function ConfirmDialog({
 }
 
 export function useSelection(visibleIds: string[]) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  // Drop selections that no longer exist (deleted, filtered by a reload).
+  const [chosen, setSelected] = useState<Set<string>>(new Set());
+  // Only selections that are still visible count (a reload may have deleted
+  // or filtered some away) — worked out here rather than pruned afterwards.
   const key = visibleIds.join(",");
-  useEffect(() => {
-    setSelected((prev) => {
-      const visible = new Set(visibleIds);
-      const next = new Set([...prev].filter((id) => visible.has(id)));
-      return next.size === prev.size ? prev : next;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  const selected = useMemo(() => {
+    const visible = new Set(visibleIds);
+    const next = new Set([...chosen].filter((id) => visible.has(id)));
+    return next.size === chosen.size ? chosen : next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key stands for visibleIds
+  }, [chosen, key]);
   const toggle = useCallback((id: string) => setSelected((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id);
@@ -367,7 +372,10 @@ export function alertRulePayload(v: AlertOptionsValue) {
 // form, suggested checks, discovery and bulk "add alert rule".
 export function AlertOptions({ channels, value, onChange }: { channels: { id: string; name: string; type: string }[]; value: AlertOptionsValue; onChange: (v: AlertOptionsValue) => void }) {
   const set = <K extends keyof AlertOptionsValue>(k: K, v: AlertOptionsValue[K]) => onChange({ ...value, [k]: v });
-  const toggle = (k: "channelIds" | "escalationChannelIds", id: string) => set(k, value[k].includes(id) ? value[k].filter((x) => x !== id) : [...value[k], id]);
+  const toggle = (k: "channelIds" | "escalationChannelIds", id: string) => {
+    const list = k === "channelIds" ? value.channelIds : value.escalationChannelIds;
+    set(k, list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+  };
   if (!channels.length) {
     return (
       <p className="text-xs text-[var(--muted)]">
@@ -560,5 +568,5 @@ export function formatBytes(n: number | null | undefined) {
     v /= 1024;
     i++;
   }
-  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units.at(i)}`;
 }

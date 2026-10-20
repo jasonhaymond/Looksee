@@ -1,13 +1,17 @@
+// Everything about one endpoint, in tabs: overview, checks, suggested checks
+// and templates, processes, services, IP history, agent install/update,
+// watchdog and edit. Used on the Endpoints list and each endpoint's page.
+
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { api, ApiError, type AddressRow, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type Location, type Suggestion } from "../lib/api";
+import { Fragment, useCallback, useEffect, useState } from "react";
+import { api, type AddressRow, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type Suggestion } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
-import { PageHelp } from "./PageHelp";
-import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Label, Modal, PromptDialog, StatusBadge, Tags, alertRulePayload, emptyAlertOptions, formatBytes, inputClass, relativeTime, useSelection, useToast, type BulkAction } from "./ui";
+import { AlertOptions, Button, FilterChip, Label, StatusBadge, alertRulePayload, emptyAlertOptions, formatBytes, inputClass, relativeTime, useToast } from "./ui";
 import { displayStatus } from "./CheckDetail";
-import { collectorState } from "./collector";
+import { WatchdogSettings } from "./WatchdogSettings";
+import { RoleTemplates } from "./RoleTemplates";
+import { own } from "../lib/own";
 
 // An agent that hasn't reported for 3 report intervals (90s by default) is
 // considered offline here; the agent_heartbeat check is the alerting version.
@@ -204,10 +208,10 @@ function SuggestionsTab({ host, channels, onApplied }: { host: Endpoint; channel
   }, [host.id]);
   useEffect(load, [load]);
   if (!suggestions) return null;
-  if (!suggestions.length) return <p className="text-sm text-[var(--muted)]">{host.hasSnapshot ? "Nothing more to suggest — this host already has every recommended check." : "Suggestions appear once a 3.x agent has reported in."}</p>;
+  if (!suggestions.length) return <p className="text-sm text-[var(--muted)]">{host.hasSnapshot ? "Nothing more to suggest — this endpoint already has every recommended check." : "Suggestions appear once a 3.x agent has reported in."}</p>;
   return (
     <div className="space-y-2 text-sm">
-      <p className="text-xs text-[var(--muted)]">Based on what the agent found on this host — its services, processes, containers, listening ports and logs. Untick anything you don&apos;t want; thresholds can be changed afterwards.</p>
+      <p className="text-xs text-[var(--muted)]">Based on what the agent found on this endpoint — its services, processes, containers, listening ports and logs. Untick anything you don&apos;t want; thresholds can be changed afterwards.</p>
       <div className="max-h-96 space-y-3 overflow-y-auto">
         {[...new Set(suggestions.map((s) => s.group ?? "Other"))].map((g) => {
           const inGroup = suggestions.filter((s) => (s.group ?? "Other") === g);
@@ -325,8 +329,8 @@ function AgentTab({ host, latestAgentVersion, onChanged }: { host: Endpoint; lat
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded bg-[var(--code-bg)] p-1.5">{revealed.installCommands[platform]}</code>
-            <CopyButton text={revealed.installCommands[platform]} />
+            <code className="flex-1 break-all rounded bg-[var(--code-bg)] p-1.5">{own(revealed.installCommands, platform)}</code>
+            <CopyButton text={own(revealed.installCommands, platform) ?? ""} />
           </div>
         </div>
       )}
@@ -364,7 +368,7 @@ function EditTab({ host, sites, onSaved }: { host: Endpoint; sites: Site[]; onSa
       <Label label="OS">
         <input value={form.os} onChange={(e) => set("os", e.target.value)} className={inputClass} />
       </Label>
-      <Label label="MAC address" help="Enables Wake-on-LAN for this host.">
+      <Label label="MAC address" help="Enables Wake-on-LAN for this endpoint.">
         <input value={form.macAddress} onChange={(e) => set("macAddress", e.target.value)} placeholder="aa:bb:cc:dd:ee:ff" className={inputClass} />
       </Label>
       <Label label="Tags">
@@ -494,11 +498,11 @@ function AddressesTab({ host }: { host: Endpoint }) {
     api.endpointAddresses(host.id).then(setRows);
   }, [host.id]);
   if (!rows) return null;
-  if (!rows.length) return <p className="text-sm text-[var(--muted)]">No address sightings yet. They come from the agent&apos;s interface list, discovery scans and ARP checks. Add an “IP address change” check to be alerted when this host&apos;s IP changes.</p>;
+  if (!rows.length) return <p className="text-sm text-[var(--muted)]">No address sightings yet. They come from the agent&apos;s interface list, discovery scans and ARP checks. Add an “IP address change” check to be alerted when this endpoint&apos;s IP changes.</p>;
   const macs = [...new Set(rows.map((r) => r.mac))];
   return (
     <div className="space-y-3 text-sm">
-      <p className="text-xs text-[var(--muted)]">Every IP each of this host&apos;s MAC addresses has been seen with, newest first. Add an “IP address change (by MAC)” check to be alerted on a change.</p>
+      <p className="text-xs text-[var(--muted)]">Every IP each of this endpoint&apos;s MAC addresses has been seen with, newest first. Add an “IP address change (by MAC)” check to be alerted on a change.</p>
       {macs.map((mac) => (
         <div key={mac}>
           <div className="mb-1 font-mono text-xs">{mac}</div>
@@ -533,7 +537,7 @@ function AddressesTab({ host }: { host: Endpoint }) {
 }
 
 export function EndpointPanel({ host, sites, checks, channels, latestAgentVersion, onChanged }: { host: Endpoint; sites: Site[]; checks: Check[]; channels: Channel[]; latestAgentVersion: string | null; onChanged: () => void }) {
-  const [tab, setTab] = useState<"overview" | "checks" | "suggest" | "processes" | "services" | "addresses" | "agent" | "edit">("overview");
+  const [tab, setTab] = useState<"overview" | "checks" | "suggest" | "processes" | "services" | "addresses" | "agent" | "watchdog" | "edit">("overview");
   const [detail, setDetail] = useState<EndpointDetail | null>(null);
   const toast = useToast();
   useEffect(() => {
@@ -548,6 +552,7 @@ export function EndpointPanel({ host, sites, checks, channels, latestAgentVersio
     ["services", `Services${host.serviceCount ? ` (${host.serviceCount})` : ""}`],
     ["addresses", "IP history"],
     ["agent", "Agent"],
+    ["watchdog", host.watchdog?.enabled ? "Watchdog ✓" : "Watchdog"],
     ["edit", "Edit"],
   ] as const;
   return (
@@ -590,13 +595,19 @@ export function EndpointPanel({ host, sites, checks, channels, latestAgentVersio
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-[var(--muted)]">No checks on this host yet — try Suggested checks.</p>
+          <p className="text-sm text-[var(--muted)]">No checks on this endpoint yet — try Suggested checks.</p>
         ))}
-      {tab === "suggest" && <SuggestionsTab host={host} channels={channels} onApplied={onChanged} />}
+      {tab === "suggest" && (
+        <>
+          <SuggestionsTab host={host} channels={channels} onApplied={onChanged} />
+          <RoleTemplates host={host} onApplied={onChanged} />
+        </>
+      )}
       {tab === "processes" && <InventoryTab host={host} kind="processes" />}
       {tab === "services" && <InventoryTab host={host} kind="services" />}
       {tab === "addresses" && <AddressesTab host={host} />}
       {tab === "agent" && <AgentTab host={host} latestAgentVersion={latestAgentVersion} onChanged={onChanged} />}
+      {tab === "watchdog" && <WatchdogSettings host={host} channels={channels} onChanged={onChanged} />}
       {tab === "edit" && <EditTab host={host} sites={sites} onSaved={onChanged} />}
       {toast.node}
     </div>

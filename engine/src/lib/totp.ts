@@ -1,3 +1,12 @@
+// Time-based one-time codes (TOTP, RFC 6238) for the mandatory two-factor
+// sign-in, plus the one-time recovery codes.
+//
+// Where this sits: routes/auth.ts enrolls an authenticator app (secret +
+// otpauth:// link for the QR code) and checks codes at sign-in. Security: a
+// code is accepted for its 30-second step and one step either side (clock
+// drift), and each step can be used only once per user (consumeTotp), so a
+// code seen over someone's shoulder can't be replayed.
+
 import crypto from "node:crypto";
 
 // RFC 6238 TOTP (SHA-1, 6 digits, 30 s) — what every authenticator app
@@ -44,7 +53,7 @@ export function totpCode(secret: string, time = Date.now(), step = 30): string {
   counter.writeBigUInt64BE(BigInt(Math.floor(time / 1000 / step)));
   const hmac = crypto.createHmac("sha1", base32Decode(secret)).update(counter).digest();
   const offset = hmac[hmac.length - 1] & 15;
-  const bin = ((hmac[offset] & 0x7f) << 24) | (hmac[offset + 1] << 16) | (hmac[offset + 2] << 8) | hmac[offset + 3];
+  const bin = hmac.readUInt32BE(offset) & 0x7fffffff;
   return String(bin % 1_000_000).padStart(6, "0");
 }
 

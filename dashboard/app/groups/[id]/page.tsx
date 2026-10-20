@@ -41,15 +41,18 @@ export default function GroupPage() {
   const toast = useToast();
 
   // Loads the group and the tree (for the covered checks' names and statuses).
-  const load = useCallback(async () => {
-    try {
-      const [d, t] = await Promise.all([api.group(id), api.tree()]);
-      setDetail(d);
-      setTree(t);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) setMissing(true);
-    }
-  }, [id]);
+  const load = useCallback(
+    () =>
+      Promise.all([api.group(id), api.tree()])
+        .then(([d, t]) => {
+          setDetail(d);
+          setTree(t);
+        })
+        .catch((err) => {
+          if (err instanceof ApiError && err.status === 404) setMissing(true);
+        }),
+    [id]
+  );
   useEffect(() => {
     if (authed) load();
   }, [authed, load]);

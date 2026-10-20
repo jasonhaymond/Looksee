@@ -1,6 +1,11 @@
+// The settings fields for each notification channel type (where to send,
+// tokens, URLs) with setup instructions, plus helpers to start and clean a
+// channel's config. Secret fields are write-only once saved.
+
 "use client";
 
 import { Label, inputClass } from "./ui";
+import { own, setOwn } from "../lib/own";
 
 export const CHANNEL_TYPE_LABEL: Record<string, string> = {
   email: "Email",
@@ -59,7 +64,7 @@ export function normalizeChannelConfig(config: Record<string, unknown>): Record<
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
     if (value === "" || value == null) continue;
-    out[key] = typeof value === "string" ? value.trim() : value;
+    setOwn(out, key, typeof value === "string" ? value.trim() : value);
   }
   return out;
 }
@@ -73,14 +78,14 @@ export function validateChannelConfig(type: string, config: Record<string, unkno
 }
 
 export function ChannelConfigFields({ type, config, onChange }: { type: string; config: Record<string, unknown>; onChange: (config: Record<string, unknown>) => void }) {
-  const str = (key: string) => (config[key] != null ? String(config[key]) : "");
+  const str = (key: string) => (own(config, key) != null ? String(own(config, key)) : "");
   const set = (key: string, value: string) => onChange({ ...config, [key]: value });
   const text = (key: string, label: string, placeholder?: string, secret = false, mono = false) => (
     <Label label={label}>
       <input type={secret ? "password" : "text"} autoComplete="off" placeholder={placeholder} value={str(key)} onChange={(e) => set(key, e.target.value)} className={`${inputClass} ${mono ? "font-mono text-xs" : ""}`} />
     </Label>
   );
-  const setup = SETUP[type];
+  const setup = own(SETUP, type);
   return (
     <div className="space-y-2">
       {type === "email" && text("to", "Send to", "you@example.com, someone@example.com")}

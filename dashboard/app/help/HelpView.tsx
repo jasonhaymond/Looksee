@@ -1,3 +1,6 @@
+// Renders an in-app help document (from the repo's docs/ folder) with a
+// contents list and search.
+
 "use client";
 
 import Link from "next/link";

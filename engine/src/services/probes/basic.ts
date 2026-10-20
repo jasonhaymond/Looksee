@@ -1,3 +1,10 @@
+// The basic network checks: ping (loss, latency, jitter), TCP port (with
+// optional send/expect), DNS (records, expected answers, DNSSEC) and TLS
+// certificate (expiry, chain, hostname, legacy TLS).
+//
+// Run by the engine, a site collector, or an agent as a remote probe.
+
+import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import net from "node:net";
@@ -5,6 +12,7 @@ import tls from "node:tls";
 import dns from "node:dns/promises";
 import { type Config, type ProbeOutcome, bool, down, errMsg, numOr, str, warn } from "./types.js";
 import { udpExchange } from "./net.js";
+import { own } from "../../lib/own.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -22,7 +30,7 @@ export function pingStats(times: number[], sent: number) {
   if (received === 0) return { loss, min: null, avg: null, max: null, jitter: null };
   const avg = times.reduce((a, b) => a + b, 0) / received;
   let jitter = 0;
-  for (let i = 1; i < times.length; i++) jitter += Math.abs(times[i] - times[i - 1]);
+  for (let i = 1; i < times.length; i++) jitter += Math.abs(times.at(i)! - times.at(i - 1)!);
   jitter = times.length > 1 ? jitter / (times.length - 1) : 0;
   return { loss, min: Math.min(...times), avg, max: Math.max(...times), jitter };
 }
@@ -40,7 +48,7 @@ export async function probePing(config: Config): Promise<ProbeOutcome> {
       : process.platform === "darwin"
         ? ["-c", String(count), "-W", "2000", host]
         : ["-c", String(count), "-i", "0.2", "-W", "2", host];
-  let output = "";
+  let output: string;
   try {
     output = (await execFileAsync("ping", args, { timeout: (count * 2 + 5) * 1000 })).stdout;
   } catch (err) {
@@ -63,22 +71,44 @@ export async function probePing(config: Config): Promise<ProbeOutcome> {
   return { status, latencyMs, message: status === "up" && count === 1 ? null : summary, value: stats.loss, details };
 }
 
+/**
+ * TCP port check: connects to host:port. Advanced settings: a timeout
+ * (default 5 s), text to send once connected (\n and \r written as such),
+ * and text the reply must contain — for services that greet with a banner
+ * ("SSH-2.0", "220 ") or answer a simple command ("PING" → "+PONG").
+ *
+ * @param config host, port, timeoutSeconds, sendText, expectText
+ */
 export function probeTcp(config: Config): Promise<ProbeOutcome> {
   const host = str(config, "host");
   const port = numOr(config, "port", 0);
   if (!host || !port) return Promise.resolve(warn("Missing host or port"));
+  const timeout = Math.min(60, Math.max(1, numOr(config, "timeoutSeconds", 5))) * 1000;
+  // Typed escape sequences become real line breaks: "PING\r\n".
+  const sendText = str(config, "sendText").replace(/\\r/g, "\r").replace(/\\n/g, "\n");
+  const expectText = str(config, "expectText");
   const start = Date.now();
   return new Promise((resolve) => {
-    const socket = net.createConnection({ host, port, timeout: 5000 });
+    const socket = net.createConnection({ host, port, timeout });
+    let received = "";
+    let connectedAt = 0;
+    const finish = (outcome: ProbeOutcome) => {
+      socket.destroy();
+      resolve(outcome);
+    };
     socket.once("connect", () => {
-      socket.destroy();
-      resolve({ status: "up", latencyMs: Date.now() - start, message: null });
+      connectedAt = Date.now();
+      if (!expectText) return finish({ status: "up", latencyMs: connectedAt - start, message: null });
+      if (sendText) socket.write(sendText);
     });
-    socket.once("timeout", () => {
-      socket.destroy();
-      resolve(down(`Timed out connecting to ${host}:${port}`));
+    // Read the reply (at most 8 KB) until the expected text shows up.
+    socket.on("data", (chunk) => {
+      received = (received + chunk.toString("utf8")).slice(0, 8192);
+      if (received.toLowerCase().includes(expectText.toLowerCase())) finish({ status: "up", latencyMs: Date.now() - start, message: received.split(/\r?\n/)[0].slice(0, 200) || null });
     });
-    socket.once("error", (err) => resolve(down(err.message)));
+    socket.once("end", () => finish(down(`Connected, but the reply didn't contain "${expectText}"${received ? `: ${received.slice(0, 120)}` : " (no reply)"}`, { latencyMs: connectedAt ? connectedAt - start : null })));
+    socket.once("timeout", () => finish(down(connectedAt ? `Connected, but no reply containing "${expectText}" within ${timeout / 1000}s${received ? `: ${received.slice(0, 120)}` : ""}` : `Timed out connecting to ${host}:${port}`)));
+    socket.once("error", (err) => finish(down(err.message)));
   });
 }
 
@@ -98,7 +128,9 @@ function answerStrings(type: string, answers: unknown): string[] {
 
 // Raw wire-format query with the DO bit set, read back for the AD flag —
 // node:dns has no way to ask a resolver whether it validated DNSSEC.
-export function buildDnsQuery(name: string, type: number, id = Math.floor(Math.random() * 65535)): Buffer {
+// The query ID is cryptographically random, so another host on the path
+// can't guess it to slip in a forged answer.
+export function buildDnsQuery(name: string, type: number, id = crypto.randomInt(65536)): Buffer {
   const header = Buffer.alloc(12);
   header.writeUInt16BE(id, 0);
   header.writeUInt16BE(0x0120, 2); // RD + AD
@@ -126,7 +158,8 @@ export async function probeDns(config: Config): Promise<ProbeOutcome> {
   if (!hostname) return warn("Missing hostname");
   const type = str(config, "recordType", "A").toUpperCase();
   const server = str(config, "server");
-  const resolver = new dns.Resolver({ timeout: 5000, tries: 2 });
+  // Advanced: how long to wait per try (default 5 s) and how many tries (2).
+  const resolver = new dns.Resolver({ timeout: Math.min(30, Math.max(1, numOr(config, "timeoutSeconds", 5))) * 1000, tries: Math.min(5, Math.max(1, numOr(config, "tries", 2))) });
   if (server) resolver.setServers([server]);
   const start = Date.now();
   let answers: string[];
@@ -145,10 +178,10 @@ export async function probeDns(config: Config): Promise<ProbeOutcome> {
     const target = server || dns.getServers()[0];
     const [ip, portStr] = target.includes("]") ? [target.slice(1, target.indexOf("]")), target.split("]:")[1]] : target.split(/:(?=\d+$)/);
     try {
-      const { data } = await udpExchange({ host: ip, port: Number(portStr) || 53, payload: buildDnsQuery(hostname, RR_TYPES[type] ?? 1) });
+      const { data } = await udpExchange({ host: ip, port: Number(portStr) || 53, payload: buildDnsQuery(hostname, own(RR_TYPES, type) ?? 1) });
       const { ad, rcode } = parseDnsFlags(data);
       if (rcode === 2) return { status: "down", latencyMs, message: "DNSSEC validation failed (resolver returned SERVFAIL)", details: { answers } };
-      if (!ad) return { status: "down", latencyMs, message: `Answer is not DNSSEC-authenticated (no AD flag from ${ip}; ${RCODES[rcode] ?? rcode})`, details: { answers } };
+      if (!ad) return { status: "down", latencyMs, message: `Answer is not DNSSEC-authenticated (no AD flag from ${ip}; ${RCODES.at(rcode) ?? rcode})`, details: { answers } };
     } catch (err) {
       return { status: "warn", latencyMs, message: `Resolved, but the DNSSEC query failed: ${errMsg(err)}`, details: { answers } };
     }
@@ -184,9 +217,14 @@ export function probeSslCert(config: Config): Promise<ProbeOutcome> {
   const warnDays = numOr(config, "warnDays", 14);
   const criticalDays = numOr(config, "criticalDays", 0);
   if (!host) return Promise.resolve(warn("Missing host"));
+  // Advanced: the name to ask for and check the certificate against, when
+  // connecting by IP or through a load balancer (default: the host itself),
+  // and the connection timeout (default 5 s).
+  const serverName = str(config, "serverName") || (net.isIP(host) ? "" : host);
+  const timeout = Math.min(60, Math.max(1, numOr(config, "timeoutSeconds", 5))) * 1000;
   const start = Date.now();
   return new Promise((resolve) => {
-    const socket = tls.connect({ host, port, servername: net.isIP(host) ? undefined : host, rejectUnauthorized: false, timeout: 5000 }, async () => {
+    const socket = tls.connect({ host, port, servername: serverName || undefined, rejectUnauthorized: false, timeout }, async () => {
       const latencyMs = Date.now() - start;
       const cert = socket.getPeerCertificate(true);
       const authorized = socket.authorized;
@@ -202,8 +240,8 @@ export function probeSslCert(config: Config): Promise<ProbeOutcome> {
       const base = { latencyMs, value: daysLeft, details };
       if (daysLeft < 0) return resolve({ status: "down", message: "Certificate expired", ...base });
       if (bool(config, "checkChain") && !authorized) return resolve({ status: "down", message: `Certificate chain isn't trusted: ${authError}`, ...base });
-      if (bool(config, "checkHostname") && !net.isIP(host)) {
-        const mismatch = tls.checkServerIdentity(host, cert);
+      if (bool(config, "checkHostname") && serverName) {
+        const mismatch = tls.checkServerIdentity(serverName, cert);
         if (mismatch) return resolve({ status: "down", message: `Hostname mismatch: ${mismatch.message}`, ...base });
       }
       if (daysLeft <= criticalDays) return resolve({ status: "down", message: `Expires in ${daysLeft} days`, ...base });
