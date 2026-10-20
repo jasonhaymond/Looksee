@@ -1,18 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type Endpoint } from "../lib/api";
+import { api, type Site } from "../lib/api";
 import { inputClass } from "./ui";
 
 // Filters received data by where it came from: "" = everywhere, "local" =
-// the Looksee server's own network, or one remote endpoint (collector or
-// direct push). Hidden until some endpoint is actually a remote site.
+// the Looksee server's own network, or one remote site (collector or
+// direct push). Hidden until some site is actually a remote site.
 export function SiteSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [sites, setSites] = useState<Endpoint[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   useEffect(() => {
     api
-      .endpoints()
-      .then((all) => setSites(all.filter((e) => e.collectorHostId || e.publicIps.length)))
+      .sites()
+      .then((all) => setSites(all.filter((e) => e.collectorEndpointId || e.publicIps.length)))
       .catch(() => setSites([]));
   }, []);
   if (!sites.length) return null;

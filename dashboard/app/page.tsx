@@ -6,21 +6,21 @@ import { useRouter } from "next/navigation";
 // flat v1-style props (cols, rowHeight, onDragStop, ...) this file uses.
 import GridLayout, { WidthProvider } from "react-grid-layout/legacy";
 import type { LayoutItem } from "react-grid-layout";
-import { api, ApiError, type Endpoint, type Check, type CheckResult, type Dashboard, type Widget, type WidgetType, type Host } from "./lib/api";
-import { TopNav } from "./components/TopNav";
+import { api, ApiError, type Site, type Check, type CheckResult, type Dashboard, type Widget, type WidgetType, type Endpoint } from "./lib/api";
 import { StatusTile } from "./components/StatusTile";
 import { GroupSummaryCard } from "./components/GroupSummaryCard";
 import { AddWidgetForm } from "./components/AddWidgetForm";
-import { HostMetricsWidget } from "./components/HostMetricsWidget";
+import { EndpointMetricsWidget } from "./components/EndpointMetricsWidget";
 import { UptimeHistoryWidget } from "./components/UptimeHistoryWidget";
 import { NoteWidget } from "./components/NoteWidget";
 import { SectionHeaderWidget } from "./components/SectionHeaderWidget";
 import { AlertHistoryWidget } from "./components/AlertHistoryWidget";
 import { NetworkBandwidthWidget } from "./components/NetworkBandwidthWidget";
-import { AllHostsWidget } from "./components/AllHostsWidget";
+import { AllEndpointsWidget } from "./components/AllEndpointsWidget";
 import { BackupStatusWidget } from "./components/BackupStatusWidget";
 import { ClockWidget } from "./components/ClockWidget";
 import { StatusSummaryWidget, TopTalkersWidget } from "./components/InsightWidgets";
+import { pollEvery } from "./lib/poll";
 
 const Grid = WidthProvider(GridLayout);
 const LAST_DASHBOARD_KEY = "looksee.lastDashboardId";
@@ -46,9 +46,9 @@ export default function DashboardsPage() {
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
 
-  const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   const [checks, setChecks] = useState<Check[]>([]);
-  const [hosts, setHosts] = useState<Host[]>([]);
+  const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [latestByCheck, setLatestByCheck] = useState<Map<string, CheckResult>>(new Map());
 
   useEffect(() => {
@@ -91,10 +91,10 @@ export default function DashboardsPage() {
   // ...), so the whole dashboard refresh is three requests, not one per
   // check.
   const loadStatusData = useCallback(async () => {
-    const [endpointList, allChecks, hostList] = await Promise.all([api.endpoints(), api.checks(), api.hosts()]);
-    setEndpoints(endpointList);
+    const [siteList, allChecks, endpointList] = await Promise.all([api.sites(), api.checks(), api.endpoints()]);
+    setSites(siteList);
     setChecks(allChecks);
-    setHosts(hostList);
+    setEndpoints(endpointList);
     setLatestByCheck(
       new Map(
         allChecks
@@ -118,7 +118,7 @@ export default function DashboardsPage() {
   useEffect(() => {
     if (!authChecked) return;
     const ms = (activeDashboard?.refreshSeconds ?? 15) * 1000;
-    const timer = setInterval(loadStatusData, ms);
+    const timer = pollEvery(loadStatusData, ms);
     return () => clearInterval(timer);
   }, [authChecked, loadStatusData, activeDashboard?.refreshSeconds]);
 
@@ -154,7 +154,7 @@ export default function DashboardsPage() {
 
   async function handleDeleteDashboard() {
     if (!activeDashboardId) return;
-    if (!confirm("Delete this dashboard? Its widgets go with it — the checks/endpoints themselves are unaffected.")) return;
+    if (!confirm("Delete this dashboard? Its widgets go with it — the checks/sites themselves are unaffected.")) return;
     await api.deleteDashboard(activeDashboardId);
     setActiveDashboardId(null);
     await loadDashboards();
@@ -165,17 +165,17 @@ export default function DashboardsPage() {
     const config: Widget["config"] =
       type === "status_tile" || type === "uptime_history"
         ? { checkId: target }
-        : type === "host_metrics" || type === "network_bandwidth"
-          ? { hostId: target }
+        : type === "endpoint_metrics" || type === "network_bandwidth"
+          ? { endpointId: target }
           : type === "note" || type === "section_header"
             ? { text: target }
             : type === "group_summary"
-              ? { endpointId: target }
+              ? { siteId: target }
               : type === "alert_history" || type === "status_summary"
-                ? (target ? { endpointId: target } : {})
+                ? (target ? { siteId: target } : {})
                 : type === "top_talkers"
                   ? { rangeMinutes: 60, groupBy: "pair" }
-                  : {}; // all_hosts, backup_status, clock — no target needed
+                  : {}; // all_endpoints, backup_status, clock — no target needed
     // Drop the new widget below whatever's already there rather than at
     // (0,0) — compaction (default RGL behavior) then settles it into the
     // first real gap.
@@ -231,10 +231,10 @@ export default function DashboardsPage() {
 
   if (!authChecked || isDesktop === null) return null;
 
-  const endpointById = new Map(endpoints.map((e) => [e.id, e]));
-  const endpointNameById = new Map(endpoints.map((e) => [e.id, e.name]));
+  const siteById = new Map(sites.map((e) => [e.id, e]));
+  const siteNameById = new Map(sites.map((e) => [e.id, e.name]));
   const checkById = new Map(checks.map((c) => [c.id, c]));
-  const hostById = new Map(hosts.map((h) => [h.id, h]));
+  const endpointById = new Map(endpoints.map((h) => [h.id, h]));
 
   function renderWidgetContent(widget: Widget) {
     if (widget.type === "status_tile") {
@@ -256,19 +256,19 @@ export default function DashboardsPage() {
           </p>
         );
       }
-      return <StatusTile check={check} latest={latestByCheck.get(check.id)} hosts={hosts} endpointNameById={endpointNameById} onChanged={loadStatusData} />;
+      return <StatusTile check={check} latest={latestByCheck.get(check.id)} endpoints={endpoints} siteNameById={siteNameById} onChanged={loadStatusData} />;
     }
     const onChanged = () => activeDashboardId && loadWidgets(activeDashboardId);
     if (widget.type === "uptime_history") {
       const check = widget.config.checkId ? checkById.get(widget.config.checkId) : undefined;
       return <UptimeHistoryWidget widget={widget} check={check} onChanged={onChanged} />;
     }
-    if (widget.type === "host_metrics") {
-      const host = widget.config.hostId ? hostById.get(widget.config.hostId) : undefined;
-      return <HostMetricsWidget widget={widget} host={host} onChanged={onChanged} />;
+    if (widget.type === "endpoint_metrics") {
+      const host = widget.config.endpointId ? endpointById.get(widget.config.endpointId) : undefined;
+      return <EndpointMetricsWidget widget={widget} host={host} onChanged={onChanged} />;
     }
     if (widget.type === "network_bandwidth") {
-      const host = widget.config.hostId ? hostById.get(widget.config.hostId) : undefined;
+      const host = widget.config.endpointId ? endpointById.get(widget.config.endpointId) : undefined;
       return <NetworkBandwidthWidget widget={widget} host={host} onChanged={onChanged} />;
     }
     if (widget.type === "note") {
@@ -278,11 +278,11 @@ export default function DashboardsPage() {
       return <SectionHeaderWidget widget={widget} editMode={editMode} onChanged={onChanged} />;
     }
     if (widget.type === "alert_history") {
-      const endpoint = widget.config.endpointId ? endpointById.get(widget.config.endpointId) : undefined;
-      return <AlertHistoryWidget widget={widget} endpoint={endpoint} onChanged={onChanged} />;
+      const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
+      return <AlertHistoryWidget widget={widget} site={site} onChanged={onChanged} />;
     }
-    if (widget.type === "all_hosts") {
-      return <AllHostsWidget hosts={hosts} endpointNameById={endpointNameById} />;
+    if (widget.type === "all_endpoints") {
+      return <AllEndpointsWidget endpoints={endpoints} siteNameById={siteNameById} />;
     }
     if (widget.type === "backup_status") {
       return <BackupStatusWidget />;
@@ -294,14 +294,14 @@ export default function DashboardsPage() {
       return <TopTalkersWidget widget={widget} onChanged={onChanged} />;
     }
     if (widget.type === "status_summary") {
-      const endpoint = widget.config.endpointId ? endpointById.get(widget.config.endpointId) : undefined;
-      return <StatusSummaryWidget endpoint={endpoint} checks={checks.filter((c) => c.enabled && (!widget.config.endpointId || c.endpointId === widget.config.endpointId))} />;
+      const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
+      return <StatusSummaryWidget site={site} checks={checks.filter((c) => c.enabled && (!widget.config.siteId || c.siteId === widget.config.siteId))} />;
     }
-    const endpoint = widget.config.endpointId ? endpointById.get(widget.config.endpointId) : undefined;
+    const site = widget.config.siteId ? siteById.get(widget.config.siteId) : undefined;
     return (
       <GroupSummaryCard
-        endpoint={endpoint}
-        checks={checks.filter((c) => c.endpointId === widget.config.endpointId && c.enabled)}
+        site={site}
+        checks={checks.filter((c) => c.siteId === widget.config.siteId && c.enabled)}
         latestByCheck={latestByCheck}
       />
     );
@@ -309,7 +309,6 @@ export default function DashboardsPage() {
 
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6">
-      <TopNav active="/" />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <select
@@ -383,7 +382,7 @@ export default function DashboardsPage() {
         )}
       </div>
 
-      {showAddWidget && <div className="mb-4"><AddWidgetForm endpoints={endpoints} checks={checks} hosts={hosts} onAdd={handleAddWidget} onCancel={() => setShowAddWidget(false)} /></div>}
+      {showAddWidget && <div className="mb-4"><AddWidgetForm sites={sites} checks={checks} endpoints={endpoints} onAdd={handleAddWidget} onCancel={() => setShowAddWidget(false)} /></div>}
 
       {widgets.length === 0 && !showAddWidget && (
         <p className="mb-4 text-sm text-[var(--muted)]">

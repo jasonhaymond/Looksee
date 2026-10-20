@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { collectorJobs, endpoints, type checks } from "../db/schema.js";
+import { collectorJobs, sites, type checks } from "../db/schema.js";
 import { COLLECTOR_CHECK_TYPES } from "../db/checkTypes.js";
 
 const COLLECTOR_TYPES = new Set<string>(COLLECTOR_CHECK_TYPES);
@@ -32,18 +32,18 @@ export function collectorManifest(): CollectorManifest | null {
   return value;
 }
 
-export async function siteCollectorFor(endpointId: string): Promise<string | null> {
-  const ep = await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) });
-  return ep?.collectorHostId ?? null;
+export async function siteCollectorFor(siteId: string): Promise<string | null> {
+  const ep = await db.query.sites.findFirst({ where: eq(sites.id, siteId) });
+  return ep?.collectorEndpointId ?? null;
 }
 
 // Whether a check is run by its endpoint's site collector rather than the engine.
 export async function runsOnCollector(check: typeof checks.$inferSelect): Promise<boolean> {
-  if (!COLLECTOR_TYPES.has(check.type) || check.probeHostId) return false;
-  return Boolean(await siteCollectorFor(check.endpointId));
+  if (!COLLECTOR_TYPES.has(check.type) || check.probeEndpointId) return false;
+  return Boolean(await siteCollectorFor(check.siteId));
 }
 
-export async function queueCollectorJob(endpointId: string, kind: "wake" | "snmp_walk", payload: Record<string, unknown>) {
-  const [job] = await db.insert(collectorJobs).values({ endpointId, kind, payload }).returning();
+export async function queueCollectorJob(siteId: string, kind: "wake" | "snmp_walk", payload: Record<string, unknown>) {
+  const [job] = await db.insert(collectorJobs).values({ siteId, kind, payload }).returning();
   return job;
 }

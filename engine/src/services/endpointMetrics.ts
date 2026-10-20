@@ -69,7 +69,7 @@ const many = <T>(arr: T[] | null | undefined, instance: string, name: (x: T) => 
 const MB = 1048576;
 const toMbps = (bps?: number) => (bps == null ? undefined : (bps * 8) / 1e6);
 
-export const HOST_METRICS: MetricDef[] = [
+export const ENDPOINT_METRICS: MetricDef[] = [
   { key: "cpu.percent", label: "CPU usage", group: "CPU & load", kind: "number", unit: "%", read: (s) => one(s.cpu?.percent) },
   { key: "cpu.user", label: "CPU user time", group: "CPU & load", kind: "number", unit: "%", read: (s) => one(s.cpu?.user) },
   { key: "cpu.system", label: "CPU system time", group: "CPU & load", kind: "number", unit: "%", read: (s) => one(s.cpu?.system) },
@@ -140,11 +140,11 @@ export const HOST_METRICS: MetricDef[] = [
   { key: "logins.failed", label: "Failed logins (per report)", group: "Security & updates", kind: "number", help: "Windows event 4625 or sshd failures in the journal/auth.log since the previous report.", read: (s) => one(s.failedLogins) },
 ];
 
-export const METRIC_BY_KEY = new Map(HOST_METRICS.map((m) => [m.key, m]));
+export const METRIC_BY_KEY = new Map(ENDPOINT_METRICS.map((m) => [m.key, m]));
 
 const fmt = (n: number) => (Math.abs(n) >= 100 ? Math.round(n).toString() : (Math.round(n * 100) / 100).toString());
 
-export function evaluateHostMetric(snapshot: Snapshot, config: Record<string, unknown>): MeasuredResult | null {
+export function evaluateEndpointMetric(snapshot: Snapshot, config: Record<string, unknown>): MeasuredResult | null {
   const def = METRIC_BY_KEY.get(String(config.metric ?? ""));
   if (!def) return { status: "warn", latencyMs: null, message: `Unknown metric: ${config.metric}` };
   const instance = String(config.instance ?? "").trim();

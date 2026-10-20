@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { api, type Endpoint, type SlaRow } from "../lib/api";
+import { api, type Site, type SlaRow } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
-import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { Button, EmptyState, inputClass } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
@@ -15,21 +14,21 @@ const minutes = (m: number) => (m >= 120 ? `${(m / 60).toFixed(1)} h` : `${m} mi
 export default function ReportsPage() {
   const authed = usePageAuth();
   const [days, setDays] = useState(30);
-  const [endpointId, setEndpointId] = useState("");
-  const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
+  const [siteId, setSiteId] = useState("");
+  const [sites, setSites] = useState<Site[]>([]);
   const [rows, setRows] = useState<SlaRow[] | null>(null);
   const [target, setTarget] = useState("99.9");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "uptimePercent", dir: 1 });
 
   useEffect(() => {
     if (!authed) return;
-    api.endpoints().then(setEndpoints);
+    api.sites().then(setSites);
   }, [authed]);
   useEffect(() => {
     if (!authed) return;
     setRows(null);
-    api.slaReport(days, endpointId || undefined).then((r) => setRows(r.checks));
-  }, [authed, days, endpointId]);
+    api.slaReport(days, siteId || undefined).then((r) => setRows(r.checks));
+  }, [authed, days, siteId]);
 
   const sorted = useMemo(
     () =>
@@ -55,7 +54,6 @@ export default function ReportsPage() {
   if (!authed) return null;
   return (
     <main className="mx-auto max-w-6xl p-4 sm:p-6">
-      <TopNav active="/reports" />
       <h2 className="mb-3 text-lg font-medium">SLA reports</h2>
       <PageHelp anchor="sla-reports">Time-weighted uptime per check. Maintenance windows are excluded; an incident is each time a check went down.</PageHelp>
       <div className="mb-4 flex flex-wrap items-end gap-3 text-sm">
@@ -70,10 +68,10 @@ export default function ReportsPage() {
           </select>
         </label>
         <label>
-          <span className="block text-xs text-[var(--muted)]">Endpoint</span>
-          <select value={endpointId} onChange={(e) => setEndpointId(e.target.value)} className={inputClass}>
+          <span className="block text-xs text-[var(--muted)]">Site</span>
+          <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={inputClass}>
             <option value="">All</option>
-            {endpoints.map((e) => (
+            {sites.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.name}
               </option>
@@ -87,7 +85,7 @@ export default function ReportsPage() {
         <span className="flex-1" />
         <Button
           onClick={async () => {
-            const blob = await api.slaCsv(days, endpointId || undefined);
+            const blob = await api.slaCsv(days, siteId || undefined);
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;

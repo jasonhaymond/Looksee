@@ -56,7 +56,7 @@ export const checkStatus = pgEnum("check_status", ["up", "down", "warn", "unknow
 export {
   AGENT_CHECK_TYPES,
   REPORT_CHECK_TYPES,
-  HOST_SCOPED_CHECK_TYPES,
+  ENDPOINT_SCOPED_CHECK_TYPES,
   REMOTE_PROBE_CHECK_TYPES,
   ENGINE_CHECK_TYPES,
 } from "./checkTypes.js";
@@ -246,8 +246,8 @@ export const loginChallenges = pgTable("login_challenges", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// A physical place (home, office, church) that groups one or more endpoints
-// (networks). Hosts and checks inherit their endpoint's location, so a
+// A physical place (home, office, church) that groups one or more sites
+// (networks). Endpoints and checks inherit their site's location, so a
 // location never needs to be set twice.
 export const locations = pgTable("locations", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -257,43 +257,46 @@ export const locations = pgTable("locations", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// An Endpoint exists from v1 even with only one row configured (the personal
-// homelab) so a second network later (e.g. the church/AV network) is a row,
-// not a schema migration — see spec.md. Named "endpoints" (renamed from
-// "sites" in 2.1.0) since "site" read as web-hosting terminology to some
-// users; the concept itself — a logical group/network — is unchanged.
-export const endpoints = pgTable("endpoints", {
+// A site: one network (a homelab LAN, a church/AV network, a branch office).
+// It exists from v1 even with only one row configured, so a second network
+// later is a row, not a schema migration — see spec.md. (Named "endpoints"
+// from 2.1 to 4.x; renamed back to "sites" in 5.0, when "endpoint" took over
+// the meaning of a single device.)
+export const sites = pgTable("sites", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   description: text("description"),
-  // The agent host that collects for this site: it runs the site's network
-  // checks (SNMP, ping, …), receives its syslog/traps/flows, and runs its
-  // discovery and Wake-on-LAN — all posted back over outbound HTTPS, so a
-  // remote site needs no inbound ports. Null = the engine itself does it
-  // (the engine's own LAN).
-  collectorHostId: uuid("collector_host_id").references((): AnyPgColumn => hosts.id, { onDelete: "set null" }),
+  // The endpoint (running the agent) that collects for this site: it runs
+  // the site's network checks (SNMP, ping, …), receives its syslog/traps/
+  // flows, and runs its discovery and Wake-on-LAN — all posted back over
+  // outbound HTTPS, so a remote site needs no inbound ports. Null = the
+  // engine itself does it (the engine's own LAN). AnyPgColumn lets this
+  // reference a table defined further down the file.
+  collectorEndpointId: uuid("collector_endpoint_id").references((): AnyPgColumn => endpoints.id, { onDelete: "set null" }),
   // The site's public IPs, for devices that push syslog/traps/flows straight
   // to the engine over the internet instead of via a collector: accepted by
-  // the receivers and attributed to this endpoint.
+  // the receivers and attributed to this site.
   publicIps: jsonb("public_ips").$type<string[]>().notNull().default([]),
   locationId: uuid("location_id").references(() => locations.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// A monitored host/device. Not every check needs a host row (a plain URL
-// uptime check doesn't correspond to a device you manage) — checks.hostId is
-// nullable for that reason.
-export const hosts = pgTable("hosts", {
+// An endpoint: one monitored device (server, PC, switch, printer…), in one
+// site. It may run the Looksee agent (agentApiKey set) and may be its site's
+// collector. Not every check needs an endpoint (a plain URL uptime check
+// doesn't correspond to a device you manage) — checks.endpointId is nullable
+// for that reason. (Called "hosts" before 5.0.)
+export const endpoints = pgTable("endpoints", {
   id: uuid("id").primaryKey().defaultRandom(),
-  endpointId: uuid("endpoint_id")
+  siteId: uuid("site_id")
     .notNull()
-    .references(() => endpoints.id, { onDelete: "cascade" }),
+    .references(() => sites.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   hostname: text("hostname"),
   os: text("os"),
   // Bearer token the Go agent presents when reporting in. Null until an
-  // agent is actually provisioned for this host (agentless-only hosts never
-  // get one).
+  // agent is actually provisioned for this endpoint (agentless endpoints
+  // never get one). Secret: never returned by the API.
   agentApiKey: text("agent_api_key").unique(),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   // Snapshot of what the agent actually found on its last report cycle —
@@ -308,25 +311,25 @@ export const hosts = pgTable("hosts", {
   // actually running, not what was last deployed. updateRequested is a
   // one-shot flag — set by POST /:id/request-update, consumed (flipped
   // back to false) the next time GET /api/agent/config is read for this
-  // host, whether or not the update actually succeeds; the agentVersion
+  // endpoint, whether or not the update actually succeeds; the agentVersion
   // changing on a later report is the real confirmation signal.
   agentVersion: text("agent_version"),
   updateRequested: boolean("update_requested").notNull().default(false),
-  // Set by the site collector this host's agent runs, when it is one.
+  // Set by the site collector this endpoint's agent runs, when it is one.
   collectorVersion: text("collector_version"),
   collectorLastSeenAt: timestamp("collector_last_seen_at", { withTimezone: true }),
   collectorError: text("collector_error"),
-  // For Wake-on-LAN (POST /api/hosts/:id/wake) and ARP presence checks.
+  // For Wake-on-LAN (POST /api/endpoints/:id/wake) and ARP presence checks.
   macAddress: text("mac_address"),
   // Hardware/OS inventory the 3.x agent sends when it changes (OS, kernel,
   // model, serial, CPU, RAM) — host_change checks diff against this.
   inventory: jsonb("inventory"),
-  // The agent's most recent full metrics snapshot, so "what does this host
-  // look like right now" (hosts page detail, suggested checks) is one row
-  // read rather than a scan of host_metrics.
+  // The agent's most recent full metrics snapshot, so "what does this
+  // endpoint look like right now" (endpoint page, suggested checks) is one
+  // row read rather than a scan of endpoint_metrics.
   lastSnapshot: jsonb("last_snapshot"),
   // Full process and service inventory (pid/user/CPU/memory, service state
-  // and start type), refreshed every few agent cycles — the Hosts page's
+  // and start type), refreshed every few agent cycles — the endpoint page's
   // Processes/Services tabs and the check form's pickers read these.
   processInventory: jsonb("process_inventory"),
   serviceInventory: jsonb("service_inventory"),
@@ -346,10 +349,12 @@ export const hosts = pgTable("hosts", {
 // route handler, not user-defined.
 export const checks = pgTable("checks", {
   id: uuid("id").primaryKey().defaultRandom(),
-  endpointId: uuid("endpoint_id")
+  // The site the check belongs to (always set) and, for device checks, the
+  // endpoint it's about (null for site-level checks such as a URL).
+  siteId: uuid("site_id")
     .notNull()
-    .references(() => endpoints.id, { onDelete: "cascade" }),
-  hostId: uuid("host_id").references(() => hosts.id, { onDelete: "cascade" }),
+    .references(() => sites.id, { onDelete: "cascade" }),
+  endpointId: uuid("endpoint_id").references(() => endpoints.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   type: checkType("type").notNull(),
   config: jsonb("config").notNull().default({}),
@@ -366,8 +371,8 @@ export const checks = pgTable("checks", {
   // alerts land sooner. Null = always use intervalSeconds.
   retryIntervalSeconds: integer("retry_interval_seconds"),
   // Pins an engine-executed check (ping/tcp/http/dns/ssl_cert) to this
-  // host's agent instead, so it runs from inside that host's network.
-  probeHostId: uuid("probe_host_id").references(() => hosts.id, { onDelete: "set null" }),
+  // endpoint's agent instead, so it runs from inside that endpoint's network.
+  probeEndpointId: uuid("probe_endpoint_id").references(() => endpoints.id, { onDelete: "set null" }),
   // Secret path segment for heartbeat/push_value checks: /api/hb/<token>.
   pushToken: text("push_token").unique(),
   // Per-check memory between runs: previous counters for rate math, the
@@ -420,17 +425,23 @@ export const checkResults = pgTable("check_results", {
   // Recorded during a maintenance window — excluded from SLA reports and
   // never alerts.
   inMaintenance: boolean("in_maintenance").notNull().default(false),
+  // Excluded from statistics by the admin afterwards (a false alarm, a
+  // planned outage nobody put in maintenance): treated like a maintenance
+  // result by uptime, SLA reports, status pages and charts. The result itself
+  // is kept, with the reason.
+  excluded: boolean("excluded").notNull().default(false),
+  excludedReason: text("excluded_reason"),
   checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("check_results_check_time_idx").on(t.checkId, t.checkedAt)]);
 
-// Host-level resource metrics reported by the Go agent on its own interval —
+// Endpoint resource metrics reported by the Go agent on its own interval —
 // separate from check_results because this is always-on telemetry for a
 // host, not the pass/fail result of one configured check.
-export const hostMetrics = pgTable("host_metrics", {
+export const endpointMetrics = pgTable("endpoint_metrics", {
   id: uuid("id").primaryKey().defaultRandom(),
-  hostId: uuid("host_id")
+  endpointId: uuid("endpoint_id")
     .notNull()
-    .references(() => hosts.id, { onDelete: "cascade" }),
+    .references(() => endpoints.id, { onDelete: "cascade" }),
   cpuPercent: doublePrecision("cpu_percent"),
   memPercent: doublePrecision("mem_percent"),
   diskPercent: doublePrecision("disk_percent"),
@@ -441,7 +452,7 @@ export const hostMetrics = pgTable("host_metrics", {
   // widgets.
   extended: jsonb("extended"),
   recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("host_metrics_host_time_idx").on(t.hostId, t.recordedAt)]);
+}, (t) => [index("endpoint_metrics_endpoint_time_idx").on(t.endpointId, t.recordedAt)]);
 
 // A destination alert rules can notify. `config` shape depends on `type`
 // (e.g. { to } for email, { url } for webhook, { subscription } for
@@ -514,7 +525,7 @@ export const alertEvents = pgTable("alert_events", {
 // L1. Either a one-off window (startsAt..endsAt, two absolute instants) or a
 // weekly recurrence (daysOfWeek + startTime + durationMinutes, read on the
 // wall clock of timeZone — see services/maintenance.ts). scope "all" ignores
-// targetIds; otherwise targetIds lists endpoint, host or check IDs.
+// targetIds; otherwise targetIds lists site, endpoint or check IDs (or group IDs).
 export const maintenanceWindows = pgTable("maintenance_windows", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -544,7 +555,7 @@ export const events = pgTable("events", {
   source: eventSource("source").notNull(),
   // The site the event came from: via its collector, or matched by public
   // IP for direct push. Null = received on the engine's own LAN.
-  endpointId: uuid("endpoint_id").references(() => endpoints.id, { onDelete: "cascade" }),
+  siteId: uuid("site_id").references(() => sites.id, { onDelete: "cascade" }),
   sourceIp: text("source_ip").notNull(),
   // Syslog severity 0 (emergency) .. 7 (debug); traps are stored as 4.
   severity: integer("severity"),
@@ -559,7 +570,8 @@ export const events = pgTable("events", {
 export const flowRecords = pgTable("flow_records", {
   id: uuid("id").primaryKey().defaultRandom(),
   bucket: timestamp("bucket", { withTimezone: true }).notNull(),
-  endpointId: uuid("endpoint_id").references(() => endpoints.id, { onDelete: "cascade" }),
+  // The site the flow was exported from (null = the engine's own LAN).
+  siteId: uuid("site_id").references(() => sites.id, { onDelete: "cascade" }),
   exporter: text("exporter").notNull(),
   srcAddr: text("src_addr").notNull(),
   dstAddr: text("dst_addr").notNull(),
@@ -570,26 +582,26 @@ export const flowRecords = pgTable("flow_records", {
 }, (t) => [index("flow_records_bucket_idx").on(t.bucket)]);
 
 // Every IP a MAC address has been seen with, from agent reports, discovery
-// scans and ARP checks — what ip_change checks and the Hosts page's address
+// scans and ARP checks — what ip_change checks and the endpoint page's address
 // history read. One row per (mac, ip) pair, lastSeenAt bumped on each sighting.
 export const macIpHistory = pgTable("mac_ip_history", {
   id: uuid("id").primaryKey().defaultRandom(),
   mac: text("mac").notNull(),
   ip: text("ip").notNull(),
-  hostId: uuid("host_id").references(() => hosts.id, { onDelete: "set null" }),
-  endpointId: uuid("endpoint_id").references(() => endpoints.id, { onDelete: "cascade" }),
+  endpointId: uuid("endpoint_id").references(() => endpoints.id, { onDelete: "set null" }),
+  siteId: uuid("site_id").references(() => sites.id, { onDelete: "cascade" }),
   source: text("source").notNull(),
   firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [uniqueIndex("mac_ip_history_mac_ip_idx").on(t.mac, t.ip), index("mac_ip_history_host_idx").on(t.hostId)]);
+}, (t) => [uniqueIndex("mac_ip_history_mac_ip_idx").on(t.mac, t.ip), index("mac_ip_history_endpoint_idx").on(t.endpointId)]);
 
 // On-demand network discovery runs (Discovery page): which range was swept
 // and what answered.
 export const discoveryScans = pgTable("discovery_scans", {
   id: uuid("id").primaryKey().defaultRandom(),
-  // Scans in an endpoint with a collector run there (status "queued" until
-  // the collector picks them up); otherwise the engine runs them.
-  endpointId: uuid("endpoint_id").references(() => endpoints.id, { onDelete: "cascade" }),
+  // Scans of a site with a collector run there (status "queued" until the
+  // collector picks them up); otherwise the engine runs them.
+  siteId: uuid("site_id").references(() => sites.id, { onDelete: "cascade" }),
   cidr: text("cidr").notNull(),
   community: text("community"),
   status: text("status").notNull().default("running"),
@@ -604,9 +616,9 @@ export const discoveryScans = pgTable("discovery_scans", {
 // collector's next config poll and marked done when it reports back.
 export const collectorJobs = pgTable("collector_jobs", {
   id: uuid("id").primaryKey().defaultRandom(),
-  endpointId: uuid("endpoint_id")
+  siteId: uuid("site_id")
     .notNull()
-    .references(() => endpoints.id, { onDelete: "cascade" }),
+    .references(() => sites.id, { onDelete: "cascade" }),
   kind: text("kind").notNull(),
   payload: jsonb("payload").notNull().default({}),
   status: text("status").notNull().default("queued"),
@@ -677,12 +689,12 @@ export const backupRuns = pgTable("backup_runs", {
 export const widgetType = pgEnum("widget_type", [
   "status_tile",
   "group_summary",
-  "host_metrics",
+  "endpoint_metrics",
   "uptime_history",
   "note",
   "alert_history",
   "network_bandwidth",
-  "all_hosts",
+  "all_endpoints",
   "backup_status",
   "clock",
   "section_header",
@@ -701,7 +713,7 @@ export const dashboards = pgTable("dashboards", {
 });
 
 // A widget's `config` shape depends on `type` — { checkId } for status_tile,
-// { endpointId } for group_summary — same "fixed shape per type, not a generic
+// { siteId } for group_summary — same "fixed shape per type, not a generic
 // template" posture as checks.config. x/y/w/h are react-grid-layout's own
 // grid units, persisted as-is so the canvas restores exactly where it was
 // left; there's no separate "layout" concept beyond these four columns.
@@ -734,6 +746,53 @@ export const webPushSubscriptions = pgTable("web_push_subscriptions", {
 });
 
 // Severity of an engine log entry, lowest to highest.
+// A group is a named set of locations, sites, endpoints and/or checks that
+// cuts across the Location → Site → Endpoint hierarchy ("all printers",
+// "Windows servers", "customer X"). "manual" groups list their members in
+// group_members; "filter" groups are saved rules, evaluated live (see
+// services/groups.ts), so new matching objects join automatically. Groups are
+// targets for bulk actions, maintenance windows and exclusion lists.
+export const groupKind = pgEnum("group_kind", ["manual", "filter"]);
+
+// The rules of a filter group: every condition (match "all") or any of them
+// (match "any") must hold. `field` and `op` are checked against the allowed
+// lists in services/groups.ts before a group is saved.
+export type GroupRules = {
+  match: "all" | "any";
+  conditions: { field: string; op: string; value: string }[];
+};
+
+export const groups = pgTable("groups", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  description: text("description"),
+  kind: groupKind("kind").notNull().default("manual"),
+  // Filter groups only: which kind of object the rules select — "location",
+  // "site", "endpoint" or "check". Null for manual groups (which can mix).
+  target: text("target"),
+  rules: jsonb("rules").$type<GroupRules>().notNull().default({ match: "all", conditions: [] }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Members of manual groups. One table for every kind of member, so
+// memberId can't be a database foreign key; a member whose object was
+// deleted is simply skipped when the group is resolved, and cleaned up then.
+export const groupMembers = pgTable("group_members", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  groupId: uuid("group_id")
+    .notNull()
+    .references(() => groups.id, { onDelete: "cascade" }),
+  // "location", "site", "endpoint" or "check".
+  memberType: text("member_type").notNull(),
+  memberId: uuid("member_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // An object can be in a given group only once.
+  uniqueIndex("group_members_unique_idx").on(t.groupId, t.memberType, t.memberId),
+  // "Which groups is this endpoint in?" lookups.
+  index("group_members_member_idx").on(t.memberType, t.memberId),
+]);
+
 export const logLevel = pgEnum("log_level", ["debug", "info", "warn", "error"]);
 
 // Server-side structured logging — separate from pm2's stdout capture, this

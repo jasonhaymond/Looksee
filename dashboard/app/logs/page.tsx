@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type LogEntry, type LogLevel } from "../lib/api";
-import { TopNav } from "../components/TopNav";
 import { Tooltip } from "../components/Tooltip";
 import { PageHelp } from "../components/PageHelp";
+import { pollEvery } from "../lib/poll";
 
 const POLL_MS = 5_000;
 
@@ -81,7 +81,7 @@ export default function LogsPage() {
   useEffect(() => {
     if (!authChecked) return;
     loadAll();
-    const timer = setInterval(loadAll, POLL_MS);
+    const timer = pollEvery(loadAll, POLL_MS);
     return () => clearInterval(timer);
   }, [authChecked, loadAll]);
 
@@ -89,7 +89,6 @@ export default function LogsPage() {
 
   return (
     <main className="mx-auto max-w-4xl p-4 sm:p-6">
-      <TopNav active="/logs" />
       <h2 className="mb-4 inline-flex items-center text-lg font-medium">
         Logs
         <Tooltip text="Debug: verbose technical detail, mainly for troubleshooting. Info: routine events worth knowing about. Warn/Error: something needs attention — these are the ones with a plain-language explanation alongside the technical detail." />

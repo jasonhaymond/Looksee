@@ -9,7 +9,7 @@ import * as snmp from "net-snmp";
 import { app } from "../src/app.js";
 import { loginWith2fa } from "./helpers.js";
 import { db } from "../src/db/index.js";
-import { alertRules, checks, checkResults, endpoints, hosts, locations, macIpHistory, notificationChannels, users } from "../src/db/schema.js";
+import { alertRules, checks, checkResults, sites, endpoints, locations, macIpHistory, notificationChannels, users } from "../src/db/schema.js";
 import { decodeVarbindValue, displayValue } from "../src/services/probes/snmp.js";
 import { evaluateScriptOutput } from "../src/services/scriptOutput.js";
 import { remediationFor } from "../src/services/remediation.js";
@@ -22,8 +22,8 @@ const password = "TestPass123";
 let cookie: string;
 let epA: string;
 let epB: string;
-let hostA: string;
-let hostB: string;
+let endpointA: string;
+let endpointB: string;
 const channelIds: string[] = [];
 const locationIds: string[] = [];
 
@@ -35,9 +35,9 @@ let hookBase: string;
 beforeAll(async () => {
   await db.insert(users).values({ email, passwordHash: await bcrypt.hash(password, 10) });
   cookie = await loginWith2fa(email, password);
-  [epA, epB] = (await db.insert(endpoints).values([{ name: `v33-a-${crypto.randomUUID()}` }, { name: `v33-b-${crypto.randomUUID()}` }]).returning()).map((e) => e.id);
-  hostA = (await db.insert(hosts).values({ endpointId: epA, name: "alpha", hostname: "10.9.0.1" }).returning())[0].id;
-  hostB = (await db.insert(hosts).values({ endpointId: epB, name: "bravo", hostname: "10.9.0.2" }).returning())[0].id;
+  [epA, epB] = (await db.insert(sites).values([{ name: `v33-a-${crypto.randomUUID()}` }, { name: `v33-b-${crypto.randomUUID()}` }]).returning()).map((e) => e.id);
+  endpointA = (await db.insert(endpoints).values({ siteId: epA, name: "alpha", hostname: "10.9.0.1" }).returning())[0].id;
+  endpointB = (await db.insert(endpoints).values({ siteId: epB, name: "bravo", hostname: "10.9.0.2" }).returning())[0].id;
   hookServer = http.createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -53,7 +53,7 @@ beforeAll(async () => {
 afterAll(async () => {
   hookServer.close();
   await db.delete(users).where(eq(users.email, email));
-  await db.delete(endpoints).where(inArray(endpoints.id, [epA, epB]));
+  await db.delete(sites).where(inArray(sites.id, [epA, epB]));
   if (channelIds.length) await db.delete(notificationChannels).where(inArray(notificationChannels.id, channelIds));
   if (locationIds.length) await db.delete(locations).where(inArray(locations.id, locationIds));
   await db.delete(macIpHistory).where(inArray(macIpHistory.mac, ["02:00:00:00:33:01"]));
@@ -138,20 +138,20 @@ describe("channels", () => {
 });
 
 describe("locations", () => {
-  it("groups endpoints and flows down to checks", async () => {
-    const loc = await request(app).post("/api/locations").set("Cookie", cookie).send({ name: `Church ${crypto.randomUUID()}`, address: "1 Main St", endpointIds: [epA] });
+  it("groups sites and flows down to checks", async () => {
+    const loc = await request(app).post("/api/locations").set("Cookie", cookie).send({ name: `Church ${crypto.randomUUID()}`, address: "1 Main St", siteIds: [epA] });
     expect(loc.status).toBe(201);
     locationIds.push(loc.body.id);
-    const ep = (await request(app).get("/api/endpoints").set("Cookie", cookie)).body.find((e: { id: string }) => e.id === epA);
+    const ep = (await request(app).get("/api/sites").set("Cookie", cookie)).body.find((e: { id: string }) => e.id === epA);
     expect(ep.locationId).toBe(loc.body.id);
 
-    const c = await request(app).post("/api/checks").set("Cookie", cookie).send({ endpointId: epA, name: "loc ping", type: "ping", config: { host: "127.0.0.1" } });
+    const c = await request(app).post("/api/checks").set("Cookie", cookie).send({ siteId: epA, name: "loc ping", type: "ping", config: { host: "127.0.0.1" } });
     const list = (await request(app).get("/api/checks").set("Cookie", cookie)).body as { id: string; locationId: string | null }[];
     expect(list.find((x) => x.id === c.body.id)!.locationId).toBe(loc.body.id);
 
     // Deleting the location keeps the endpoint, just unassigned.
     await request(app).delete(`/api/locations/${loc.body.id}`).set("Cookie", cookie);
-    expect((await db.query.endpoints.findFirst({ where: eq(endpoints.id, epA) }))!.locationId).toBeNull();
+    expect((await db.query.sites.findFirst({ where: eq(sites.id, epA) }))!.locationId).toBeNull();
   });
 });
 
@@ -162,43 +162,43 @@ describe("batch create and duplicate", () => {
     const res = await request(app)
       .post("/api/checks/batch")
       .set("Cookie", cookie)
-      .send({ type: "ping", name: "Ping {{host}}", config: { host: "{{address}}" }, targets: [{ hostId: hostA }, { hostId: hostB }], alertRule: { channelIds: [ch[0].id], consecutiveFailures: 3 } });
+      .send({ type: "ping", name: "Ping {{host}}", config: { host: "{{address}}" }, targets: [{ endpointId: endpointA }, { endpointId: endpointB }], alertRule: { channelIds: [ch[0].id], consecutiveFailures: 3 } });
     expect(res.status).toBe(201);
     expect(res.body.created.map((c: { name: string }) => c.name).sort()).toEqual(["Ping alpha", "Ping bravo"]);
     const bravo = res.body.created.find((c: { name: string }) => c.name === "Ping bravo");
     expect(bravo.config.host).toBe("10.9.0.2");
-    expect(bravo.endpointId).toBe(epB);
+    expect(bravo.siteId).toBe(epB);
     const rules = await db.query.alertRules.findMany({ where: inArray(alertRules.checkId, res.body.created.map((c: { id: string }) => c.id)) });
     expect(rules.map((r) => r.consecutiveFailures)).toEqual([3, 3]);
   });
 
   it("reports targets that don't fit instead of failing the batch", async () => {
-    const res = await request(app).post("/api/checks/batch").set("Cookie", cookie).send({ type: "agent_service", name: "svc", config: { serviceName: "nginx" }, targets: [{ hostId: hostA }, { endpointId: epB }] });
+    const res = await request(app).post("/api/checks/batch").set("Cookie", cookie).send({ type: "agent_service", name: "svc", config: { serviceName: "nginx" }, targets: [{ endpointId: endpointA }, { siteId: epB }] });
     expect(res.status).toBe(201);
     expect(res.body.created).toHaveLength(1);
-    expect(res.body.errors[0].error).toMatch(/hostId/);
+    expect(res.body.errors[0].error).toMatch(/endpointId/);
   });
 
-  it("duplicates to other hosts, staying enabled and keeping alert rules", async () => {
-    const orig = await request(app).post("/api/checks").set("Cookie", cookie).send({ endpointId: epA, hostId: hostA, name: "svc dup", type: "agent_service", config: { serviceName: "sshd" }, alertRule: { channelIds: [channelIds[channelIds.length - 1]] } });
-    const dup = await request(app).post("/api/checks/bulk").set("Cookie", cookie).send({ ids: [orig.body.id], action: "duplicate", hostIds: [hostB] });
+  it("duplicates to other endpoints, staying enabled and keeping alert rules", async () => {
+    const orig = await request(app).post("/api/checks").set("Cookie", cookie).send({ siteId: epA, endpointId: endpointA, name: "svc dup", type: "agent_service", config: { serviceName: "sshd" }, alertRule: { channelIds: [channelIds[channelIds.length - 1]] } });
+    const dup = await request(app).post("/api/checks/bulk").set("Cookie", cookie).send({ ids: [orig.body.id], action: "duplicate", endpointIds: [endpointB] });
     expect(dup.body.affected).toBe(1);
     const copy = await db.query.checks.findFirst({ where: eq(checks.name, "svc dup (bravo)") });
     expect(copy).toBeTruthy();
     expect(copy!.enabled).toBe(true);
-    expect(copy!.hostId).toBe(hostB);
-    expect(copy!.endpointId).toBe(epB);
+    expect(copy!.endpointId).toBe(endpointB);
+    expect(copy!.siteId).toBe(epB);
     expect((await db.query.alertRules.findMany({ where: eq(alertRules.checkId, copy!.id) })).length).toBe(1);
 
-    const toEndpoint = await request(app).post("/api/checks/bulk").set("Cookie", cookie).send({ ids: [orig.body.id], action: "duplicate", endpointIds: [epB] });
-    expect(toEndpoint.body.affected).toBe(0);
-    expect(toEndpoint.body.errors[0].error).toMatch(/hostId/);
+    const toSite = await request(app).post("/api/checks/bulk").set("Cookie", cookie).send({ ids: [orig.body.id], action: "duplicate", siteIds: [epB] });
+    expect(toSite.body.affected).toBe(0);
+    expect(toSite.body.errors[0].error).toMatch(/endpointId/);
   });
 });
 
 describe("check page stats", () => {
   it("summarizes results and returns a bucketed series", async () => {
-    const c = await request(app).post("/api/checks").set("Cookie", cookie).send({ endpointId: epA, name: "stats", type: "ping", config: { host: "127.0.0.1" } });
+    const c = await request(app).post("/api/checks").set("Cookie", cookie).send({ siteId: epA, name: "stats", type: "ping", config: { host: "127.0.0.1" } });
     const now = Date.now();
     await db.insert(checkResults).values([
       { checkId: c.body.id, status: "up", latencyMs: 10, value: 1, checkedAt: new Date(now - 3_000_000) },
@@ -219,16 +219,16 @@ describe("check page stats", () => {
 describe("IP change tracking", () => {
   it("flags a MAC seen at a new address, then settles", async () => {
     const mac = "02:00:00:00:33:01";
-    await recordSighting({ mac, ip: "10.9.0.50", source: "test", hostId: hostA });
-    const before = await probeIpChange({}, { checkId: "", hostId: hostA, intervalSeconds: 60, state: {} });
+    await recordSighting({ mac, ip: "10.9.0.50", source: "test", endpointId: endpointA });
+    const before = await probeIpChange({}, { checkId: "", endpointId: endpointA, intervalSeconds: 60, state: {} });
     expect(before.status).toBe("up");
     // Age the first sighting so the second is the newer address.
     await db.update(macIpHistory).set({ firstSeenAt: new Date(Date.now() - 3_600_000 * 48), lastSeenAt: new Date(Date.now() - 60_000) }).where(eq(macIpHistory.mac, mac));
-    await recordSighting({ mac, ip: "10.9.0.77", source: "test", hostId: hostA });
-    const after = await probeIpChange({ holdMinutes: 60 }, { checkId: "", hostId: hostA, intervalSeconds: 60, state: {} });
+    await recordSighting({ mac, ip: "10.9.0.77", source: "test", endpointId: endpointA });
+    const after = await probeIpChange({ holdMinutes: 60 }, { checkId: "", endpointId: endpointA, intervalSeconds: 60, state: {} });
     expect(after.status).toBe("warn");
     expect(after.message).toMatch(/10\.9\.0\.50 to 10\.9\.0\.77/);
-    const rows = (await request(app).get(`/api/hosts/${hostA}/addresses`).set("Cookie", cookie)).body;
+    const rows = (await request(app).get(`/api/endpoints/${endpointA}/addresses`).set("Cookie", cookie)).body;
     expect(rows.map((r: { ip: string }) => r.ip)).toEqual(expect.arrayContaining(["10.9.0.50", "10.9.0.77"]));
   });
 });

@@ -32,7 +32,7 @@ export type CheckTypeDef = {
   // the value means.
   value?: { unit: string; hint: string };
   latency?: boolean;
-  needsHost?: boolean;
+  needsEndpoint?: boolean;
   remoteProbe?: boolean;
   // Hidden from the "add" picker (kept for existing checks).
   legacy?: boolean;
@@ -44,7 +44,7 @@ const not = (key: string, ...values: string[]) => (c: Record<string, unknown>) =
 
 const insecure: Field = { key: "insecureSkipVerify", label: "Skip TLS certificate verification", kind: "checkbox", help: "For self-signed or internal certificates only — weakens security for anything public-facing.", advanced: true };
 const timeout = (d: number): Field => ({ key: "timeoutSeconds", label: "Timeout (seconds)", kind: "number", default: d, advanced: true });
-const host = (placeholder = "10.0.0.5"): Field => ({ key: "host", label: "Host", kind: "text", required: true, placeholder, help: "Hostname or IP address." });
+const host = (placeholder = "10.0.0.5"): Field => ({ key: "host", label: "Endpoint", kind: "text", required: true, placeholder, help: "Hostname or IP address." });
 const port = (placeholder: string, required = false): Field => ({ key: "port", label: "Port", kind: "number", placeholder, required });
 const severity = (d = "down"): Field => ({ key: "severity", label: "Status when triggered", kind: "select", options: opts(["down", "Down (critical)"], ["warn", "Warn"]), default: d });
 const holdMinutes: Field = { key: "holdMinutes", label: "Hold the alert status for (minutes)", kind: "number", default: 15, help: "One-time events stay failing this long so a normal 2-in-a-row alert rule still catches them.", advanced: true };
@@ -65,7 +65,7 @@ export const CATEGORIES = [
   "Databases & apps",
   "Network devices & hardware",
   "Virtualization & containers",
-  "Host metrics (agent)",
+  "Endpoint metrics (agent)",
   "Services & processes (agent)",
   "Files & logs (agent)",
   "OS & hardware (agent)",
@@ -364,7 +364,7 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     type: "prometheus",
     label: "Prometheus metric",
     category: "Databases & apps",
-    description: "Scrapes any Prometheus /metrics endpoint (node_exporter, cAdvisor, Caddy, Traefik, …) and puts thresholds on one metric.",
+    description: "Scrapes any Prometheus /metrics site (node_exporter, cAdvisor, Caddy, Traefik, …) and puts thresholds on one metric.",
     value: { unit: "", hint: "the aggregated metric (per second if 'rate' is on)" },
     fields: [
       { key: "url", label: "Metrics URL", kind: "text", required: true, placeholder: "http://host:9100/metrics", wide: true },
@@ -479,7 +479,7 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     category: "Network devices & hardware",
     description: "Fails when matching SNMP traps arrive (point devices' trap destination at the engine, UDP 1162 by default).",
     value: { unit: "", hint: "matching traps in the window" },
-    fields: [{ key: "sourceIp", label: "From IP", kind: "text", placeholder: "any" }, { key: "pattern", label: "Text matches (regex)", kind: "text", placeholder: "linkDown" }, { key: "windowMinutes", label: "Window (minutes)", kind: "number", default: 5 }, severity()],
+    fields: [{ key: "sourceIp", label: "From IP", kind: "text", placeholder: "any" }, { key: "pattern", label: "Text matches (regex)", kind: "text", placeholder: "linkDown" }, { key: "windowMinutes", label: "Window (minutes)", kind: "number", default: 5 }, { key: "clearPattern", label: "Clears when text matches (regex)", kind: "text", placeholder: "linkUp", help: "A matching event arriving after a failure recovers the check straight away — e.g. linkUp after linkDown. Same sender/site filters apply." }, { key: "autoRecoverMinutes", label: "Recover on its own after (minutes)", kind: "number", placeholder: "same as window", help: "With no thresholds, the check stays failing until this long after the newest matching event. Blank = the window length." }, { key: "exclude", label: "Ignore messages containing", kind: "textarea", advanced: true, placeholder: "one text per line", help: "Events whose message contains any of these (case-insensitive) are ignored entirely." }, severity()],
   },
   {
     type: "syslog_match",
@@ -492,6 +492,7 @@ export const CHECK_TYPES: CheckTypeDef[] = [
       { key: "pattern", label: "Text matches (regex)", kind: "text", placeholder: "link down|failed" },
       { key: "maxSeverity", label: "Severity at or above", kind: "select", options: opts(["", "any"], ["0", "emergency"], ["1", "alert"], ["2", "critical"], ["3", "error"], ["4", "warning"], ["5", "notice"], ["6", "info"]), default: "3" },
       { key: "windowMinutes", label: "Window (minutes)", kind: "number", default: 5 },
+      { key: "clearPattern", label: "Clears when text matches (regex)", kind: "text", placeholder: "linkUp", help: "A matching event arriving after a failure recovers the check straight away — e.g. linkUp after linkDown. Same sender/site filters apply." }, { key: "autoRecoverMinutes", label: "Recover on its own after (minutes)", kind: "number", placeholder: "same as window", help: "With no thresholds, the check stays failing until this long after the newest matching event. Blank = the window length." }, { key: "exclude", label: "Ignore messages containing", kind: "textarea", advanced: true, placeholder: "one text per line", help: "Events whose message contains any of these (case-insensitive) are ignored entirely." },
       severity(),
     ],
   },
@@ -538,10 +539,10 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     description: "VM power state, datastore space, or host health over the vSphere API.",
     value: { unit: "", hint: "VMs not powered on, or datastore %" },
     fields: [
-      { key: "url", label: "Host / vCenter URL", kind: "text", required: true, placeholder: "https://esxi.lan", wide: true },
+      { key: "url", label: "Endpoint / vCenter URL", kind: "text", required: true, placeholder: "https://esxi.lan", wide: true },
       { key: "username", label: "Username", kind: "text" },
       { key: "password", label: "Password", kind: "secret" },
-      { key: "target", label: "Check", kind: "select", options: opts(["vm", "VM power state"], ["datastore", "Datastore space"], ["host", "Host health"]), default: "vm" },
+      { key: "target", label: "Check", kind: "select", options: opts(["vm", "VM power state"], ["datastore", "Datastore space"], ["host", "Endpoint health"]), default: "vm" },
       { key: "name", label: "Name (or * for all)", kind: "text", placeholder: "*" },
       { ...insecure, default: true },
     ],
@@ -551,7 +552,7 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     label: "Hyper-V VMs",
     category: "Virtualization & containers",
     description: "VM state on a Hyper-V host (via the agent on that host).",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: "", hint: "VMs not running (or the VM's CPU %)" },
     fields: [{ key: "vmName", label: "VM name (or * for all)", kind: "text", default: "*" }, { key: "ignore", label: "Ignore VMs", kind: "text", placeholder: "comma-separated" }, { key: "expectedState", label: "Expected state", kind: "text", default: "Running", advanced: true }, severity()],
   },
@@ -560,7 +561,7 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     label: "Docker containers",
     category: "Virtualization & containers",
     description: "Container running/healthy state, restarts, or CPU/memory — via the agent on the Docker host.",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: "", hint: "problem count, restarts, or CPU/memory %" },
     fields: [
       { key: "container", label: "Container (name, glob, or *)", kind: "text", default: "*", suggest: "containers" },
@@ -571,25 +572,25 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     ],
   },
 
-  // ---- Host metrics (agent) ----
+  // ---- Endpoint metrics (agent) ----
   {
     type: "host_metric",
-    label: "Host metric",
-    category: "Host metrics (agent)",
+    label: "Endpoint metric",
+    category: "Endpoint metrics (agent)",
     description: "Any of 60+ metrics the agent reports: CPU detail, load, swap, every disk, inodes, I/O, interfaces, temperatures, SMART, RAID, updates, firewall, Defender, encryption…",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: "", hint: "the metric" },
     fields: [{ key: "metric", label: "Metric", kind: "metric", required: true }],
   },
-  { type: "host_cpu", label: "CPU usage (simple)", category: "Host metrics (agent)", description: "Overall CPU %. Host metric offers more detail.", needsHost: true, legacy: true, fields: [{ key: "warnPercent", label: "Warn at %", kind: "number" }, { key: "criticalPercent", label: "Critical at %", kind: "number" }] },
-  { type: "host_memory", label: "Memory usage (simple)", category: "Host metrics (agent)", description: "Overall memory %.", needsHost: true, legacy: true, fields: [{ key: "warnPercent", label: "Warn at %", kind: "number" }, { key: "criticalPercent", label: "Critical at %", kind: "number" }] },
-  { type: "host_disk", label: "Disk usage (simple)", category: "Host metrics (agent)", description: "The agent's main disk %. Host metric covers every mount.", needsHost: true, legacy: true, fields: [{ key: "warnPercent", label: "Warn at %", kind: "number" }, { key: "criticalPercent", label: "Critical at %", kind: "number" }] },
+  { type: "host_cpu", label: "CPU usage (simple)", category: "Endpoint metrics (agent)", description: "Overall CPU %. Endpoint metric offers more detail.", needsEndpoint: true, legacy: true, fields: [{ key: "warnPercent", label: "Warn at %", kind: "number" }, { key: "criticalPercent", label: "Critical at %", kind: "number" }] },
+  { type: "host_memory", label: "Memory usage (simple)", category: "Endpoint metrics (agent)", description: "Overall memory %.", needsEndpoint: true, legacy: true, fields: [{ key: "warnPercent", label: "Warn at %", kind: "number" }, { key: "criticalPercent", label: "Critical at %", kind: "number" }] },
+  { type: "host_disk", label: "Disk usage (simple)", category: "Endpoint metrics (agent)", description: "The agent's main disk %. Endpoint metric covers every mount.", needsEndpoint: true, legacy: true, fields: [{ key: "warnPercent", label: "Warn at %", kind: "number" }, { key: "criticalPercent", label: "Critical at %", kind: "number" }] },
   {
     type: "disk_forecast",
     label: "Disk full forecast",
-    category: "Host metrics (agent)",
+    category: "Endpoint metrics (agent)",
     description: "Projects when a disk fills at its recent growth rate.",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: " days", hint: "days until full" },
     fields: [
       { key: "mount", label: "Mount (blank = soonest to fill)", kind: "text", suggest: "mounts" },
@@ -598,25 +599,25 @@ export const CHECK_TYPES: CheckTypeDef[] = [
       { key: "criticalDays", label: "Critical when full within (days)", kind: "number", default: 3 },
     ],
   },
-  { type: "host_reboot", label: "Reboot detection", category: "Host metrics (agent)", description: "Flags every reboot so an unplanned one doesn't go unnoticed.", needsHost: true, fields: [severity("warn"), holdMinutes] },
+  { type: "host_reboot", label: "Reboot detection", category: "Endpoint metrics (agent)", description: "Flags every reboot so an unplanned one doesn't go unnoticed.", needsEndpoint: true, fields: [severity("warn"), holdMinutes] },
   {
     type: "host_change",
     label: "Change detection",
-    category: "Host metrics (agent)",
+    category: "Endpoint metrics (agent)",
     description: "Alerts when something about the host changes: new login sessions, listening ports, hardware/OS inventory, interfaces, mounts.",
-    needsHost: true,
+    needsEndpoint: true,
     fields: [{ key: "what", label: "Watch", kind: "select", options: opts(["sessions", "New login sessions"], ["listening_ports", "Listening ports"], ["inventory", "Hardware / OS inventory"], ["interfaces", "Network interfaces"], ["mounts", "Mounted filesystems"]), default: "sessions" }, severity("warn"), holdMinutes],
   },
-  { type: "agent_heartbeat", label: "Agent online", category: "Host metrics (agent)", description: "Fails if the host's agent stops reporting — host down, agent crashed, or network cut.", needsHost: true, value: { unit: " s", hint: "seconds since the last report" }, fields: [{ key: "maxSilenceSeconds", label: "Allowed silence (seconds)", kind: "number", default: 180 }] },
+  { type: "agent_heartbeat", label: "Agent online", category: "Endpoint metrics (agent)", description: "Fails if the host's agent stops reporting — host down, agent crashed, or network cut.", needsEndpoint: true, value: { unit: " s", hint: "seconds since the last report" }, fields: [{ key: "maxSilenceSeconds", label: "Allowed silence (seconds)", kind: "number", default: 180 }] },
 
   // ---- Services & processes (agent) ----
-  { type: "agent_service", label: "OS service", category: "Services & processes (agent)", description: "Is a systemd unit / Windows service running. On Linux also counts restarts.", needsHost: true, fields: [{ key: "serviceName", label: "Service", kind: "text", required: true, suggest: "services" }, { key: "maxRestarts", label: "Warn above N restarts / hour", kind: "number", help: "systemd only." }] },
+  { type: "agent_service", label: "OS service", category: "Services & processes (agent)", description: "Is a systemd unit / Windows service running. On Linux also counts restarts.", needsEndpoint: true, fields: [{ key: "serviceName", label: "Service", kind: "text", required: true, suggest: "services" }, { key: "maxRestarts", label: "Warn above N restarts / hour", kind: "number", help: "systemd only." }] },
   {
     type: "agent_process",
     label: "Process",
     category: "Services & processes (agent)",
     description: "Process running (by name substring), how many, and their CPU / memory.",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: "", hint: "count, CPU %, or MB" },
     fields: [
       { key: "serviceName", label: "Process name", kind: "text", required: true, suggest: "processes" },
@@ -625,14 +626,14 @@ export const CHECK_TYPES: CheckTypeDef[] = [
       { key: "maxCount", label: "At most N running", kind: "number" },
     ],
   },
-  { type: "agent_services_overview", label: "Failed / stopped services", category: "Services & processes (agent)", description: "Any failed systemd unit (Linux), or any automatic-start service that isn't running (Windows).", needsHost: true, value: { unit: "", hint: "how many" }, fields: [{ key: "exclude", label: "Ignore", kind: "textarea", placeholder: "one name per line or comma-separated" }, { key: "includeCleanStops", label: "Also count services that stopped cleanly (Windows)", kind: "checkbox", help: "Off by default: updaters and on-demand services routinely stop themselves with exit code 0." }, severity()] },
-  { type: "agent_scheduled_task", label: "Scheduled task / timer", category: "Services & processes (agent)", description: "Last result and run time of a Windows scheduled task or a systemd timer. (For cron jobs, use a Heartbeat.)", needsHost: true, value: { unit: " h", hint: "hours since it last ran" }, fields: [{ key: "taskName", label: "Task / unit", kind: "text", required: true, placeholder: "\\Backup\\Nightly or backup.timer" }, { key: "maxAgeHours", label: "Fail if it hasn't run for (hours)", kind: "number" }] },
+  { type: "agent_services_overview", label: "Failed / stopped services", category: "Services & processes (agent)", description: "Any failed systemd unit (Linux), or any automatic-start service that isn't running (Windows).", needsEndpoint: true, value: { unit: "", hint: "how many" }, fields: [{ key: "exclude", label: "Ignore", kind: "textarea", placeholder: "one name per line or comma-separated" }, { key: "includeCleanStops", label: "Also count services that stopped cleanly (Windows)", kind: "checkbox", help: "Off by default: updaters and on-demand services routinely stop themselves with exit code 0." }, severity()] },
+  { type: "agent_scheduled_task", label: "Scheduled task / timer", category: "Services & processes (agent)", description: "Last result and run time of a Windows scheduled task or a systemd timer. (For cron jobs, use a Heartbeat.)", needsEndpoint: true, value: { unit: " h", hint: "hours since it last ran" }, fields: [{ key: "taskName", label: "Task / unit", kind: "text", required: true, placeholder: "\\Backup\\Nightly or backup.timer" }, { key: "maxAgeHours", label: "Fail if it hasn't run for (hours)", kind: "number" }] },
   {
     type: "agent_script",
     label: "Custom script",
     category: "Services & processes (agent)",
     description: "Runs a script or command wrapper from the agent's script_dir and checks its output and exit code. Without an expected output, exit 0/1/2 = up/warn/down (Nagios convention); a number in the output becomes the value.",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: "", hint: "perfdata or first number in the output" },
     fields: [
       { key: "script", label: "Script file name", kind: "text", required: true, placeholder: "check_queue.sh", suggest: "scripts", help: "Must sit directly in script_dir on that host — the list shows what the agent found there. Looksee never sends commands to run; see the agent README → Custom scripts." },
@@ -653,7 +654,7 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     label: "File / folder",
     category: "Files & logs (agent)",
     description: "Exists, age (did the backup land?), size, file count, folder size, checksum drift, or a folder watchdog for created/changed/deleted files.",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: "", hint: "minutes old, MB, or count" },
     fields: [
       { key: "path", label: "Path", kind: "text", required: true, placeholder: "/srv/backups or C:\\Backups", wide: true },
@@ -678,7 +679,7 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     label: "Log file pattern",
     category: "Files & logs (agent)",
     description: "Tails a log file (follows rotation; globs allowed) and counts new lines matching a pattern.",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: "", hint: "new matching lines" },
     fields: [
       { key: "path", label: "Log file", kind: "text", required: true, placeholder: "/var/log/app/*.log", wide: true },
@@ -693,7 +694,7 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     label: "systemd journal",
     category: "Files & logs (agent)",
     description: "New journal entries for a unit and/or priority, optionally filtered by text (Linux).",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: "", hint: "new matching entries" },
     fields: [{ key: "unit", label: "Unit", kind: "text", suggest: "services" }, { key: "priority", label: "Priority at or above", kind: "select", options: opts(["", "any"], "emerg", "alert", "crit", "err", "warning", "notice", "info"), default: "err" }, { key: "pattern", label: "Text matches (regex)", kind: "text" }, severity()],
   },
@@ -702,7 +703,7 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     label: "Windows Event Log",
     category: "Files & logs (agent)",
     description: "New events by log, ID, level and source — disk errors, failed logons (4625), unexpected shutdowns (6008)…",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: "", hint: "new matching events" },
     fields: [
       { key: "logName", label: "Log", kind: "text", default: "System", placeholder: "System, Application, Security" },
@@ -715,23 +716,23 @@ export const CHECK_TYPES: CheckTypeDef[] = [
   },
 
   // ---- OS & hardware (agent) ----
-  { type: "agent_perfcounter", label: "Windows performance counter", category: "OS & hardware (agent)", description: "Any Windows perf counter path (wildcards combined).", needsHost: true, value: { unit: "", hint: "counter value" }, fields: [{ key: "counter", label: "Counter path", kind: "text", required: true, placeholder: "\\Processor(_Total)\\% Processor Time", wide: true }, { key: "aggregation", label: "Combine instances by", kind: "select", options: opts("sum", "avg", "max", "min"), default: "sum" }] },
+  { type: "agent_perfcounter", label: "Windows performance counter", category: "OS & hardware (agent)", description: "Any Windows perf counter path (wildcards combined).", needsEndpoint: true, value: { unit: "", hint: "counter value" }, fields: [{ key: "counter", label: "Counter path", kind: "text", required: true, placeholder: "\\Processor(_Total)\\% Processor Time", wide: true }, { key: "aggregation", label: "Combine instances by", kind: "select", options: opts("sum", "avg", "max", "min"), default: "sum" }] },
   {
     type: "agent_vpn",
     label: "VPN tunnel",
     category: "OS & hardware (agent)",
     description: "WireGuard handshake age, or that a tunnel interface (OpenVPN, Tailscale, ZeroTier…) exists and is up.",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: " s", hint: "seconds since the last WireGuard handshake" },
     fields: [{ key: "kind", label: "Type", kind: "select", options: opts(["wireguard", "WireGuard"], ["interface", "Any tunnel interface"]), default: "wireguard" }, { key: "interface", label: "Interface", kind: "text", required: true, suggest: "interfaces", placeholder: "wg0" }, { key: "peer", label: "Peer public key", kind: "text", showIf: is("kind", "wireguard"), advanced: true }, { key: "maxHandshakeAgeSeconds", label: "Max handshake age (s)", kind: "number", default: 300, showIf: is("kind", "wireguard") }],
   },
-  { type: "agent_ups", label: "UPS (NUT / apcupsd)", category: "OS & hardware (agent)", description: "A UPS attached to this host: on battery = warn, low battery = down.", needsHost: true, value: { unit: "%", hint: "battery charge" }, fields: [{ key: "driver", label: "Software", kind: "select", options: opts(["nut", "Network UPS Tools (upsc)"], ["apcupsd", "apcupsd (apcaccess)"]), default: "nut" }, { key: "upsName", label: "UPS name", kind: "text", default: "ups@localhost", showIf: is("driver", "nut") }] },
+  { type: "agent_ups", label: "UPS (NUT / apcupsd)", category: "OS & hardware (agent)", description: "A UPS attached to this host: on battery = warn, low battery = down.", needsEndpoint: true, value: { unit: "%", hint: "battery charge" }, fields: [{ key: "driver", label: "Software", kind: "select", options: opts(["nut", "Network UPS Tools (upsc)"], ["apcupsd", "apcupsd (apcaccess)"]), default: "nut" }, { key: "upsName", label: "UPS name", kind: "text", default: "ups@localhost", showIf: is("driver", "nut") }] },
   {
     type: "agent_backup",
     label: "Backup job (Borg / restic / Veeam)",
     category: "OS & hardware (agent)",
     description: "Age (and result, for Veeam) of the newest backup.",
-    needsHost: true,
+    needsEndpoint: true,
     value: { unit: " h", hint: "hours since the newest backup" },
     fields: [
       { key: "tool", label: "Tool", kind: "select", options: opts(["borg", "BorgBackup"], ["restic", "restic"], ["veeam", "Veeam (Windows event log)"]), default: "borg" },
@@ -748,7 +749,10 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     label: "Heartbeat (cron / job check-in)",
     category: "Push & smart",
     description: "Your job calls a unique URL when it finishes; if no call arrives within the interval plus grace, the check goes down. The interval below is how often you expect the call.",
-    fields: [{ key: "graceSeconds", label: "Grace period (seconds)", kind: "number", default: 60 }],
+    fields: [
+      { key: "graceSeconds", label: "Grace period (seconds)", kind: "number", default: 60 },
+      { key: "autoRecoverMinutes", label: "Recover on its own after (minutes)", kind: "number", placeholder: "off", help: "A failure pushed in normally stays until the next push. Set this to mark the check recovered when no new result has arrived for this long." },
+    ],
   },
   {
     type: "push_value",

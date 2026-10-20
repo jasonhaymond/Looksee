@@ -18,7 +18,7 @@ export function CheckHistory({ checkId, currentStatus }: { checkId: string; curr
   return (
     <div className="mt-1 flex items-center gap-2 text-xs text-[var(--muted)]">
       <span>
-        {uptimePercent}% up <span className="opacity-70">(last {results.length})</span>
+        {uptimePercent ?? "—"}% up <span className="opacity-70">(last {results.length})</span>
       </span>
       {latencies.length >= 2 && <Sparkline values={latencies} color={STATUS_LINE_COLOR[currentStatus]} />}
     </div>

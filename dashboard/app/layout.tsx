@@ -4,6 +4,7 @@ import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import "./grid-overrides.css";
 import { SwRegister } from "./sw-register";
+import { AppShell } from "./components/AppShell";
 
 export const metadata: Metadata = {
   title: "Looksee",
@@ -32,7 +33,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen antialiased">
         <SwRegister />
-        {children}
+        {/* The left navigation on every signed-in page (components/AppShell.tsx). */}
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

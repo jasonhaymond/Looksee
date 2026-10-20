@@ -2,18 +2,21 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, type Channel, type Check, type Endpoint, type Host, type Location } from "../lib/api";
+import { api, ApiError, type Channel, type Check, type Site, type Endpoint, type Location } from "../lib/api";
 import { CATEGORIES, typeCategory, typeLabel } from "../lib/checkTypes";
-import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { CheckForm, TypePicker } from "../components/CheckForm";
 import { CheckDetail, displayStatus } from "../components/CheckDetail";
+import { AddToGroupDialog } from "../components/NodeViews";
 import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Modal, MultiPicker, PromptDialog, StatusBadge, Tags, alertRulePayload, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction } from "../components/ui";
+import { pollEvery } from "../lib/poll";
 
 const REFRESH_MS = 15_000;
 const STATUS_ORDER: Record<string, number> = { down: 0, warn: 1, unknown: 2, maintenance: 3, up: 4, disabled: 5 };
 const STATUS_FILTERS = ["all", "problems", "down", "warn", "up", "unknown", "maintenance", "disabled"] as const;
-type GroupBy = "location" | "endpoint" | "host" | "category" | "status" | "none";
+type GroupBy = "location" | "site" | "endpoint" | "category" | "status" | "none";
+// Every valid grouping, so a stale or tampered saved preference is ignored.
+const GROUP_BYS: GroupBy[] = ["location", "site", "endpoint", "category", "status", "none"];
 
 type Dialog =
   | { kind: "add" }
@@ -22,11 +25,22 @@ type Dialog =
   | { kind: "alertRule" }
   | { kind: "dependencies" }
   | { kind: "duplicate" }
+  | { kind: "group" }
   | null;
 
-function readPref<T extends string>(key: string, fallback: T): T {
+/**
+ * Reads a saved display preference from the browser (localStorage).
+ *
+ * @param key the storage key
+ * @param fallback used when nothing is saved, storage is blocked, or the
+ *        saved value isn't one of `allowed`
+ * @param allowed the valid values, when the preference is one of a fixed set
+ */
+function readPref<T extends string>(key: string, fallback: T, allowed?: readonly T[]): T {
   try {
-    return (localStorage.getItem(key) as T) || fallback;
+    const v = localStorage.getItem(key) as T | null;
+    if (!v || (allowed && !allowed.includes(v))) return fallback;
+    return v;
   } catch {
     return fallback;
   }
@@ -36,8 +50,8 @@ export default function ChecksPage() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
   const [checks, setChecks] = useState<Check[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
-  const [hosts, setHosts] = useState<Host[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -45,11 +59,11 @@ export default function ChecksPage() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]>("all");
+  const [siteFilter, setSiteFilter] = useState("");
   const [endpointFilter, setEndpointFilter] = useState("");
-  const [hostFilter, setHostFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
-  const [groupBy, setGroupBy] = useState<GroupBy>("endpoint");
+  const [groupBy, setGroupBy] = useState<GroupBy>("site");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -57,10 +71,10 @@ export default function ChecksPage() {
   const toast = useToast();
 
   const load = useCallback(async () => {
-    const [c, e, h, ch, l] = await Promise.all([api.checks(), api.endpoints(), api.hosts(), api.channels(), api.locations()]);
+    const [c, e, h, ch, l] = await Promise.all([api.checks(), api.sites(), api.endpoints(), api.channels(), api.locations()]);
     setChecks(c);
-    setEndpoints(e);
-    setHosts(h);
+    setSites(e);
+    setEndpoints(h);
     setChannels(ch);
     setLocations(l);
     setLoaded(true);
@@ -73,18 +87,18 @@ export default function ChecksPage() {
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) router.push("/login");
       });
-    setGroupBy(readPref<GroupBy>("looksee.checks.groupBy", "endpoint"));
+    setGroupBy(readPref<GroupBy>("looksee.checks.groupBy.v5", "site", GROUP_BYS));
   }, [router]);
 
   useEffect(() => {
     if (!authChecked) return;
     load();
-    const t = setInterval(load, REFRESH_MS);
+    const t = pollEvery(load, REFRESH_MS);
     return () => clearInterval(t);
   }, [authChecked, load]);
 
-  const endpointName = useMemo(() => new Map(endpoints.map((e) => [e.id, e.name])), [endpoints]);
-  const hostName = useMemo(() => new Map(hosts.map((h) => [h.id, h.name])), [hosts]);
+  const siteName = useMemo(() => new Map(sites.map((e) => [e.id, e.name])), [sites]);
+  const endpointName = useMemo(() => new Map(endpoints.map((h) => [h.id, h.name])), [endpoints]);
   const locationName = useMemo(() => new Map(locations.map((l) => [l.id, l.name])), [locations]);
   const allTags = useMemo(() => [...new Set(checks.flatMap((c) => c.tags ?? []))].sort(), [checks]);
 
@@ -95,29 +109,29 @@ export default function ChecksPage() {
         const st = displayStatus(c);
         if (statusFilter === "problems" && !["down", "warn"].includes(st)) return false;
         if (statusFilter !== "all" && statusFilter !== "problems" && st !== statusFilter) return false;
-        if (endpointFilter && c.endpointId !== endpointFilter) return false;
+        if (siteFilter && c.siteId !== siteFilter) return false;
         if (locationFilter && (locationFilter === "none" ? c.locationId : c.locationId !== locationFilter)) return false;
-        if (hostFilter && c.hostId !== hostFilter && c.probeHostId !== hostFilter) return false;
+        if (endpointFilter && c.endpointId !== endpointFilter && c.probeEndpointId !== endpointFilter) return false;
         if (categoryFilter && typeCategory(c.type) !== categoryFilter) return false;
         if (tagFilter && !(c.tags ?? []).includes(tagFilter)) return false;
         if (q) {
-          const hay = `${c.name} ${typeLabel(c.type)} ${c.lastMessage ?? ""} ${(c.tags ?? []).join(" ")} ${endpointName.get(c.endpointId) ?? ""} ${c.hostId ? hostName.get(c.hostId) ?? "" : ""} ${JSON.stringify(c.config)}`.toLowerCase();
+          const hay = `${c.name} ${typeLabel(c.type)} ${c.lastMessage ?? ""} ${(c.tags ?? []).join(" ")} ${siteName.get(c.siteId) ?? ""} ${c.endpointId ? endpointName.get(c.endpointId) ?? "" : ""} ${JSON.stringify(c.config)}`.toLowerCase();
           if (!hay.includes(q)) return false;
         }
         return true;
       })
       .sort((a, b) => (STATUS_ORDER[displayStatus(a)] ?? 9) - (STATUS_ORDER[displayStatus(b)] ?? 9) || a.name.localeCompare(b.name));
-  }, [checks, search, statusFilter, endpointFilter, locationFilter, hostFilter, categoryFilter, tagFilter, endpointName, hostName]);
+  }, [checks, search, statusFilter, siteFilter, locationFilter, endpointFilter, categoryFilter, tagFilter, siteName, endpointName]);
 
   const groups = useMemo(() => {
     const keyOf = (c: Check): [string, string] => {
       switch (groupBy) {
         case "location":
           return c.locationId ? [c.locationId, locationName.get(c.locationId) ?? "Unknown location"] : ["", "No location"];
+        case "site":
+          return [c.siteId, siteName.get(c.siteId) ?? "Unknown site"];
         case "endpoint":
-          return [c.endpointId, endpointName.get(c.endpointId) ?? "Unknown endpoint"];
-        case "host":
-          return c.hostId ? [c.hostId, hostName.get(c.hostId) ?? "Unknown host"] : ["", "No host (agentless)"];
+          return c.endpointId ? [c.endpointId, endpointName.get(c.endpointId) ?? "Unknown host"] : ["", "No host (agentless)"];
         case "category":
           return [typeCategory(c.type), typeCategory(c.type)];
         case "status":
@@ -133,7 +147,7 @@ export default function ChecksPage() {
       map.get(k)!.items.push(c);
     }
     return [...map.entries()].sort((a, b) => (groupBy === "status" ? (STATUS_ORDER[a[0]] ?? 9) - (STATUS_ORDER[b[0]] ?? 9) : a[1].label.localeCompare(b[1].label)));
-  }, [filtered, groupBy, endpointName, hostName, locationName]);
+  }, [filtered, groupBy, siteName, endpointName, locationName]);
 
   const visibleIds = useMemo(() => filtered.map((c) => c.id), [filtered]);
   const sel = useSelection(visibleIds);
@@ -153,12 +167,13 @@ export default function ChecksPage() {
   }
 
   const prompt = (d: Omit<Extract<Dialog, { kind: "prompt" }>, "kind">) => setDialog({ kind: "prompt", ...d });
-  const endpointOptions = endpoints.map((e) => ({ value: e.id, label: e.name }));
-  const hostOptions = [{ value: "", label: "— none —" }, ...hosts.map((h) => ({ value: h.id, label: h.name }))];
+  const siteOptions = sites.map((e) => ({ value: e.id, label: e.name }));
+  const endpointOptions = [{ value: "", label: "— none —" }, ...endpoints.map((h) => ({ value: h.id, label: h.name }))];
 
   const bulkActions: BulkAction[] = [
     { group: "State", key: "enable", label: "Enable", run: () => bulk("enable") },
     { group: "State", key: "disable", label: "Disable", run: () => bulk("disable") },
+    { group: "State", key: "resolve", label: "Resolve…", hint: "Mark failing checks recovered now", run: () => prompt({ title: "Resolve checks", label: "Note (optional)", action: "resolve", param: "note", help: "Records an “up” result for each, closing their alerts. Checks that poll report their real status on their next run." }) },
     { group: "State", key: "run", label: "Run now", hint: "Engine and collector checks only", run: () => bulk("run_now", {}, "Ran") },
     { group: "State", key: "maint", label: "Maintenance…", run: () => prompt({ title: "Put in maintenance", label: "For how many minutes?", type: "number", initial: "60", action: "maintenance", param: "minutes", asNumber: true, help: "Results are still recorded; alerts are held and SLA reports skip this time." }) },
     { group: "Alerts", key: "alert", label: "Add alert rule…", run: () => setDialog({ kind: "alertRule" }) },
@@ -166,10 +181,11 @@ export default function ChecksPage() {
     { group: "Alerts", key: "deps", label: "Depends on…", run: () => setDialog({ kind: "dependencies" }) },
     { group: "Organize", key: "tags", label: "Add tags…", run: () => prompt({ title: "Add tags", label: "Tags (comma-separated)", action: "add_tags", param: "tags", asList: true }) },
     { group: "Organize", key: "untag", label: "Remove tags…", run: () => prompt({ title: "Remove tags", label: "Tags (comma-separated)", action: "remove_tags", param: "tags", asList: true }) },
-    { group: "Organize", key: "move", label: "Move to endpoint…", run: () => prompt({ title: "Move to endpoint", label: "Endpoint", options: endpointOptions, action: "move", param: "endpointId" }) },
-    { group: "Organize", key: "host", label: "Set host…", run: () => prompt({ title: "Set host", label: "Host", options: hostOptions, action: "set_host", param: "hostId" }) },
-    { group: "Organize", key: "dup", label: "Duplicate…", hint: "Copy to the same or other endpoints/hosts", run: () => setDialog({ kind: "duplicate" }) },
-    { group: "Schedule", key: "probe", label: "Run from…", run: () => prompt({ title: "Run from", label: "Where ping/TCP/HTTP/DNS/TLS checks run", options: [{ value: "", label: "Looksee engine" }, ...hosts.map((h) => ({ value: h.id, label: `Agent on ${h.name}` }))], action: "set_probe_host", param: "hostId" }) },
+    { group: "Organize", key: "move", label: "Move to site…", run: () => prompt({ title: "Move to site", label: "Site", options: siteOptions, action: "move", param: "siteId" }) },
+    { group: "Organize", key: "endpoint", label: "Set endpoint…", run: () => prompt({ title: "Set endpoint", label: "Endpoint", options: endpointOptions, action: "set_endpoint", param: "endpointId" }) },
+    { group: "Organize", key: "group", label: "Add to group…", run: () => setDialog({ kind: "group" }) },
+    { group: "Organize", key: "dup", label: "Duplicate…", hint: "Copy to the same or other sites/endpoints", run: () => setDialog({ kind: "duplicate" }) },
+    { group: "Schedule", key: "probe", label: "Run from…", run: () => prompt({ title: "Run from", label: "Where ping/TCP/HTTP/DNS/TLS checks run", options: [{ value: "", label: "Looksee engine" }, ...endpoints.map((h) => ({ value: h.id, label: `Agent on ${h.name}` }))], action: "set_probe_endpoint", param: "endpointId" }) },
     { group: "Schedule", key: "interval", label: "Interval…", run: () => prompt({ title: "Set check interval", label: "Seconds between checks", type: "number", initial: "60", action: "set_interval", param: "seconds", asNumber: true }) },
     { group: "Schedule", key: "retry", label: "Retry interval…", run: () => prompt({ title: "Set retry interval", label: "Seconds between checks while failing (0 to clear)", type: "number", initial: "30", action: "set_retry_interval", param: "seconds", asNumber: true }) },
     { key: "delete", label: "Delete…", danger: true, run: () => setDialog({ kind: "delete" }) },
@@ -177,15 +193,14 @@ export default function ChecksPage() {
 
   if (!authChecked) return null;
 
-  const filtersActive = Boolean(search || statusFilter !== "all" || endpointFilter || locationFilter || hostFilter || categoryFilter || tagFilter);
+  const filtersActive = Boolean(search || statusFilter !== "all" || siteFilter || locationFilter || endpointFilter || categoryFilter || tagFilter);
 
   return (
     <main className="mx-auto max-w-6xl p-4 sm:p-6">
-      <TopNav active="/manage" />
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-medium">Checks</h2>
         <div className="flex gap-2">
-          <Button variant="primary" onClick={() => setDialog({ kind: "add" })} disabled={endpoints.length === 0} title={endpoints.length ? undefined : "Create an endpoint first"}>
+          <Button variant="primary" onClick={() => setDialog({ kind: "add" })} disabled={sites.length === 0} title={sites.length ? undefined : "Create a site first"}>
             + Add check
           </Button>
         </div>
@@ -215,17 +230,17 @@ export default function ChecksPage() {
           ))}
           <option value="none">No location</option>
         </select>
-        <select value={endpointFilter} onChange={(e) => setEndpointFilter(e.target.value)} className={inputClass} aria-label="Endpoint filter">
-          <option value="">All endpoints</option>
-          {endpoints.map((e) => (
+        <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)} className={inputClass} aria-label="Site filter">
+          <option value="">All sites</option>
+          {sites.map((e) => (
             <option key={e.id} value={e.id}>
               {e.name}
             </option>
           ))}
         </select>
-        <select value={hostFilter} onChange={(e) => setHostFilter(e.target.value)} className={inputClass} aria-label="Host filter">
-          <option value="">All hosts</option>
-          {hosts.map((h) => (
+        <select value={endpointFilter} onChange={(e) => setEndpointFilter(e.target.value)} className={inputClass} aria-label="Endpoint filter">
+          <option value="">All endpoints</option>
+          {endpoints.map((h) => (
             <option key={h.id} value={h.id}>
               {h.name}
             </option>
@@ -261,9 +276,9 @@ export default function ChecksPage() {
             onClick={() => {
               setSearch("");
               setStatusFilter("all");
-              setEndpointFilter("");
+              setSiteFilter("");
               setLocationFilter("");
-              setHostFilter("");
+              setEndpointFilter("");
               setCategoryFilter("");
               setTagFilter("");
             }}
@@ -278,7 +293,7 @@ export default function ChecksPage() {
             onChange={(e) => {
               setGroupBy(e.target.value as GroupBy);
               try {
-                localStorage.setItem("looksee.checks.groupBy", e.target.value);
+                localStorage.setItem("looksee.checks.groupBy.v5", e.target.value);
               } catch {
                 // preference only
               }
@@ -286,8 +301,8 @@ export default function ChecksPage() {
             className="rounded-md border border-[var(--border)] bg-transparent px-2 py-1 text-sm"
           >
             <option value="location">Location</option>
+            <option value="site">Site</option>
             <option value="endpoint">Endpoint</option>
-            <option value="host">Host</option>
             <option value="category">Kind</option>
             <option value="status">Status</option>
             <option value="none">Nothing</option>
@@ -297,7 +312,7 @@ export default function ChecksPage() {
 
       {loaded && checks.length === 0 ? (
         <EmptyState>
-          No checks yet. {endpoints.length === 0 ? "Create an endpoint on the Endpoints page first, then " : ""}use <strong>+ Add check</strong> — or scan your network from <a className="underline" href="/discovery">Discovery</a>.
+          No checks yet. {sites.length === 0 ? "Create a site on the Sites page first, then " : ""}use <strong>+ Add check</strong> — or scan your network from <a className="underline" href="/discovery">Discovery</a>.
         </EmptyState>
       ) : loaded && filtered.length === 0 ? (
         <EmptyState>No checks match these filters.</EmptyState>
@@ -347,7 +362,7 @@ export default function ChecksPage() {
                     </div>
                     {group.items.map((c) => {
                       const open = expanded === c.id;
-                      const where = [c.hostId ? hostName.get(c.hostId) : null, c.probeHostId ? `via ${hostName.get(c.probeHostId) ?? "agent"}` : c.collectorHostId ? `via site collector ${hostName.get(c.collectorHostId) ?? ""}`.trim() : null, groupBy !== "endpoint" ? endpointName.get(c.endpointId) : null].filter(Boolean).join(" · ");
+                      const where = [c.endpointId ? endpointName.get(c.endpointId) : null, c.probeEndpointId ? `via ${endpointName.get(c.probeEndpointId) ?? "agent"}` : c.collectorEndpointId ? `via site collector ${endpointName.get(c.collectorEndpointId) ?? ""}`.trim() : null, groupBy !== "site" ? siteName.get(c.siteId) : null].filter(Boolean).join(" · ");
                       return (
                         <Fragment key={c.id}>
                           <div
@@ -387,7 +402,7 @@ export default function ChecksPage() {
                           </div>
                           {open && (
                             <div role="row">
-                              <CheckDetail check={c} endpoints={endpoints} hosts={hosts} checks={checks} onChanged={load} />
+                              <CheckDetail check={c} sites={sites} endpoints={endpoints} checks={checks} onChanged={load} />
                             </div>
                           )}
                         </Fragment>
@@ -415,12 +430,12 @@ export default function ChecksPage() {
           {addType ? (
             <CheckForm
               type={addType}
+              sites={sites}
               endpoints={endpoints}
-              hosts={hosts}
               checks={checks}
               channels={channels}
+              defaultSiteId={siteFilter || undefined}
               defaultEndpointId={endpointFilter || undefined}
-              defaultHostId={hostFilter || undefined}
               onChangeType={() => setAddType(null)}
               onSaved={(created, count = 1) => {
                 setDialog(null);
@@ -467,12 +482,22 @@ export default function ChecksPage() {
         />
       )}
 
+      {dialog?.kind === "group" && (
+        <AddToGroupDialog
+          members={sel.ids.map((id) => ({ type: "check" as const, id }))}
+          onClose={() => setDialog(null)}
+          onDone={() => {
+            toast.show(`Added ${sel.ids.length} check(s) to the group.`);
+            setDialog(null);
+          }}
+        />
+      )}
       {dialog?.kind === "alertRule" && <BulkAlertRuleDialog channels={channels} count={sel.ids.length} onClose={() => setDialog(null)} onSubmit={(params) => bulk("add_alert_rule", params, "Added an alert rule to")} />}
       {dialog?.kind === "duplicate" && (
         <DuplicateDialog
           checks={checks.filter((c) => sel.selected.has(c.id))}
+          sites={sites}
           endpoints={endpoints}
-          hosts={hosts}
           onClose={() => setDialog(null)}
           onSubmit={(params) => bulk("duplicate", params, "Created copies:")}
         />
@@ -514,16 +539,16 @@ function BulkAlertRuleDialog({ channels, count, onClose, onSubmit }: { channels:
   );
 }
 
-// Duplicate: same place, other endpoints, or other hosts. Copies keep their
+// Duplicate: same place, other sites, or other endpoints. Copies keep their
 // alert rules, dependencies and enabled state.
-function DuplicateDialog({ checks, endpoints, hosts, onClose, onSubmit }: { checks: Check[]; endpoints: Endpoint[]; hosts: Host[]; onClose: () => void; onSubmit: (p: Record<string, unknown>) => Promise<void> }) {
-  const [mode, setMode] = useState<"same" | "endpoints" | "hosts">("same");
+function DuplicateDialog({ checks, sites, endpoints, onClose, onSubmit }: { checks: Check[]; sites: Site[]; endpoints: Endpoint[]; onClose: () => void; onSubmit: (p: Record<string, unknown>) => Promise<void> }) {
+  const [mode, setMode] = useState<"same" | "sites" | "endpoints">("same");
+  const [siteIds, setSiteIds] = useState<string[]>([]);
   const [endpointIds, setEndpointIds] = useState<string[]>([]);
-  const [hostIds, setHostIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const endpointName = new Map(endpoints.map((e) => [e.id, e.name]));
-  const hostScoped = checks.some((c) => c.hostId);
-  const copies = mode === "same" ? checks.length : checks.length * (mode === "hosts" ? hostIds.length : endpointIds.length);
+  const siteName = new Map(sites.map((e) => [e.id, e.name]));
+  const endpointScoped = checks.some((c) => c.endpointId);
+  const copies = mode === "same" ? checks.length : checks.length * (mode === "endpoints" ? endpointIds.length : siteIds.length);
   return (
     <Modal title={`Duplicate ${checks.length} check(s)`} onClose={onClose} wide>
       <div className="space-y-3 text-sm">
@@ -531,8 +556,8 @@ function DuplicateDialog({ checks, endpoints, hosts, onClose, onSubmit }: { chec
           {(
             [
               ["same", "Same place (a copy next to each)"],
+              ["sites", "To other sites"],
               ["endpoints", "To other endpoints"],
-              ["hosts", "To other hosts"],
             ] as const
           ).map(([v, label]) => (
             <label key={v} className="flex items-center gap-1.5">
@@ -541,13 +566,13 @@ function DuplicateDialog({ checks, endpoints, hosts, onClose, onSubmit }: { chec
             </label>
           ))}
         </div>
-        {mode === "endpoints" && (
+        {mode === "sites" && (
           <>
-            <MultiPicker items={endpoints.map((e) => ({ id: e.id, label: e.name }))} selected={endpointIds} onChange={setEndpointIds} placeholder="Search endpoints…" />
-            {hostScoped && <p className="text-xs text-[var(--muted)]">Checks tied to a host keep it only when it&apos;s in the destination endpoint; agent checks that need a host are skipped elsewhere — copy those to hosts instead.</p>}
+            <MultiPicker items={sites.map((e) => ({ id: e.id, label: e.name }))} selected={siteIds} onChange={setSiteIds} placeholder="Search sites…" />
+            {endpointScoped && <p className="text-xs text-[var(--muted)]">Checks tied to a host keep it only when it&apos;s in the destination site; agent checks that need a host are skipped elsewhere — copy those to endpoints instead.</p>}
           </>
         )}
-        {mode === "hosts" && <MultiPicker items={hosts.map((h) => ({ id: h.id, label: h.name, sub: h.hostname ?? undefined, group: endpointName.get(h.endpointId) }))} selected={hostIds} onChange={setHostIds} placeholder="Search hosts…" groupLabel="Endpoint" />}
+        {mode === "endpoints" && <MultiPicker items={endpoints.map((h) => ({ id: h.id, label: h.name, sub: h.hostname ?? undefined, group: siteName.get(h.siteId) }))} selected={endpointIds} onChange={setEndpointIds} placeholder="Search endpoints…" groupLabel="Site" />}
         <p className="text-xs text-[var(--muted)]">Copies stay enabled and keep each original&apos;s alert rules and dependencies. {copies} cop{copies === 1 ? "y" : "ies"} will be created.</p>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
@@ -558,7 +583,7 @@ function DuplicateDialog({ checks, endpoints, hosts, onClose, onSubmit }: { chec
             disabled={busy || copies === 0}
             onClick={async () => {
               setBusy(true);
-              await onSubmit(mode === "hosts" ? { hostIds } : mode === "endpoints" ? { endpointIds } : {});
+              await onSubmit(mode === "endpoints" ? { endpointIds } : mode === "sites" ? { siteIds } : {});
               onClose();
             }}
           >

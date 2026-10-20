@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Work in progress toward 5.0.0 (on the `v5.0-dev` branch; not released or tagged).
+
+### Changed
+- **Location → Site → Endpoint.** What was called an "endpoint" (a site) is now a
+  **site**, and what was a "host" is now an **endpoint** — everywhere: dashboard,
+  API routes, and the database (migration 0019 renames tables, columns, constraints,
+  indexes and enum values, and rewrites maintenance scopes, widget settings,
+  discovery records and notification templates — `{{endpoint}}` becomes `{{site}}`,
+  `{{host}}` becomes `{{endpoint}}`). What agents and site collectors send and
+  receive is unchanged, so deployed ones keep working. **Rolling back to 4.x after
+  this migration means restoring the pre-update database snapshot.**
+- Navigation is a left sidebar (a drawer on phones) with a live tree of locations,
+  sites, endpoints and checks, with status markers and problem counts. The top
+  navigation bar is gone.
+
+### Added
+- A page for every location, site, endpoint and group.
+- **Groups** of endpoints and checks: picked by hand, or by filter rules with a live
+  preview (migration 0020). Groups can be maintenance-window targets and bulk-action
+  selections; "Add to group" on the Checks and Endpoints lists.
+- Alert rules can be edited after they're created.
+- **Resolve** a failing check by hand, one at a time or in bulk (also from Alert
+  history). Trap/syslog checks then ignore events from before that moment.
+- Recovery without a new result: a **clear pattern** on trap/syslog checks, **recover
+  together with** another check, **auto-recover after N minutes** (trap, syslog and
+  pushed-value checks), and a per-check **recovery URL** that only accepts "up".
+- Trap/syslog checks can **ignore messages** containing given texts.
+- **Exclude results from statistics** — single results or a time range — so they
+  don't count against uptime, SLA reports or status pages; they can be counted again
+  later (migration 0021).
+
+### Fixed
+- Live refreshes pause while a field or dropdown is in use (also shipped in 4.3.1).
+
 ## [4.3.0] - 2026-10-15
 
 Release tooling only — no change to the engine, dashboard or agent at runtime. Engine,

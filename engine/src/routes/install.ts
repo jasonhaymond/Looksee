@@ -9,7 +9,7 @@ import { collectorDistDir, collectorManifest } from "../services/sites.js";
 // yet, and none of this is sensitive on its own (the binary is identical
 // for every host; the actual credential is the agent key the admin pastes
 // in when running the command, generated separately behind auth in
-// routes/hosts.ts). Not to be confused with /api/agent/*, which the
+// routes/endpoints.ts). Not to be confused with /api/agent/*, which the
 // already-installed agent itself calls and which IS key-authenticated.
 export const installRouter = Router();
 

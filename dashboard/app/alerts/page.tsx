@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { api, type AlertEvent, type Endpoint, type Host, type Location } from "../lib/api";
+import { api, type AlertEvent, type Site, type Endpoint, type Location } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
-import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { EmptyState, FilterChip, StatusBadge, inputClass } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
+import { pollEvery } from "../lib/poll";
 
 const RANGES: [string, string, number][] = [
   ["24h", "24 hours", 24],
@@ -24,42 +24,41 @@ const duration = (min: number) => (min < 60 ? `${min} min` : min < 2880 ? `${Mat
 export default function AlertsPage() {
   const authed = usePageAuth();
   const [events, setEvents] = useState<AlertEvent[] | null>(null);
+  const [sites, setSites] = useState<Site[]>([]);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
-  const [hosts, setHosts] = useState<Host[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [range, setRange] = useState("7d");
   const [status, setStatus] = useState<"" | "open" | "resolved">("");
-  const [endpointId, setEndpointId] = useState("");
+  const [siteId, setSiteId] = useState("");
   const [locationId, setLocationId] = useState("");
-  const [hostId, setHostId] = useState("");
+  const [endpointId, setEndpointId] = useState("");
   const [q, setQ] = useState("");
 
   useEffect(() => {
     if (!authed) return;
-    Promise.all([api.endpoints(), api.hosts(), api.locations()]).then(([e, h, l]) => (setEndpoints(e), setHosts(h), setLocations(l)));
+    Promise.all([api.sites(), api.endpoints(), api.locations()]).then(([e, h, l]) => (setSites(e), setEndpoints(h), setLocations(l)));
   }, [authed]);
 
   const load = useCallback(async () => {
     const hours = RANGES.find((r) => r[0] === range)![2];
-    setEvents(await api.alertEvents({ since: new Date(Date.now() - hours * 3_600_000).toISOString(), status: status || undefined, endpointId: endpointId || undefined, locationId: locationId || undefined, hostId: hostId || undefined, q: q.trim() || undefined, limit: 2000 }));
-  }, [range, status, endpointId, locationId, hostId, q]);
+    setEvents(await api.alertEvents({ since: new Date(Date.now() - hours * 3_600_000).toISOString(), status: status || undefined, siteId: siteId || undefined, locationId: locationId || undefined, endpointId: endpointId || undefined, q: q.trim() || undefined, limit: 2000 }));
+  }, [range, status, siteId, locationId, endpointId, q]);
 
   useEffect(() => {
     if (!authed) return;
     const t = setTimeout(load, 250);
-    const every = setInterval(load, 30_000);
+    const every = pollEvery(load, 30_000);
     return () => (clearTimeout(t), clearInterval(every));
   }, [authed, load]);
 
-  const endpointName = useMemo(() => new Map(endpoints.map((e) => [e.id, e.name])), [endpoints]);
-  const hostName = useMemo(() => new Map(hosts.map((h) => [h.id, h.name])), [hosts]);
+  const siteName = useMemo(() => new Map(sites.map((e) => [e.id, e.name])), [sites]);
+  const endpointName = useMemo(() => new Map(endpoints.map((h) => [h.id, h.name])), [endpoints]);
   const open = events?.filter((e) => !e.resolvedAt).length ?? 0;
   const totalMin = events?.reduce((a, e) => a + (e.durationMinutes ?? 0), 0) ?? 0;
 
   if (!authed) return null;
   return (
     <main className="mx-auto max-w-6xl p-4 sm:p-6">
-      <TopNav active="/alerts" />
       <h2 className="mb-3 text-lg font-medium">Alert history</h2>
       <PageHelp anchor="alert-history">Every time an alert rule fired, how long the problem lasted, and whether it&apos;s still open. Click a check to see its full history and charts.</PageHelp>
 
@@ -92,17 +91,17 @@ export default function AlertsPage() {
             </option>
           ))}
         </select>
-        <select value={endpointId} onChange={(e) => setEndpointId(e.target.value)} className={inputClass} aria-label="Endpoint">
-          <option value="">All endpoints</option>
-          {endpoints.map((e) => (
+        <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={inputClass} aria-label="Site">
+          <option value="">All sites</option>
+          {sites.map((e) => (
             <option key={e.id} value={e.id}>
               {e.name}
             </option>
           ))}
         </select>
-        <select value={hostId} onChange={(e) => setHostId(e.target.value)} className={inputClass} aria-label="Host">
-          <option value="">All hosts</option>
-          {hosts.map((h) => (
+        <select value={endpointId} onChange={(e) => setEndpointId(e.target.value)} className={inputClass} aria-label="Endpoint">
+          <option value="">All endpoints</option>
+          {endpoints.map((h) => (
             <option key={h.id} value={h.id}>
               {h.name}
             </option>
@@ -135,6 +134,19 @@ export default function AlertsPage() {
                   <td className="whitespace-nowrap px-3 py-2">
                     <StatusBadge status={e.resolvedAt ? "up" : (e.severity ?? "down")} />
                     <div className="text-[10px] text-[var(--muted)]">{e.resolvedAt ? "resolved" : "open"}</div>
+                    {/* An open incident can be closed by resolving its check by hand. */}
+                    {!e.resolvedAt && e.checkId && (
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Mark "${e.checkName}" recovered now? This closes the incident and sends the usual recovery notification.`)) return;
+                          await api.resolveCheck(e.checkId!, "from the alert history");
+                          load();
+                        }}
+                        className="mt-1 text-[11px] text-[var(--muted)] underline hover:text-[var(--text)]"
+                      >
+                        Resolve
+                      </button>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     {e.checkId ? (
@@ -144,7 +156,7 @@ export default function AlertsPage() {
                     ) : (
                       e.checkName
                     )}
-                    <div className="text-xs text-[var(--muted)]">{[e.checkType ? typeLabel(e.checkType) : null, e.hostId ? hostName.get(e.hostId) : null, e.endpointId ? endpointName.get(e.endpointId) : null].filter(Boolean).join(" · ")}</div>
+                    <div className="text-xs text-[var(--muted)]">{[e.checkType ? typeLabel(e.checkType) : null, e.endpointId ? endpointName.get(e.endpointId) : null, e.siteId ? siteName.get(e.siteId) : null].filter(Boolean).join(" · ")}</div>
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-xs">{new Date(e.triggeredAt).toLocaleString()}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-xs">{duration(e.durationMinutes ?? 0)}</td>

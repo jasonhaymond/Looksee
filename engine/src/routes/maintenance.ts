@@ -25,7 +25,7 @@ export const maintenanceRouter = Router();
 maintenanceRouter.use(requireAuth);
 
 // What a window can be limited to; see windowAppliesTo in services/maintenance.ts.
-const SCOPES = new Set(["all", "endpoint", "host", "check"]);
+const SCOPES = new Set(["all", "site", "endpoint", "check", "group"]);
 
 /**
  * Validates a create/edit request body and converts it to column values.
@@ -39,7 +39,7 @@ function parse(body: Record<string, unknown>): { values?: Partial<typeof mainten
   const values: Partial<typeof maintenanceWindows.$inferInsert> = {};
   if (body.name !== undefined) values.name = String(body.name).trim();
   if (body.scope !== undefined) {
-    if (!SCOPES.has(String(body.scope))) return { error: "scope must be all, endpoint, host, or check" };
+    if (!SCOPES.has(String(body.scope))) return { error: "scope must be all, site, endpoint, check or group" };
     values.scope = String(body.scope);
   }
   if (body.targetIds !== undefined) values.targetIds = Array.isArray(body.targetIds) ? body.targetIds.map(String) : [];

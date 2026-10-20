@@ -51,7 +51,7 @@ export function UptimeHistoryWidget({ widget, check, onChanged }: { widget: Widg
       ) : (
         <>
           <p className="mt-1 text-2xl font-semibold" style={{ color: uptimePercent === 100 ? "var(--up)" : "var(--text)" }}>
-            {uptimePercent}%
+            {uptimePercent ?? "—"}%
           </p>
           <p className="text-xs text-[var(--muted)]">
             uptime over {rangeLabel} ({results.length} result{results.length === 1 ? "" : "s"})

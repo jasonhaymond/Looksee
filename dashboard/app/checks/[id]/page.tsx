@@ -3,14 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { api, ApiError, type Channel, type Check, type CheckResult, type CheckStats, type Endpoint, type Host } from "../../lib/api";
+import { api, ApiError, type Channel, type Check, type CheckResult, type CheckStats, type Site, type Endpoint } from "../../lib/api";
 import { typeLabel, TYPE_BY_KEY } from "../../lib/checkTypes";
-import { TopNav } from "../../components/TopNav";
 import { CheckForm } from "../../components/CheckForm";
 import { AlertRuleManager } from "../../components/AlertRuleManager";
 import { displayStatus, Details, Remediation } from "../../components/CheckDetail";
+import { RecoveryUrl, ResolveButton } from "../../components/CheckRecovery";
 import { LineChart, StatusStrip } from "../../components/Charts";
-import { Button, EmptyState, StatusBadge, relativeTime, useToast } from "../../components/ui";
+import { Button, EmptyState, Label, Modal, StatusBadge, inputClass, relativeTime, useToast } from "../../components/ui";
+import { pollEvery } from "../../lib/poll";
 
 const RANGES: [number, string][] = [
   [1, "1 hour"],
@@ -44,8 +45,10 @@ export default function CheckPage() {
   const [stats, setStats] = useState<CheckStats | null>(null);
   const [results, setResults] = useState<CheckResult[] | null>(null);
   const [onlyProblems, setOnlyProblems] = useState(false);
+  // Whether the "Exclude a time range" dialog is open.
+  const [excludeRange, setExcludeRange] = useState(false);
   const [tab, setTab] = useState<"history" | "edit" | "alerts">("history");
-  const [ctx, setCtx] = useState<{ endpoints: Endpoint[]; hosts: Host[]; checks: Check[]; channels: Channel[] } | null>(null);
+  const [ctx, setCtx] = useState<{ sites: Site[]; endpoints: Endpoint[]; checks: Check[]; channels: Channel[] } | null>(null);
   const [running, setRunning] = useState(false);
   const toast = useToast();
 
@@ -67,8 +70,8 @@ export default function CheckPage() {
 
   useEffect(() => {
     loadCheck();
-    Promise.all([api.endpoints(), api.hosts(), api.checks(), api.channels()]).then(([endpoints, hosts, checks, channels]) => setCtx({ endpoints, hosts, checks, channels })).catch(() => undefined);
-    const t = setInterval(loadCheck, 15_000);
+    Promise.all([api.sites(), api.endpoints(), api.checks(), api.channels()]).then(([sites, endpoints, checks, channels]) => setCtx({ sites, endpoints, checks, channels })).catch(() => undefined);
+    const t = pollEvery(loadCheck, 15_000);
     return () => clearInterval(t);
   }, [loadCheck]);
 
@@ -84,25 +87,23 @@ export default function CheckPage() {
   if (missing)
     return (
       <main className="mx-auto max-w-6xl p-4 sm:p-6">
-        <TopNav active="/manage" />
         <EmptyState>That check doesn&apos;t exist (any more). <Link className="underline" href="/manage">Back to checks</Link></EmptyState>
       </main>
     );
   if (!check) return null;
 
-  const host = ctx?.hosts.find((h) => h.id === check.hostId);
-  const endpoint = ctx?.endpoints.find((e) => e.id === check.endpointId);
+  const host = ctx?.endpoints.find((h) => h.id === check.endpointId);
+  const site = ctx?.sites.find((e) => e.id === check.siteId);
   const hasValue = stats?.series.some((p) => p.value != null);
   const hasLatency = stats?.series.some((p) => p.latency != null);
 
   return (
     <main className="mx-auto max-w-6xl p-4 sm:p-6">
-      <TopNav active="/manage" />
       <div className="mb-1 text-xs text-[var(--muted)]">
         <Link href="/manage" className="underline">
           Checks
         </Link>{" "}
-        / {endpoint?.name ?? "…"}
+        / {site?.name ?? "…"}
         {host ? ` / ${host.name}` : ""}
       </div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -128,6 +129,7 @@ export default function CheckPage() {
           >
             {running ? "Running…" : "Run now"}
           </Button>
+          <ResolveButton check={check} onDone={loadCheck} />
           <Button onClick={async () => (await api.updateCheck(check.id, { enabled: !check.enabled }), loadCheck())}>{check.enabled ? "Disable" : "Enable"}</Button>
         </div>
       </div>
@@ -145,6 +147,7 @@ export default function CheckPage() {
           </a>
         </p>
         <Remediation check={check} />
+        <RecoveryUrl check={check} onChanged={loadCheck} />
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -241,6 +244,9 @@ export default function CheckPage() {
                 <input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} className="accent-[var(--accent)]" />
                 Only problems
               </label>
+              <button onClick={() => setExcludeRange(true)} className="text-xs text-[var(--muted)] underline hover:text-[var(--text)]" title="Leave a time range out of uptime, SLA reports and status pages">
+                Exclude a time range…
+              </button>
             </div>
             <div className="max-h-[32rem] overflow-auto">
               <table className="w-full text-xs">
@@ -250,19 +256,37 @@ export default function CheckPage() {
                     <th className="pr-2 font-normal">Status</th>
                     <th className="pr-2 font-normal">Value</th>
                     <th className="pr-2 font-normal">ms</th>
-                    <th className="font-normal">Message</th>
+                    <th className="pr-2 font-normal">Message</th>
+                    <th className="font-normal">
+                      <span className="sr-only">Statistics</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {shownResults.map((r) => (
-                    <tr key={r.id} className="border-t border-[var(--border)] align-top">
+                    <tr key={r.id} className={`border-t border-[var(--border)] align-top ${r.excluded ? "opacity-60" : ""}`}>
                       <td className="whitespace-nowrap py-1 pr-2 text-[var(--muted)]">{new Date(r.checkedAt).toLocaleString()}</td>
                       <td className="pr-2">
                         <StatusBadge status={r.inMaintenance ? "maintenance" : r.status} />
                       </td>
                       <td className="pr-2">{r.value != null ? Math.round(r.value * 100) / 100 : ""}</td>
                       <td className="pr-2">{r.latencyMs ?? ""}</td>
-                      <td>{r.message}</td>
+                      <td className="pr-2">
+                        {r.message}
+                        {r.excluded && <span className="block text-[10px] text-[var(--muted)]">Excluded from statistics{r.excludedReason ? `: ${r.excludedReason}` : ""}</span>}
+                      </td>
+                      <td className="whitespace-nowrap">
+                        {/* Leave this one result out of uptime/SLA figures, or count it again. */}
+                        <button
+                          onClick={async () => {
+                            await api.excludeResults(check.id, { resultIds: [r.id], exclude: !r.excluded, reason: r.excluded ? undefined : "excluded by hand" });
+                            loadHistory();
+                          }}
+                          className="text-[10px] text-[var(--muted)] underline hover:text-[var(--text)]"
+                        >
+                          {r.excluded ? "Count again" : "Exclude"}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -275,7 +299,7 @@ export default function CheckPage() {
 
       {tab === "edit" && ctx && (
         <div className="surface rounded-xl p-3">
-          <CheckForm type={check.type} check={check} endpoints={ctx.endpoints} hosts={ctx.hosts} checks={ctx.checks} onSaved={() => (loadCheck(), setTab("history"), toast.show("Saved."))} onCancel={() => setTab("history")} />
+          <CheckForm type={check.type} check={check} sites={ctx.sites} endpoints={ctx.endpoints} checks={ctx.checks} onSaved={() => (loadCheck(), setTab("history"), toast.show("Saved."))} onCancel={() => setTab("history")} />
         </div>
       )}
       {tab === "alerts" && (
@@ -284,6 +308,69 @@ export default function CheckPage() {
         </div>
       )}
       {toast.node}
+      {excludeRange && check && <ExcludeRangeDialog checkId={check.id} onClose={() => setExcludeRange(false)} onDone={() => (setExcludeRange(false), loadHistory())} />}
     </main>
+  );
+}
+
+/**
+ * Leaves every result in a time range out of statistics (uptime, SLA
+ * reports, status pages, charts) — for an outage that shouldn't count, such
+ * as planned work nobody put in maintenance. The results are kept; the range
+ * can be counted again the same way.
+ */
+function ExcludeRangeDialog({ checkId, onClose, onDone }: { checkId: string; onClose: () => void; onDone: () => void }) {
+  // datetime-local inputs hold local wall-clock time with no zone; new Date()
+  // reads them as local, so the instants sent are exactly what was picked.
+  const toLocal = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  const now = new Date();
+  const [from, setFrom] = useState(toLocal(new Date(now.getTime() - 3_600_000)));
+  const [to, setTo] = useState(toLocal(now));
+  const [reason, setReason] = useState("");
+  const [include, setInclude] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <Modal title="Exclude a time range from statistics" onClose={onClose}>
+      <div className="space-y-3 text-sm">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Label label="From">
+            <input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} className={inputClass} />
+          </Label>
+          <Label label="To">
+            <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} className={inputClass} />
+          </Label>
+        </div>
+        {!include && (
+          <Label label="Reason" help="Shown next to the excluded results.">
+            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. planned ISP work" className={inputClass} />
+          </Label>
+        )}
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={include} onChange={(e) => setInclude(e.target.checked)} className="accent-[var(--accent)]" />
+          Count this range again instead (undo an exclusion)
+        </label>
+        {error && <p className="text-[var(--down)]">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={async () => {
+              setError(null);
+              try {
+                const r = await api.excludeResults(checkId, { from: new Date(from).toISOString(), to: new Date(to).toISOString(), exclude: !include, reason: reason || undefined });
+                if (!r.changed) setError("No results in that range.");
+                else onDone();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Couldn't change the results");
+              }
+            }}
+          >
+            {include ? "Count again" : "Exclude"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }

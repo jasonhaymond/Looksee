@@ -8,9 +8,9 @@
 //            measures and reports back, the engine applies thresholds
 //   report — evaluated by the engine against the metrics snapshot every
 //            agent report already carries (no separate agent work)
-// hostRequired: the check is meaningless without a hostId.
+// endpointRequired: the check is meaningless without a endpointId.
 // remoteProbe: an engine-executed type the Go agent can also run, so it can
-//   be pinned to a host's agent instead (checks.probeHostId) — for targets
+//   be pinned to a host's agent instead (checks.probeEndpointId) — for targets
 //   only reachable from inside another network.
 // minAgentVersion: agents older than this never receive the check; the
 //   engine records a warn result explaining why instead of sending it.
@@ -18,7 +18,7 @@ export type CheckExecutor = "engine" | "agent" | "report";
 // local: an engine-run type that reads the engine's own database (event
 // matching, anomaly baselines, heartbeat staleness, forecasts) — always run by
 // the engine, never handed to a site collector.
-export type CheckTypeMeta = { executor: CheckExecutor; hostRequired?: boolean; remoteProbe?: boolean; minAgentVersion?: string; local?: boolean };
+export type CheckTypeMeta = { executor: CheckExecutor; endpointRequired?: boolean; remoteProbe?: boolean; minAgentVersion?: string; local?: boolean };
 
 export const CHECK_TYPE_META = {
   ping: { executor: "engine", remoteProbe: true },
@@ -54,32 +54,32 @@ export const CHECK_TYPE_META = {
   anomaly: { executor: "engine", local: true },
   heartbeat: { executor: "engine", local: true },
   push_value: { executor: "engine", local: true },
-  agent_heartbeat: { executor: "engine", hostRequired: true, local: true },
-  disk_forecast: { executor: "engine", hostRequired: true, local: true },
+  agent_heartbeat: { executor: "engine", endpointRequired: true, local: true },
+  disk_forecast: { executor: "engine", endpointRequired: true, local: true },
   ip_change: { executor: "engine", local: true },
 
-  agent_service: { executor: "agent", hostRequired: true },
-  agent_process: { executor: "agent", hostRequired: true },
-  agent_file: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_log: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_eventlog: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_journal: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_script: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_scheduled_task: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_services_overview: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_docker: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_hyperv: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_perfcounter: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_vpn: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_ups: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
-  agent_backup: { executor: "agent", hostRequired: true, minAgentVersion: "3.0.0" },
+  agent_service: { executor: "agent", endpointRequired: true },
+  agent_process: { executor: "agent", endpointRequired: true },
+  agent_file: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_log: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_eventlog: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_journal: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_script: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_scheduled_task: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_services_overview: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_docker: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_hyperv: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_perfcounter: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_vpn: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_ups: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_backup: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
 
-  host_cpu: { executor: "report", hostRequired: true },
-  host_memory: { executor: "report", hostRequired: true },
-  host_disk: { executor: "report", hostRequired: true },
-  host_metric: { executor: "report", hostRequired: true, minAgentVersion: "3.0.0" },
-  host_reboot: { executor: "report", hostRequired: true, minAgentVersion: "3.0.0" },
-  host_change: { executor: "report", hostRequired: true, minAgentVersion: "3.0.0" },
+  host_cpu: { executor: "report", endpointRequired: true },
+  host_memory: { executor: "report", endpointRequired: true },
+  host_disk: { executor: "report", endpointRequired: true },
+  host_metric: { executor: "report", endpointRequired: true, minAgentVersion: "3.0.0" },
+  host_reboot: { executor: "report", endpointRequired: true, minAgentVersion: "3.0.0" },
+  host_change: { executor: "report", endpointRequired: true, minAgentVersion: "3.0.0" },
 } as const satisfies Record<string, CheckTypeMeta>;
 
 export type CheckType = keyof typeof CHECK_TYPE_META;
@@ -92,7 +92,7 @@ export const typesWhere = (pred: (m: CheckTypeMeta) => boolean) => CHECK_TYPES.f
 export const ENGINE_CHECK_TYPES = typesWhere((m) => m.executor === "engine");
 export const AGENT_CHECK_TYPES = typesWhere((m) => m.executor === "agent");
 export const REPORT_CHECK_TYPES = typesWhere((m) => m.executor === "report");
-export const HOST_SCOPED_CHECK_TYPES = typesWhere((m) => Boolean(m.hostRequired));
+export const ENDPOINT_SCOPED_CHECK_TYPES = typesWhere((m) => Boolean(m.endpointRequired));
 export const REMOTE_PROBE_CHECK_TYPES = typesWhere((m) => Boolean(m.remoteProbe));
 // Engine-run types a site collector runs for its endpoint.
 export const COLLECTOR_CHECK_TYPES = typesWhere((m) => m.executor === "engine" && !m.local);

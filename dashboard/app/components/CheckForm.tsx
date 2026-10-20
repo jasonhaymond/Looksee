@@ -1,32 +1,32 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { api, type Channel, type Check, type Endpoint, type Host, type HostDetail, type HostInventory, type MetricDef, type WalkRow } from "../lib/api";
+import { api, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type MetricDef, type WalkRow } from "../lib/api";
 import { CATEGORIES, CHECK_TYPES, TYPE_BY_KEY, defaultConfigFor, normalizeConfig, validateConfig, type Field } from "../lib/checkTypes";
 import { AlertOptions, Button, Label, Modal, MultiPicker, alertRulePayload, emptyAlertOptions, inputClass, type AlertOptionsValue, type PickItem } from "./ui";
 import { Tooltip } from "./Tooltip";
 
 let catalogPromise: Promise<MetricDef[]> | null = null;
-const loadCatalog = () => (catalogPromise ??= api.hostMetricCatalog());
+const loadCatalog = () => (catalogPromise ??= api.endpointMetricCatalog());
 
-// Short-lived so switching hosts back and forth in one form doesn't refetch,
+// Short-lived so switching endpoints back and forth in one form doesn't refetch,
 // but an agent that was just updated shows its new snapshot on the next form.
-const HOST_CACHE_MS = 30_000;
-const hostCache = new Map<string, { at: number; promise: Promise<HostDetail> }>();
-const inventoryCache = new Map<string, { at: number; promise: Promise<HostInventory> }>();
+const ENDPOINT_CACHE_MS = 30_000;
+const endpointCache = new Map<string, { at: number; promise: Promise<EndpointDetail> }>();
+const inventoryCache = new Map<string, { at: number; promise: Promise<EndpointInventory> }>();
 function cached<T>(map: Map<string, { at: number; promise: Promise<T> }>, id: string, load: () => Promise<T>) {
   const hit = map.get(id);
-  if (hit && Date.now() - hit.at < HOST_CACHE_MS) return hit.promise;
+  if (hit && Date.now() - hit.at < ENDPOINT_CACHE_MS) return hit.promise;
   const promise = load();
   map.set(id, { at: Date.now(), promise });
   return promise;
 }
-const loadHost = (id: string) => cached(hostCache, id, () => api.host(id));
-const loadInventory = (id: string) => cached(inventoryCache, id, () => api.hostInventory(id));
+const loadEndpoint = (id: string) => cached(endpointCache, id, () => api.endpoint(id));
+const loadInventory = (id: string) => cached(inventoryCache, id, () => api.endpointInventory(id));
 
 const SNMP_TYPES = new Set(["snmp"]);
 // Settings that usually name the target device, for "use each host's
-// address" when one form creates checks on several hosts.
+// address" when one form creates checks on several endpoints.
 const ADDRESS_KEYS = ["host", "ip", "url", "hostname"];
 
 export function TypePicker({ onPick, onCancel }: { onPick: (type: string) => void; onCancel?: () => void }) {
@@ -66,7 +66,7 @@ export function TypePicker({ onPick, onCancel }: { onPick: (type: string) => voi
 }
 
 // What the agent found on the host, as pickable rows for a field.
-function inventoryItems(kind: Field["suggest"] | string | undefined, host: HostDetail | null, inv: HostInventory | null): PickItem[] {
+function inventoryItems(kind: Field["suggest"] | string | undefined, host: EndpointDetail | null, inv: EndpointInventory | null): PickItem[] {
   const snap = host?.lastSnapshot;
   const names = (xs: string[] | null | undefined, group?: string) => (xs ?? []).map((x) => ({ id: x, label: x, group }));
   switch (kind) {
@@ -113,7 +113,7 @@ function inventoryItems(kind: Field["suggest"] | string | undefined, host: HostD
 
 // A text field plus "Browse" into what the agent found. While creating, more
 // than one item can be picked — one check is created per item.
-function InventoryInput({ field, value, onChange, items, multi, picked, onPick, hostName }: { field: Field; value: string; onChange: (v: string) => void; items: PickItem[]; multi: boolean; picked: string[]; onPick: (ids: string[]) => void; hostName?: string }) {
+function InventoryInput({ field, value, onChange, items, multi, picked, onPick, endpointName }: { field: Field; value: string; onChange: (v: string) => void; items: PickItem[]; multi: boolean; picked: string[]; onPick: (ids: string[]) => void; endpointName?: string }) {
   const [open, setOpen] = useState(false);
   const listId = `dl-${field.key}`;
   return (
@@ -134,7 +134,7 @@ function InventoryInput({ field, value, onChange, items, multi, picked, onPick, 
         </datalist>
       )}
       {open && (
-        <Modal title={`${field.label}${hostName ? ` on ${hostName}` : ""}`} onClose={() => setOpen(false)} wide>
+        <Modal title={`${field.label}${endpointName ? ` on ${endpointName}` : ""}`} onClose={() => setOpen(false)} wide>
           <p className="mb-2 text-xs text-[var(--muted)]">{multi ? "Pick one, or several to create one check for each." : "Pick one."} From the agent&apos;s latest report.</p>
           <MultiPicker items={items} selected={picked.length ? picked : value ? [value] : []} onChange={(ids) => (multi ? onPick(ids) : (onChange(ids[0] ?? ""), onPick([])))} single={!multi} height="max-h-96" groupLabel="State" />
           <div className="mt-3 flex justify-end">
@@ -157,7 +157,7 @@ function InventoryInput({ field, value, onChange, items, multi, picked, onPick, 
   );
 }
 
-function FieldInput({ field, value, onChange, items, checks, editing, multi, picked, onPick, hostName }: { field: Field; value: unknown; onChange: (v: unknown) => void; items: PickItem[]; checks: Check[]; editing: boolean; multi: boolean; picked: string[]; onPick: (ids: string[]) => void; hostName?: string }) {
+function FieldInput({ field, value, onChange, items, checks, editing, multi, picked, onPick, endpointName }: { field: Field; value: unknown; onChange: (v: unknown) => void; items: PickItem[]; checks: Check[]; editing: boolean; multi: boolean; picked: string[]; onPick: (ids: string[]) => void; endpointName?: string }) {
   const str = value == null ? "" : String(value);
   switch (field.kind) {
     case "checkbox":
@@ -231,7 +231,7 @@ function FieldInput({ field, value, onChange, items, checks, editing, multi, pic
         </Label>
       );
     default:
-      if (field.suggest) return <InventoryInput field={field} value={str} onChange={(v) => onChange(v)} items={items} multi={multi} picked={picked} onPick={onPick} hostName={hostName} />;
+      if (field.suggest) return <InventoryInput field={field} value={str} onChange={(v) => onChange(v)} items={items} multi={multi} picked={picked} onPick={onPick} endpointName={endpointName} />;
       return (
         <Label label={field.label + (field.required ? " *" : "")} help={field.help}>
           <input type={field.kind === "number" ? "number" : "text"} value={str} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} className={inputClass} />
@@ -240,7 +240,7 @@ function FieldInput({ field, value, onChange, items, checks, editing, multi, pic
   }
 }
 
-function MetricFields({ config, set, host, inv }: { config: Record<string, unknown>; set: (k: string, v: unknown) => void; host: HostDetail | null; inv: HostInventory | null }) {
+function MetricFields({ config, set, host, inv }: { config: Record<string, unknown>; set: (k: string, v: unknown) => void; host: EndpointDetail | null; inv: EndpointInventory | null }) {
   const [catalog, setCatalog] = useState<MetricDef[]>([]);
   useEffect(() => {
     loadCatalog().then(setCatalog).catch(() => setCatalog([]));
@@ -298,7 +298,7 @@ function MetricFields({ config, set, host, inv }: { config: Record<string, unkno
           </Label>
         </>
       )}
-      {host && !host.lastSnapshot && <p className="text-xs text-[var(--warn)] sm:col-span-2">This host hasn&apos;t sent a 3.x agent report yet{host.agentVersion ? ` (it reports agent v${host.agentVersion})` : ""} — update its agent on the Hosts page to see real names here.</p>}
+      {host && !host.lastSnapshot && <p className="text-xs text-[var(--warn)] sm:col-span-2">This host hasn&apos;t sent a 3.x agent report yet{host.agentVersion ? ` (it reports agent v${host.agentVersion})` : ""} — update its agent on the Endpoints page to see real names here.</p>}
     </div>
   );
 }
@@ -345,7 +345,7 @@ function Section({ title, children, defaultOpen = true }: { title: string; child
 }
 
 // Browse every value a device exposes under an OID, and click one to use it.
-function SnmpWalkDialog({ config, endpointId, checkId, onPick, onClose }: { config: Record<string, unknown>; endpointId: string; checkId?: string; onPick: (row: WalkRow) => void; onClose: () => void }) {
+function SnmpWalkDialog({ config, siteId, checkId, onPick, onClose }: { config: Record<string, unknown>; siteId: string; checkId?: string; onPick: (row: WalkRow) => void; onClose: () => void }) {
   const [root, setRoot] = useState(String(config.oid || "1.3.6.1.2.1"));
   const [rows, setRows] = useState<WalkRow[] | null>(null);
   const [truncated, setTruncated] = useState(false);
@@ -356,9 +356,9 @@ function SnmpWalkDialog({ config, endpointId, checkId, onPick, onClose }: { conf
     setRows(null);
     setStatus("Walking…");
     try {
-      let res = await api.snmpWalk({ config: { ...config, oid: root }, endpointId, checkId });
+      let res = await api.snmpWalk({ config: { ...config, oid: root }, siteId, checkId });
       if ("jobId" in res) {
-        setStatus("Walking from this endpoint's site collector…");
+        setStatus("Walking from this site's site collector…");
         const jobId = res.jobId;
         for (let i = 0; i < 40; i++) {
           await new Promise((r) => setTimeout(r, 3000));
@@ -427,24 +427,24 @@ function SnmpWalkDialog({ config, endpointId, checkId, onPick, onClose }: { conf
 export function CheckForm({
   type,
   check,
+  sites,
   endpoints,
-  hosts,
   checks,
   channels = [],
+  defaultSiteId,
   defaultEndpointId,
-  defaultHostId,
   onSaved,
   onCancel,
   onChangeType,
 }: {
   type: string;
   check?: Check;
+  sites: Site[];
   endpoints: Endpoint[];
-  hosts: Host[];
   checks: Check[];
   channels?: Channel[];
+  defaultSiteId?: string;
   defaultEndpointId?: string;
-  defaultHostId?: string;
   onSaved: (check: Check, created?: number) => void;
   onCancel: () => void;
   onChangeType?: () => void;
@@ -452,12 +452,12 @@ export function CheckForm({
   const def = TYPE_BY_KEY.get(type)!;
   const editing = Boolean(check);
   const [name, setName] = useState(check?.name ?? "");
-  const [endpointId, setEndpointId] = useState(check?.endpointId ?? defaultEndpointId ?? endpoints[0]?.id ?? "");
-  const [hostId, setHostId] = useState(check?.hostId ?? defaultHostId ?? "");
-  // Creating: several endpoints and/or hosts at once.
-  const [endpointIds, setEndpointIds] = useState<string[]>(defaultEndpointId ? [defaultEndpointId] : endpoints[0] ? [endpoints[0].id] : []);
-  const [hostIds, setHostIds] = useState<string[]>(defaultHostId ? [defaultHostId] : []);
-  const [probeHostId, setProbeHostId] = useState(check?.probeHostId ?? "");
+  const [siteId, setSiteId] = useState(check?.siteId ?? defaultSiteId ?? sites[0]?.id ?? "");
+  const [endpointId, setEndpointId] = useState(check?.endpointId ?? defaultEndpointId ?? "");
+  // Creating: several sites and/or endpoints at once.
+  const [siteIds, setSiteIds] = useState<string[]>(defaultSiteId ? [defaultSiteId] : sites[0] ? [sites[0].id] : []);
+  const [endpointIds, setEndpointIds] = useState<string[]>(defaultEndpointId ? [defaultEndpointId] : []);
+  const [probeEndpointId, setProbeEndpointId] = useState(check?.probeEndpointId ?? "");
   const [config, setConfig] = useState<Record<string, unknown>>(check ? { ...check.config } : defaultConfigFor(type));
   const [interval, setIntervalSecs] = useState(String(check?.intervalSeconds ?? (type === "heartbeat" || type === "push_value" ? 3600 : 60)));
   const [retry, setRetry] = useState(check?.retryIntervalSeconds != null ? String(check.retryIntervalSeconds) : "");
@@ -468,23 +468,23 @@ export function CheckForm({
   const [multiValues, setMultiValues] = useState<Record<string, string[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [host, setHost] = useState<HostDetail | null>(null);
-  const [inv, setInv] = useState<HostInventory | null>(null);
+  const [host, setEndpoint] = useState<EndpointDetail | null>(null);
+  const [inv, setInv] = useState<EndpointInventory | null>(null);
   const [walking, setWalking] = useState(false);
 
-  const endpointName = useMemo(() => new Map(endpoints.map((e) => [e.id, e.name])), [endpoints]);
-  const targetHostIds = editing ? (hostId ? [hostId] : []) : hostIds;
+  const siteName = useMemo(() => new Map(sites.map((e) => [e.id, e.name])), [sites]);
+  const targetEndpointIds = editing ? (endpointId ? [endpointId] : []) : endpointIds;
   // The host whose inventory feeds the pickers: the (first) chosen host.
-  const selectedHostId = targetHostIds[0] || probeHostId;
+  const selectedEndpointId = targetEndpointIds[0] || probeEndpointId;
   useEffect(() => {
-    if (!selectedHostId) {
-      setHost(null);
+    if (!selectedEndpointId) {
+      setEndpoint(null);
       setInv(null);
       return;
     }
-    loadHost(selectedHostId).then(setHost).catch(() => setHost(null));
-    loadInventory(selectedHostId).then(setInv).catch(() => setInv(null));
-  }, [selectedHostId]);
+    loadEndpoint(selectedEndpointId).then(setEndpoint).catch(() => setEndpoint(null));
+    loadInventory(selectedEndpointId).then(setInv).catch(() => setInv(null));
+  }, [selectedEndpointId]);
 
   const set = (key: string, value: unknown) => setConfig((c) => ({ ...c, [key]: value }));
   const visibleFields = def.fields.filter((f) => !f.showIf || f.showIf(config));
@@ -492,11 +492,11 @@ export function CheckForm({
   const basic = visibleFields.filter((f) => !f.advanced && f.kind !== "metric");
   const advanced = visibleFields.filter((f) => f.advanced);
   const otherChecks = useMemo(() => checks.filter((c) => c.id !== check?.id), [checks, check?.id]);
-  const multiTarget = !editing && (def.needsHost ? hostIds.length > 1 : hostIds.length > 1 || (hostIds.length === 0 && endpointIds.length > 1));
+  const multiTarget = !editing && (def.needsEndpoint ? endpointIds.length > 1 : endpointIds.length > 1 || (endpointIds.length === 0 && siteIds.length > 1));
   const multiField = Object.entries(multiValues).find(([, v]) => v.length > 1);
 
-  const hostItems: PickItem[] = hosts.map((h) => ({ id: h.id, label: h.name, sub: [h.hostname, h.agentVersion ? `agent ${h.agentVersion}` : "no agent"].filter(Boolean).join(" · "), group: endpointName.get(h.endpointId) }));
-  const endpointItems: PickItem[] = endpoints.map((e) => ({ id: e.id, label: e.name, sub: e.description ?? undefined }));
+  const endpointItems: PickItem[] = endpoints.map((h) => ({ id: h.id, label: h.name, sub: [h.hostname, h.agentVersion ? `agent ${h.agentVersion}` : "no agent"].filter(Boolean).join(" · "), group: siteName.get(h.siteId) }));
+  const siteItems: PickItem[] = sites.map((e) => ({ id: e.id, label: e.name, sub: e.description ?? undefined }));
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -504,21 +504,21 @@ export function CheckForm({
     const normalized = normalizeConfig(type, config);
     const pickedCheck = multiField ? { ...normalized, [multiField[0]]: multiField[1][0] } : normalized;
     const needTarget = editing
-      ? (def.needsHost && !hostId ? "Choose the host this check runs on." : null) ?? (!endpointId ? "Choose an endpoint." : null)
-      : def.needsHost
-        ? hostIds.length
+      ? (def.needsEndpoint && !endpointId ? "Choose the host this check runs on." : null) ?? (!siteId ? "Choose a site." : null)
+      : def.needsEndpoint
+        ? endpointIds.length
           ? null
           : "Choose at least one host."
-        : hostIds.length || endpointIds.length
+        : endpointIds.length || siteIds.length
           ? null
-          : "Choose at least one endpoint or host.";
+          : "Choose at least one site or host.";
     const invalid = validateConfig(type, pickedCheck) ?? (!name.trim() ? "Name is required." : null) ?? needTarget;
     if (invalid) {
       setError(invalid);
       return;
     }
     const common = {
-      probeHostId: def.remoteProbe && probeHostId ? probeHostId : null,
+      probeEndpointId: def.remoteProbe && probeEndpointId ? probeEndpointId : null,
       intervalSeconds: Number(interval) || 60,
       retryIntervalSeconds: retry ? Number(retry) : null,
       enabled,
@@ -528,11 +528,11 @@ export function CheckForm({
     setSaving(true);
     try {
       if (check) {
-        const saved = await api.updateCheck(check.id, { ...common, name: name.trim(), endpointId, hostId: hostId || null, config: normalized });
+        const saved = await api.updateCheck(check.id, { ...common, name: name.trim(), siteId, endpointId: endpointId || null, config: normalized });
         onSaved(saved);
         return;
       }
-      const targets = hostIds.length ? hostIds.map((id) => ({ hostId: id })) : endpointIds.map((id) => ({ endpointId: id }));
+      const targets = endpointIds.length ? endpointIds.map((id) => ({ endpointId: id })) : siteIds.map((id) => ({ siteId: id }));
       const values = multiField ? multiField[1] : [null];
       const created: Check[] = [];
       const errors: string[] = [];
@@ -553,7 +553,7 @@ export function CheckForm({
     }
   }
 
-  const agentHosts = hosts.filter((h) => h.hasAgentKey || h.agentVersion);
+  const agentEndpoints = endpoints.filter((h) => h.hasAgentKey || h.agentVersion);
   const addressFields = def.fields.filter((f) => ADDRESS_KEYS.includes(f.key));
 
   return (
@@ -574,24 +574,24 @@ export function CheckForm({
 
       <Section title={editing ? "Basics" : "Basics & where"}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Label label="Name *" className="sm:col-span-2" help={!editing ? "With several hosts or endpoints, {{host}}, {{address}} and {{endpoint}} are filled in for each one." : undefined}>
+          <Label label="Name *" className="sm:col-span-2" help={!editing ? "With several endpoints or sites, {{host}}, {{address}} and {{site}} are filled in for each one." : undefined}>
             <input autoFocus={!editing} value={name} onChange={(e) => setName(e.target.value)} placeholder={multiTarget ? `e.g. ${def.label} — {{host}}` : `e.g. ${def.label} — office router`} className={inputClass} />
           </Label>
           {editing ? (
             <>
-              <Label label="Endpoint" help="The group / network this check belongs to.">
-                <select value={endpointId} onChange={(e) => setEndpointId(e.target.value)} className={inputClass}>
-                  {endpoints.map((e) => (
+              <Label label="Site" help="The group / network this check belongs to.">
+                <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={inputClass}>
+                  {sites.map((e) => (
                     <option key={e.id} value={e.id}>
                       {e.name}
                     </option>
                   ))}
                 </select>
               </Label>
-              <Label label={def.needsHost ? "Host *" : "Host (optional)"} help={def.needsHost ? "The machine whose agent runs this check." : "Ties the check to a host for grouping; doesn't change where it runs."}>
-                <select value={hostId} onChange={(e) => setHostId(e.target.value)} className={inputClass}>
-                  <option value="">{def.needsHost ? "Choose a host…" : "None"}</option>
-                  {hosts.map((h) => (
+              <Label label={def.needsEndpoint ? "Endpoint *" : "Endpoint (optional)"} help={def.needsEndpoint ? "The machine whose agent runs this check." : "Ties the check to a host for grouping; doesn't change where it runs."}>
+                <select value={endpointId} onChange={(e) => setEndpointId(e.target.value)} className={inputClass}>
+                  <option value="">{def.needsEndpoint ? "Choose a host…" : "None"}</option>
+                  {endpoints.map((h) => (
                     <option key={h.id} value={h.id}>
                       {h.name}
                       {h.agentVersion ? ` (agent ${h.agentVersion})` : ""}
@@ -604,20 +604,20 @@ export function CheckForm({
             <>
               <div className="sm:col-span-2">
                 <div className="mb-1 inline-flex items-center text-xs text-[var(--muted)]">
-                  {def.needsHost ? "Hosts * — one check per host" : "Hosts (optional) — one check per host"}
-                  <Tooltip text={def.needsHost ? "The agent on each chosen host runs its own copy of this check." : "Pick hosts to create one check per host (in that host's endpoint). Leave empty to create per endpoint instead."} />
+                  {def.needsEndpoint ? "Endpoints * — one check per host" : "Endpoints (optional) — one check per host"}
+                  <Tooltip text={def.needsEndpoint ? "The agent on each chosen host runs its own copy of this check." : "Pick endpoints to create one check per host (in that host's site). Leave empty to create per site instead."} />
                 </div>
-                <MultiPicker items={hostItems} selected={hostIds} onChange={setHostIds} placeholder="Search hosts…" height="max-h-40" groupLabel="Endpoint" />
+                <MultiPicker items={endpointItems} selected={endpointIds} onChange={setEndpointIds} placeholder="Search endpoints…" height="max-h-40" groupLabel="Site" />
               </div>
-              {!def.needsHost && hostIds.length === 0 && (
+              {!def.needsEndpoint && endpointIds.length === 0 && (
                 <div className="sm:col-span-2">
-                  <div className="mb-1 text-xs text-[var(--muted)]">Endpoints * — one check per endpoint</div>
-                  <MultiPicker items={endpointItems} selected={endpointIds} onChange={setEndpointIds} placeholder="Search endpoints…" height="max-h-32" />
+                  <div className="mb-1 text-xs text-[var(--muted)]">Sites * — one check per site</div>
+                  <MultiPicker items={siteItems} selected={siteIds} onChange={setSiteIds} placeholder="Search sites…" height="max-h-32" />
                 </div>
               )}
-              {multiTarget && hostIds.length > 1 && addressFields.length > 0 && (
+              {multiTarget && endpointIds.length > 1 && addressFields.length > 0 && (
                 <p className="text-xs text-[var(--muted)] sm:col-span-2">
-                  Creating {hostIds.length} checks.{" "}
+                  Creating {endpointIds.length} checks.{" "}
                   <button type="button" className="underline" onClick={() => addressFields.forEach((f) => set(f.key, f.key === "url" ? "https://{{address}}/" : "{{address}}"))}>
                     Target each host&apos;s own address
                   </button>{" "}
@@ -628,9 +628,9 @@ export function CheckForm({
           )}
           {def.remoteProbe && (
             <Label label="Run from" help="The engine itself, or a host's agent — for targets only reachable from inside that host's network.">
-              <select value={probeHostId} onChange={(e) => setProbeHostId(e.target.value)} className={inputClass}>
+              <select value={probeEndpointId} onChange={(e) => setProbeEndpointId(e.target.value)} className={inputClass}>
                 <option value="">Looksee engine</option>
-                {agentHosts.map((h) => (
+                {agentEndpoints.map((h) => (
                   <option key={h.id} value={h.id}>
                     Agent on {h.name}
                   </option>
@@ -663,7 +663,7 @@ export function CheckForm({
                 multi={!editing}
                 picked={multiValues[f.key] ?? []}
                 onPick={(ids) => setMultiValues((m) => ({ ...m, [f.key]: ids }))}
-                hostName={host?.name}
+                endpointName={host?.name}
               />
             </div>
           ))}
@@ -678,7 +678,7 @@ export function CheckForm({
           {basic.length === 0 && type !== "host_metric" && <p className="text-xs text-[var(--muted)]">Nothing else to configure.</p>}
           {multiField && (
             <p className="rounded-md bg-[var(--accent)]/10 p-2 text-xs sm:col-span-2">
-              {multiField[1].length} {def.fields.find((f) => f.key === multiField[0])?.label.toLowerCase()}s picked — one check each{targetHostIds.length > 1 || endpointIds.length > 1 ? ", on every target" : ""}: {multiField[1].slice(0, 6).join(", ")}
+              {multiField[1].length} {def.fields.find((f) => f.key === multiField[0])?.label.toLowerCase()}s picked — one check each{targetEndpointIds.length > 1 || siteIds.length > 1 ? ", on every target" : ""}: {multiField[1].slice(0, 6).join(", ")}
               {multiField[1].length > 6 ? "…" : ""}
             </p>
           )}
@@ -709,8 +709,19 @@ export function CheckForm({
               Depends on
               <Tooltip text="While any of these is down, this check's alerts are held back (e.g. a router everything else sits behind)." />
             </div>
-            <MultiPicker items={otherChecks.map((c) => ({ id: c.id, label: c.name, group: endpointName.get(c.endpointId) }))} selected={dependsOn} onChange={setDependsOn} placeholder="Search checks…" height="max-h-32" groupLabel="Endpoint" />
+            <MultiPicker items={otherChecks.map((c) => ({ id: c.id, label: c.name, group: siteName.get(c.siteId) }))} selected={dependsOn} onChange={setDependsOn} placeholder="Search checks…" height="max-h-32" groupLabel="Site" />
           </div>
+          <Label label="Recovers together with" help="When that check recovers, this one is marked recovered too — e.g. a trap check that should clear when the device's ping check is up again." className="sm:col-span-2">
+            <select value={String(config.recoverWithCheckId ?? "")} onChange={(e) => set("recoverWithCheckId", e.target.value || undefined)} className={inputClass}>
+              <option value="">— no —</option>
+              {otherChecks.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                  {siteName.get(c.siteId) ? ` (${siteName.get(c.siteId)})` : ""}
+                </option>
+              ))}
+            </select>
+          </Label>
           <label className="flex items-center gap-2 text-sm sm:col-span-2">
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
             Enabled
@@ -738,7 +749,7 @@ export function CheckForm({
       {walking && (
         <SnmpWalkDialog
           config={config}
-          endpointId={editing ? endpointId : (hostIds.length ? hosts.find((h) => h.id === hostIds[0])?.endpointId : endpointIds[0]) ?? ""}
+          siteId={editing ? siteId : (endpointIds.length ? endpoints.find((h) => h.id === endpointIds[0])?.siteId : siteIds[0]) ?? ""}
           checkId={check?.id}
           onClose={() => setWalking(false)}
           onPick={(row) => {

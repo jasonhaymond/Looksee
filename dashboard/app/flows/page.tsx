@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { api, type FlowRow } from "../lib/api";
-import { TopNav } from "../components/TopNav";
 import { SiteSelect } from "../components/SiteSelect";
 import { PageHelp } from "../components/PageHelp";
 import { EmptyState, formatBytes, inputClass, relativeTime } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
+import { pollEvery } from "../lib/poll";
 
 const RANGES = [
   [15, "15 minutes"],
@@ -32,7 +32,7 @@ export default function FlowsPage() {
     if (!authed) return;
     const load = () => api.topFlows({ minutes, by, exporter: exporter || undefined, site: site || undefined, limit: 50 }).then(setRows);
     load();
-    const t = setInterval(load, 60_000);
+    const t = pollEvery(load, 60_000);
     return () => clearInterval(t);
   }, [authed, minutes, by, exporter, site]);
 
@@ -40,7 +40,6 @@ export default function FlowsPage() {
   if (!authed) return null;
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6">
-      <TopNav active="/flows" />
       <h2 className="mb-3 text-lg font-medium">Top talkers</h2>
       <PageHelp anchor="top-talkers">
         Who is using the network, from NetFlow v5/v9, IPFIX (UDP 2055) or sFlow (UDP 6343) sent to the engine or to a site collector — e.g. pfSense&apos;s softflowd package or a managed switch. Totals are summed per minute; the busiest 1,000 conversations per exporter per minute are kept for 7 days.

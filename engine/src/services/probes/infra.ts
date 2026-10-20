@@ -345,7 +345,7 @@ export function parseVimObjects(xml: string): { moref: string; props: Record<str
 }
 
 /**
- * I3 (ESXi / vCenter). Checks VMs, hosts or datastores through the vSphere
+ * I3 (ESXi / vCenter). Checks VMs, endpoints or datastores through the vSphere
  * SOAP API — the one interface both a standalone ESXi host and vCenter speak.
  * Only the few calls needed here are hand-written, rather than pulling in a
  * full SOAP client library.

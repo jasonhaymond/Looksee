@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type WatchdogView } from "../lib/api";
-import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { Button, Label, inputClass, relativeTime, useToast } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
@@ -41,7 +40,6 @@ export default function WatchdogPage() {
   if (!authed || !w) return null;
   return (
     <main className="mx-auto max-w-4xl p-4 sm:p-6">
-      <TopNav active="/watchdog" />
       <h2 className="mb-3 text-lg font-medium">Watchdog</h2>
       <PageHelp anchor="watchdog">
         Looksee can alert on everything except its own outage. While it&apos;s healthy it pings an outside service every minute; if the pings stop — server down, power or internet out at home, Looksee stuck — that service alerts you.

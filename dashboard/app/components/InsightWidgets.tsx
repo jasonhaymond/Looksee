@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, type Check, type Endpoint, type FlowRow, type Widget } from "../lib/api";
+import { api, type Check, type Site, type FlowRow, type Widget } from "../lib/api";
 import { StatusBadge, formatBytes } from "./ui";
 import { displayStatus } from "./CheckDetail";
+import { pollEvery } from "../lib/poll";
 
 const RANGES = [
   { minutes: 15, label: "15m" },
@@ -20,7 +21,7 @@ export function TopTalkersWidget({ widget, onChanged }: { widget: Widget; onChan
   useEffect(() => {
     const load = () => api.topFlows({ minutes, by, limit: 8 }).then(setRows).catch(() => setRows([]));
     load();
-    const t = setInterval(load, 60_000);
+    const t = pollEvery(load, 60_000);
     return () => clearInterval(t);
   }, [minutes, by]);
   const max = Math.max(1, ...(rows ?? []).map((r) => r.bytes));
@@ -71,15 +72,15 @@ export function TopTalkersWidget({ widget, onChanged }: { widget: Widget; onChan
   );
 }
 
-// Counts by status for one endpoint (or everything) with the problems
+// Counts by status for one site (or everything) with the problems
 // listed — a compact "what's wrong right now" tile.
-export function StatusSummaryWidget({ checks, endpoint }: { checks: Check[]; endpoint: Endpoint | undefined }) {
+export function StatusSummaryWidget({ checks, site }: { checks: Check[]; site: Site | undefined }) {
   const counts: Record<string, number> = {};
   for (const c of checks) counts[displayStatus(c)] = (counts[displayStatus(c)] ?? 0) + 1;
   const problems = checks.filter((c) => ["down", "warn"].includes(displayStatus(c))).sort((a, b) => (displayStatus(a) === "down" ? -1 : 1) - (displayStatus(b) === "down" ? -1 : 1));
   return (
     <div className="h-full surface rounded-lg p-3">
-      <div className="mb-2 font-medium">{endpoint ? endpoint.name : "All endpoints"}</div>
+      <div className="mb-2 font-medium">{site ? site.name : "All sites"}</div>
       <div className="mb-2 flex flex-wrap gap-3 text-sm">
         {["down", "warn", "up", "maintenance", "unknown"].map((s) =>
           counts[s] ? (

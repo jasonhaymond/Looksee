@@ -4,9 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type BackupSettings, type BackupRun, type Archive, type CurrentOperation } from "../lib/api";
 import { RestoreForm } from "./RestoreForm";
-import { TopNav } from "../components/TopNav";
 import { Tooltip } from "../components/Tooltip";
 import { PageHelp } from "../components/PageHelp";
+import { pollEvery } from "../lib/poll";
 
 const POLL_MS = 5_000;
 
@@ -28,7 +28,10 @@ export default function BackupsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  const loadAll = useCallback(async () => {
+  // Polled every few seconds for live status. The settings form is filled
+  // from the saved values only when asked (first load, after a save) —
+  // refilling it on every poll would wipe what the admin is typing.
+  const loadAll = useCallback(async (fillForm = false) => {
     const [settingsRes, statusRes, runsRes, archivesRes] = await Promise.all([
       api.backupSettings(),
       api.backupStatus(),
@@ -41,9 +44,11 @@ export default function BackupsPage() {
     setCurrentOp(statusRes.currentOperation);
     setRuns(runsRes.runs);
     setArchives(archivesRes.archives);
-    setRepoUrl(settingsRes.settings.repoUrl ?? "");
-    setSchedule(settingsRes.settings.schedule ?? "");
-    setRetentionCount(settingsRes.settings.retentionCount != null ? String(settingsRes.settings.retentionCount) : "");
+    if (fillForm) {
+      setRepoUrl(settingsRes.settings.repoUrl ?? "");
+      setSchedule(settingsRes.settings.schedule ?? "");
+      setRetentionCount(settingsRes.settings.retentionCount != null ? String(settingsRes.settings.retentionCount) : "");
+    }
   }, []);
 
   useEffect(() => {
@@ -57,8 +62,8 @@ export default function BackupsPage() {
 
   useEffect(() => {
     if (!authChecked) return;
-    loadAll();
-    const timer = setInterval(loadAll, POLL_MS);
+    loadAll(true);
+    const timer = pollEvery(() => loadAll(), POLL_MS);
     return () => clearInterval(timer);
   }, [authChecked, loadAll]);
 
@@ -75,7 +80,7 @@ export default function BackupsPage() {
       });
       setPassphrase("");
       setSaved(true);
-      loadAll();
+      loadAll(true);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save settings");
     }
@@ -99,7 +104,6 @@ export default function BackupsPage() {
 
   return (
     <main className="mx-auto max-w-4xl p-4 sm:p-6">
-      <TopNav active="/backups" />
       <h2 className="mb-4 text-lg font-medium">Backups</h2>
       <PageHelp anchor="backups-and-logs">
         Encrypted, deduplicated backups of the database and secrets, via Borg. Restoring discards data created after the backup you restore — read the confirmation prompt carefully.

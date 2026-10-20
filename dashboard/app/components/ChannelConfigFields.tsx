@@ -14,7 +14,7 @@ export const CHANNEL_TYPE_LABEL: Record<string, string> = {
 
 export const CHANNEL_TYPE_HELP: Record<string, string> = {
   email: "Sent through the SMTP server above.",
-  webhook: "A generic JSON POST — Discord, ntfy, Gotify, Home Assistant, or your own endpoint.",
+  webhook: "A generic JSON POST — Discord, ntfy, Gotify, Home Assistant, or your own site.",
   web_push: "Delivers to every browser subscribed via this dashboard's \"Enable push notifications\" button. No config needed.",
   sms: "Not yet wired to a provider (see spec.md deferred items) — saving this channel is a no-op until one is.",
   slack: "Posts to a Slack channel through an incoming webhook.",

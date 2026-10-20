@@ -12,25 +12,25 @@ import { and, eq, gte } from "drizzle-orm";
 import { app } from "../src/app.js";
 import { loginWith2fa } from "./helpers.js";
 import { db } from "../src/db/index.js";
-import { users, endpoints, checks, checkResults, maintenanceWindows, statusPages, logs } from "../src/db/schema.js";
+import { users, sites, checks, checkResults, maintenanceWindows, statusPages, logs } from "../src/db/schema.js";
 import { isValidTimeZone, localMidnight, recentDates, wallClock } from "../src/lib/timeZone.js";
 import { windowIsActive } from "../src/services/maintenance.js";
 
 const email = `test-tz-${crypto.randomUUID()}@example.com`;
 const password = "TestPass123";
 let cookie: string;
-let endpointId: string;
+let siteId: string;
 
 // One signed-in admin and one endpoint shared by the API tests below.
 beforeAll(async () => {
   await db.insert(users).values({ email, passwordHash: await bcrypt.hash(password, 10) });
   cookie = await loginWith2fa(email, password);
-  endpointId = (await db.insert(endpoints).values({ name: `tz-${crypto.randomUUID()}` }).returning())[0].id;
+  siteId = (await db.insert(sites).values({ name: `tz-${crypto.randomUUID()}` }).returning())[0].id;
 });
 
 // Deleting the endpoint cascades to its checks and their results.
 afterAll(async () => {
-  await db.delete(endpoints).where(eq(endpoints.id, endpointId));
+  await db.delete(sites).where(eq(sites.id, siteId));
   await db.delete(users).where(eq(users.email, email));
 });
 
@@ -117,7 +117,7 @@ describe("weekly maintenance windows in a time zone", () => {
 
 describe("maintenance API time zones", () => {
   it("stores the zone sent with a weekly window", async () => {
-    const res = await request(app).post("/api/maintenance").set("Cookie", cookie).send({ name: "tz window", scope: "endpoint", targetIds: [endpointId], daysOfWeek: [0], startTime: "02:00", durationMinutes: 60, timeZone: "America/Chicago" });
+    const res = await request(app).post("/api/maintenance").set("Cookie", cookie).send({ name: "tz window", scope: "site", targetIds: [siteId], daysOfWeek: [0], startTime: "02:00", durationMinutes: 60, timeZone: "America/Chicago" });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(res.body.timeZone).toBe("America/Chicago");
     await db.delete(maintenanceWindows).where(eq(maintenanceWindows.id, res.body.id));
@@ -140,7 +140,7 @@ describe("maintenance API time zones", () => {
 
 describe("status page day bars in the visitor's zone", () => {
   it("buckets results by the visitor's calendar day and ignores bad zones", async () => {
-    const check = (await db.insert(checks).values({ endpointId, name: "tz status", type: "heartbeat", config: {} }).returning())[0];
+    const check = (await db.insert(checks).values({ siteId, name: "tz status", type: "heartbeat", config: {} }).returning())[0];
     // A result just before the last UTC midnight: "yesterday" in UTC, but
     // already "today" in Tokyo (UTC+9).
     const utcMidnight = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z");

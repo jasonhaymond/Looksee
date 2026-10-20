@@ -1,8 +1,8 @@
-import type { Snapshot } from "./hostMetrics.js";
+import type { Snapshot } from "./endpointMetrics.js";
 
-export type Suggestion = { key: string; name: string; type: string; config: Record<string, unknown>; reason: string; intervalSeconds?: number; group?: string; hostScoped?: boolean };
+export type Suggestion = { key: string; name: string; type: string; config: Record<string, unknown>; reason: string; intervalSeconds?: number; group?: string; endpointScoped?: boolean };
 
-type HostLike = { name: string; hostname?: string | null; os: string | null; lastSnapshot: unknown; availableServices: unknown; inventory: unknown; processInventory?: unknown; serviceInventory?: unknown; availableProcesses?: unknown };
+type EndpointLike = { name: string; hostname?: string | null; os: string | null; lastSnapshot: unknown; availableServices: unknown; inventory: unknown; processInventory?: unknown; serviceInventory?: unknown; availableProcesses?: unknown };
 type ServiceRow = { name: string; displayName?: string; state?: string; startType?: string };
 type ProcessRow = { name: string; memoryMb?: number };
 type ExistingCheck = { type: string; config: unknown };
@@ -57,7 +57,7 @@ const DATABASE_PROCESS = /^(postgres|mysqld|mariadbd|mongod|redis-server|sqlserv
 
 // L10: turn one agent snapshot into a checklist of sensible checks with
 // sensible thresholds, minus whatever this host already has.
-export function suggestChecks(host: HostLike, existing: ExistingCheck[]): Suggestion[] {
+export function suggestChecks(host: EndpointLike, existing: ExistingCheck[]): Suggestion[] {
   const s = (host.lastSnapshot ?? {}) as Snapshot & { availableContainers?: string[] };
   const isWindows = /windows/i.test(host.os ?? "") || /windows/i.test(JSON.stringify(host.inventory ?? {}));
   const out: Suggestion[] = [];

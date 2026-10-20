@@ -2,17 +2,19 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { checks, checkResults, checkDependencies, alertRules, alertRuleChannels, maintenanceWindows, hosts, endpoints } from "../db/schema.js";
-import { CHECK_TYPE_META, COLLECTOR_CHECK_TYPES, isCheckType, HOST_SCOPED_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/checkTypes.js";
+import { checks, checkResults, checkDependencies, alertRules, alertRuleChannels, maintenanceWindows, endpoints, sites } from "../db/schema.js";
+import { CHECK_TYPE_META, COLLECTOR_CHECK_TYPES, isCheckType, ENDPOINT_SCOPED_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/checkTypes.js";
 import { requireAuth } from "../middleware/auth.js";
 import { maskCheck, mergeSecrets } from "../lib/secrets.js";
 import { runOneCheck } from "../services/scheduler.js";
 import { queueCollectorJob, runsOnCollector, siteCollectorFor } from "../services/sites.js";
 import { browseSnmp } from "../services/probes/snmp.js";
 import { collectorJobs } from "../db/schema.js";
-import { invalidateMaintenanceCache, windowAppliesTo, windowIsActive } from "../services/maintenance.js";
+import { activeMaintenance, invalidateMaintenanceCache, windowAppliesTo } from "../services/maintenance.js";
 import { copyAlertRules, createAlertRule, parseAlertRule } from "../services/alertRuleFactory.js";
 import { remediationFor } from "../services/remediation.js";
+import { resolveCheck } from "../services/alerting.js";
+import { logger } from "../lib/logger.js";
 import { alertEvents } from "../db/schema.js";
 
 export const checksRouter = Router();
@@ -33,17 +35,17 @@ const intOrNull = (v: unknown) => (v === null || v === "" || v === undefined ? n
 
 // Shared rule for create and update: what the fields must look like
 // together, independent of how they arrived.
-function validate(type: string, hostId: string | null, probeHostId: string | null, intervalSeconds: number): string | null {
-  if ((HOST_SCOPED_CHECK_TYPES as readonly string[]).includes(type) && !hostId) return `${type} checks require a hostId`;
-  if (probeHostId && !(REMOTE_PROBE_CHECK_TYPES as readonly string[]).includes(type)) return `${type} checks can't run on an agent — only ${REMOTE_PROBE_CHECK_TYPES.join(", ")} can`;
+function validate(type: string, endpointId: string | null, probeEndpointId: string | null, intervalSeconds: number): string | null {
+  if ((ENDPOINT_SCOPED_CHECK_TYPES as readonly string[]).includes(type) && !endpointId) return `${type} checks require a endpointId`;
+  if (probeEndpointId && !(REMOTE_PROBE_CHECK_TYPES as readonly string[]).includes(type)) return `${type} checks can't run on an agent — only ${REMOTE_PROBE_CHECK_TYPES.join(", ")} can`;
   if (!Number.isFinite(intervalSeconds) || intervalSeconds < 5) return "intervalSeconds must be at least 5";
   return null;
 }
 
 checksRouter.get("/", async (req, res) => {
+  const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
   const endpointId = typeof req.query.endpointId === "string" ? req.query.endpointId : undefined;
-  const hostId = typeof req.query.hostId === "string" ? req.query.hostId : undefined;
-  const conds = [endpointId ? eq(checks.endpointId, endpointId) : undefined, hostId ? eq(checks.hostId, hostId) : undefined].filter(Boolean);
+  const conds = [siteId ? eq(checks.siteId, siteId) : undefined, endpointId ? eq(checks.endpointId, endpointId) : undefined].filter(Boolean);
   const rows = await db.query.checks.findMany({
     where: conds.length ? and(...conds) : undefined,
     orderBy: (c, { asc }) => asc(c.name),
@@ -53,10 +55,10 @@ checksRouter.get("/", async (req, res) => {
   for (const d of deps) depMap.set(d.checkId, [...(depMap.get(d.checkId) ?? []), d.dependsOnCheckId]);
   // Parent status needs every check, not just this page's filter.
   const statusById = new Map((await db.select({ id: checks.id, lastStatus: checks.lastStatus, name: checks.name }).from(checks)).map((c) => [c.id, c]));
-  const windows = (await db.query.maintenanceWindows.findMany()).filter((w) => windowIsActive(w));
-  const allEndpoints = await db.query.endpoints.findMany();
-  const collectorOf = new Map(allEndpoints.filter((e) => e.collectorHostId).map((e) => [e.id, e.collectorHostId!]));
-  const locationOf = new Map(allEndpoints.map((e) => [e.id, e.locationId]));
+  const { windows, groupChecks } = await activeMaintenance();
+  const allSites = await db.query.sites.findMany();
+  const collectorOf = new Map(allSites.filter((e) => e.collectorEndpointId).map((e) => [e.id, e.collectorEndpointId!]));
+  const locationOf = new Map(allSites.map((e) => [e.id, e.locationId]));
   res.json(
     rows.map((c) => {
       const dependsOn = depMap.get(c.id) ?? [];
@@ -65,12 +67,12 @@ checksRouter.get("/", async (req, res) => {
         ...maskCheck(c),
         state: undefined,
         dependsOn,
-        inMaintenance: windows.some((w) => windowAppliesTo(w, c)),
+        inMaintenance: windows.some((w) => windowAppliesTo(w, c, groupChecks)),
         blockedBy: downParent?.name ?? null,
         // The agent host whose site collector runs this check, if any.
-        collectorHostId: COLLECTOR_TYPES.has(c.type) && !c.probeHostId ? (collectorOf.get(c.endpointId) ?? null) : null,
+        collectorEndpointId: COLLECTOR_TYPES.has(c.type) && !c.probeEndpointId ? (collectorOf.get(c.siteId) ?? null) : null,
         pushUrl: c.pushToken ? `${process.env.PUBLIC_URL ?? ""}/api/hb/${c.pushToken}` : null,
-        locationId: locationOf.get(c.endpointId) ?? null,
+        locationId: locationOf.get(c.siteId) ?? null,
         remediation: c.enabled ? remediationFor({ type: c.type, status: c.lastStatus, message: c.lastMessage, config: c.config }) : [],
       };
     })
@@ -90,9 +92,9 @@ checksRouter.post("/snmp-walk", async (req, res) => {
     res.status(400).json({ error: "host is required" });
     return;
   }
-  const endpointId = req.body?.endpointId ? String(req.body.endpointId) : null;
-  if (endpointId && (await siteCollectorFor(endpointId))) {
-    const job = await queueCollectorJob(endpointId, "snmp_walk", config);
+  const siteId = req.body?.siteId ? String(req.body.siteId) : null;
+  if (siteId && (await siteCollectorFor(siteId))) {
+    const job = await queueCollectorJob(siteId, "snmp_walk", config);
     res.status(202).json({ jobId: job.id });
     return;
   }
@@ -126,16 +128,16 @@ checksRouter.get("/types", (_req, res) => {
 
 checksRouter.post("/", async (req, res) => {
   const name = String(req.body?.name ?? "").trim();
-  const endpointId = String(req.body?.endpointId ?? "");
+  const siteId = String(req.body?.siteId ?? "");
   const type = req.body?.type;
-  if (!name || !endpointId || !isCheckType(type)) {
-    res.status(400).json({ error: `name, endpointId, and a valid type are required` });
+  if (!name || !siteId || !isCheckType(type)) {
+    res.status(400).json({ error: `name, siteId, and a valid type are required` });
     return;
   }
-  const hostId = req.body?.hostId ? String(req.body.hostId) : null;
-  const probeHostId = req.body?.probeHostId ? String(req.body.probeHostId) : null;
+  const endpointId = req.body?.endpointId ? String(req.body.endpointId) : null;
+  const probeEndpointId = req.body?.probeEndpointId ? String(req.body.probeEndpointId) : null;
   const intervalSeconds = Number.isFinite(Number(req.body?.intervalSeconds)) ? Number(req.body.intervalSeconds) : 60;
-  const error = validate(type, hostId, probeHostId, intervalSeconds);
+  const error = validate(type, endpointId, probeEndpointId, intervalSeconds);
   if (error) {
     res.status(400).json({ error });
     return;
@@ -145,9 +147,9 @@ checksRouter.post("/", async (req, res) => {
     .insert(checks)
     .values({
       name,
+      siteId,
       endpointId,
-      hostId,
-      probeHostId,
+      probeEndpointId,
       type,
       config,
       intervalSeconds,
@@ -176,35 +178,35 @@ function fillPlaceholders<T>(value: T, vars: Record<string, string>): T {
 
 // POST /api/checks/batch
 // { type, name, config, intervalSeconds, retryIntervalSeconds, enabled, tags,
-//   dependsOn, probeHostId, alertRule?, targets: [{ endpointId, hostId? }] }
-// Creates the same check once per target (multi-select hosts/endpoints in
+//   dependsOn, probeEndpointId, alertRule?, targets: [{ siteId, endpointId? }] }
+// Creates the same check once per target (multi-select endpoints/sites in
 // the add-check form). Each target is validated on its own; failures are
 // reported per target rather than failing the whole batch.
 checksRouter.post("/batch", async (req, res) => {
   const type = req.body?.type;
   const baseName = String(req.body?.name ?? "").trim();
-  const targets: { endpointId?: unknown; hostId?: unknown }[] = Array.isArray(req.body?.targets) ? req.body.targets.slice(0, 500) : [];
+  const targets: { siteId?: unknown; endpointId?: unknown }[] = Array.isArray(req.body?.targets) ? req.body.targets.slice(0, 500) : [];
   if (!isCheckType(type) || !baseName || !targets.length) {
     res.status(400).json({ error: "type, name and at least one target are required" });
     return;
   }
   const intervalSeconds = Number.isFinite(Number(req.body?.intervalSeconds)) ? Number(req.body.intervalSeconds) : 60;
-  const probeHostId = req.body?.probeHostId ? String(req.body.probeHostId) : null;
+  const probeEndpointId = req.body?.probeEndpointId ? String(req.body.probeEndpointId) : null;
   const rule = parseAlertRule(req.body?.alertRule);
-  const allHosts = new Map((await db.query.hosts.findMany()).map((h) => [h.id, h]));
-  const allEndpoints = new Map((await db.query.endpoints.findMany()).map((e) => [e.id, e]));
+  const allEndpoints = new Map((await db.query.endpoints.findMany()).map((h) => [h.id, h]));
+  const allSites = new Map((await db.query.sites.findMany()).map((e) => [e.id, e]));
   const created: ReturnType<typeof maskCheck>[] = [];
   const errors: { target: string; error: string }[] = [];
   for (const t of targets) {
-    const host = t.hostId ? allHosts.get(String(t.hostId)) : undefined;
-    const endpointId = host?.endpointId ?? (t.endpointId ? String(t.endpointId) : "");
-    const endpoint = allEndpoints.get(endpointId);
-    const label = host?.name ?? endpoint?.name ?? String(t.hostId ?? t.endpointId ?? "?");
-    if (!endpoint || (t.hostId && !host)) {
+    const host = t.endpointId ? allEndpoints.get(String(t.endpointId)) : undefined;
+    const siteId = host?.siteId ?? (t.siteId ? String(t.siteId) : "");
+    const endpoint = allSites.get(siteId);
+    const label = host?.name ?? endpoint?.name ?? String(t.endpointId ?? t.siteId ?? "?");
+    if (!endpoint || (t.endpointId && !host)) {
       errors.push({ target: label, error: "endpoint or host not found" });
       continue;
     }
-    const err = validate(type, host?.id ?? null, probeHostId, intervalSeconds);
+    const err = validate(type, host?.id ?? null, probeEndpointId, intervalSeconds);
     if (err) {
       errors.push({ target: label, error: err });
       continue;
@@ -218,9 +220,9 @@ checksRouter.post("/batch", async (req, res) => {
       .insert(checks)
       .values({
         name,
-        endpointId,
-        hostId: host?.id ?? null,
-        probeHostId,
+        siteId,
+        endpointId: host?.id ?? null,
+        probeEndpointId,
         type,
         config: fillPlaceholders(req.body?.config && typeof req.body.config === "object" ? req.body.config : {}, vars),
         intervalSeconds,
@@ -244,16 +246,16 @@ checksRouter.get("/:id", async (req, res) => {
     return;
   }
   const deps = await db.query.checkDependencies.findMany({ where: eq(checkDependencies.checkId, check.id) });
-  const endpoint = await db.query.endpoints.findFirst({ where: eq(endpoints.id, check.endpointId) });
-  const windows = (await db.query.maintenanceWindows.findMany()).filter((w) => windowIsActive(w));
+  const endpoint = await db.query.sites.findFirst({ where: eq(sites.id, check.siteId) });
+  const { windows, groupChecks } = await activeMaintenance();
   const parents = deps.length ? await db.query.checks.findMany({ where: inArray(checks.id, deps.map((d) => d.dependsOnCheckId)) }) : [];
   res.json({
     ...maskCheck(check),
     state: undefined,
     dependsOn: deps.map((d) => d.dependsOnCheckId),
-    inMaintenance: windows.some((w) => windowAppliesTo(w, check)),
+    inMaintenance: windows.some((w) => windowAppliesTo(w, check, groupChecks)),
     blockedBy: parents.find((p) => p.lastStatus === "down")?.name ?? null,
-    collectorHostId: COLLECTOR_TYPES.has(check.type) && !check.probeHostId ? (endpoint?.collectorHostId ?? null) : null,
+    collectorEndpointId: COLLECTOR_TYPES.has(check.type) && !check.probeEndpointId ? (endpoint?.collectorEndpointId ?? null) : null,
     pushUrl: check.pushToken ? `${process.env.PUBLIC_URL ?? ""}/api/hb/${check.pushToken}` : null,
     locationId: endpoint?.locationId ?? null,
     remediation: remediationFor({ type: check.type, status: check.lastStatus, message: check.lastMessage, config: check.config }),
@@ -269,10 +271,10 @@ checksRouter.get("/:id/stats", async (req, res) => {
   const id = req.params.id;
   const summary = await db.execute(sql`
     SELECT count(*)::int AS results,
-      count(*) FILTER (WHERE status = 'up' AND NOT in_maintenance)::int AS up,
-      count(*) FILTER (WHERE status = 'warn' AND NOT in_maintenance)::int AS warn,
-      count(*) FILTER (WHERE status = 'down' AND NOT in_maintenance)::int AS down,
-      count(*) FILTER (WHERE NOT in_maintenance AND status <> 'unknown')::int AS counted,
+      count(*) FILTER (WHERE status = 'up' AND NOT (in_maintenance OR excluded))::int AS up,
+      count(*) FILTER (WHERE status = 'warn' AND NOT (in_maintenance OR excluded))::int AS warn,
+      count(*) FILTER (WHERE status = 'down' AND NOT (in_maintenance OR excluded))::int AS down,
+      count(*) FILTER (WHERE NOT (in_maintenance OR excluded) AND status <> 'unknown')::int AS counted,
       avg(latency_ms)::float AS "latencyAvg", min(latency_ms)::float AS "latencyMin", max(latency_ms)::float AS "latencyMax",
       percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::float AS "latencyP95",
       avg(value)::float AS "valueAvg", min(value)::float AS "valueMin", max(value)::float AS "valueMax"
@@ -284,8 +286,8 @@ checksRouter.get("/:id/stats", async (req, res) => {
   const series = await db.execute(sql`
     SELECT to_timestamp(floor(extract(epoch FROM checked_at) / ${bucketSeconds}) * ${bucketSeconds}) AS t,
       avg(latency_ms)::float AS latency, avg(value)::float AS value, min(value)::float AS "valueMin", max(value)::float AS "valueMax",
-      CASE WHEN bool_or(status = 'down' AND NOT in_maintenance) THEN 'down' WHEN bool_or(status = 'warn' AND NOT in_maintenance) THEN 'warn'
-           WHEN bool_or(in_maintenance) THEN 'maintenance' WHEN bool_or(status = 'up') THEN 'up' ELSE 'unknown' END AS status,
+      CASE WHEN bool_or(status = 'down' AND NOT (in_maintenance OR excluded)) THEN 'down' WHEN bool_or(status = 'warn' AND NOT (in_maintenance OR excluded)) THEN 'warn'
+           WHEN bool_or(in_maintenance OR excluded) THEN 'maintenance' WHEN bool_or(status = 'up') THEN 'up' ELSE 'unknown' END AS status,
       count(*)::int AS n
     FROM check_results WHERE check_id = ${id} AND checked_at >= ${since}
     GROUP BY 1 ORDER BY 1`);
@@ -312,20 +314,20 @@ checksRouter.patch("/:id", async (req, res) => {
   }
   const updates: Partial<typeof checks.$inferInsert> = {};
   if (req.body?.name !== undefined) updates.name = String(req.body.name).trim();
-  if (req.body?.endpointId !== undefined) updates.endpointId = String(req.body.endpointId);
-  if (req.body?.hostId !== undefined) updates.hostId = req.body.hostId ? String(req.body.hostId) : null;
-  if (req.body?.probeHostId !== undefined) updates.probeHostId = req.body.probeHostId ? String(req.body.probeHostId) : null;
+  if (req.body?.siteId !== undefined) updates.siteId = String(req.body.siteId);
+  if (req.body?.endpointId !== undefined) updates.endpointId = req.body.endpointId ? String(req.body.endpointId) : null;
+  if (req.body?.probeEndpointId !== undefined) updates.probeEndpointId = req.body.probeEndpointId ? String(req.body.probeEndpointId) : null;
   if (req.body?.config !== undefined) updates.config = mergeSecrets(req.body.config ?? {}, existing.config);
   if (req.body?.intervalSeconds !== undefined) updates.intervalSeconds = Number(req.body.intervalSeconds);
   if (req.body?.retryIntervalSeconds !== undefined) updates.retryIntervalSeconds = intOrNull(req.body.retryIntervalSeconds);
   if (req.body?.enabled !== undefined) updates.enabled = Boolean(req.body.enabled);
   if (req.body?.tags !== undefined) updates.tags = asTags(req.body.tags);
   // Changing what a check measures invalidates its baselines/counters.
-  if (updates.config || updates.hostId !== undefined) updates.state = {};
+  if (updates.config || updates.endpointId !== undefined) updates.state = {};
   const error = validate(
     existing.type,
-    "hostId" in updates ? (updates.hostId ?? null) : existing.hostId,
-    "probeHostId" in updates ? (updates.probeHostId ?? null) : existing.probeHostId,
+    "endpointId" in updates ? (updates.endpointId ?? null) : existing.endpointId,
+    "probeEndpointId" in updates ? (updates.probeEndpointId ?? null) : existing.probeEndpointId,
     updates.intervalSeconds ?? existing.intervalSeconds
   );
   if (error) {
@@ -355,7 +357,7 @@ checksRouter.post("/:id/run", async (req, res) => {
     return;
   }
   const meta = CHECK_TYPE_META[check.type];
-  if (meta.executor !== "engine" || check.probeHostId) {
+  if (meta.executor !== "engine" || check.probeEndpointId) {
     res.status(409).json({ error: "This check runs on an agent — it'll update on the agent's next report." });
     return;
   }
@@ -369,13 +371,84 @@ checksRouter.post("/:id/run", async (req, res) => {
   res.json(result);
 });
 
+// POST /api/checks/:id/regenerate-token — a new secret URL for the check,
+// replacing the old one (which stops working). For heartbeat/push checks it's
+// where results are pushed; for any other check it's a "recovery URL": an
+// external system calling it with status=up marks the check recovered
+// (routes/public.ts). The token is the URL's only credential.
 checksRouter.post("/:id/regenerate-token", async (req, res) => {
-  const [check] = await db.update(checks).set({ pushToken: newPushToken() }).where(eq(checks.id, req.params.id)).returning();
-  if (!check || !PUSH_TYPES.has(check.type)) {
-    res.status(404).json({ error: "Not a heartbeat/push check" });
+  const [check] = await db.update(checks).set({ pushToken: newPushToken() }).where(eq(checks.id, String(req.params.id))).returning();
+  if (!check) {
+    res.status(404).json({ error: "Check not found" });
     return;
   }
-  res.json(maskCheck(check));
+  res.json({ ...maskCheck(check), pushUrl: `${process.env.PUBLIC_URL ?? ""}/api/hb/${check.pushToken}` });
+});
+
+// POST /api/checks/:id/remove-token — turns a check's recovery URL off.
+// Heartbeat/push checks need theirs, so it can't be removed from them.
+checksRouter.post("/:id/remove-token", async (req, res) => {
+  const existing = await db.query.checks.findFirst({ where: eq(checks.id, String(req.params.id)) });
+  if (!existing) {
+    res.status(404).json({ error: "Check not found" });
+    return;
+  }
+  if (PUSH_TYPES.has(existing.type)) {
+    res.status(400).json({ error: "A heartbeat/push check needs its URL — regenerate it instead" });
+    return;
+  }
+  const [check] = await db.update(checks).set({ pushToken: null }).where(eq(checks.id, existing.id)).returning();
+  res.json({ ...maskCheck(check), pushUrl: null });
+});
+
+// POST /api/checks/:id/resolve { note? } — marks a failing check recovered
+// by hand: records an "up" result (closing its alert incident and sending the
+// usual recovery notification). Event checks ignore events from before now;
+// other checks report their real status on their next run.
+checksRouter.post("/:id/resolve", async (req, res) => {
+  const note = typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 300) : "";
+  const ok = await resolveCheck(String(req.params.id), note ? `Manually resolved: ${note}` : "Manually resolved", "manual");
+  if (!ok) {
+    res.status(404).json({ error: "Check not found" });
+    return;
+  }
+  logger.info("checks", `Check ${String(req.params.id)} resolved by hand${note ? `: ${note}` : ""}`, "A check was marked recovered by hand.");
+  res.json({ resolved: true });
+});
+
+// POST /api/checks/:id/results/exclude { resultIds?, from?, to?, exclude?, reason? }
+// Marks results excluded from statistics (uptime, SLA, status pages,
+// charts) — or, with exclude: false, counts them again. Either specific
+// results (resultIds) or every result in a time range (from/to, ISO times).
+// The results themselves are kept.
+checksRouter.post("/:id/results/exclude", async (req, res) => {
+  const checkId = String(req.params.id);
+  const exclude = req.body?.exclude !== false;
+  const reason = exclude && typeof req.body?.reason === "string" ? req.body.reason.trim().slice(0, 300) || null : null;
+  // At most 5000 IDs, and only well-formed UUIDs (8-4-4-4-12 hex digits,
+  // e.g. 3f2b…-…): anything else would make the database query fail, so
+  // junk is dropped here and, if nothing valid is left, refused below.
+  const ids: string[] = Array.isArray(req.body?.resultIds)
+    ? req.body.resultIds
+        .map(String)
+        .filter((v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v))
+        .slice(0, 5000)
+    : [];
+  const from = req.body?.from ? new Date(String(req.body.from)) : null;
+  const to = req.body?.to ? new Date(String(req.body.to)) : null;
+  // A range needs both ends, in order; otherwise specific IDs are required.
+  const range = from && to && !Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime()) && from < to;
+  if (!ids.length && !range) {
+    res.status(400).json({ error: "Give resultIds, or a from/to time range" });
+    return;
+  }
+  // Only this check's results can be changed, whatever IDs are sent.
+  const where = ids.length
+    ? and(eq(checkResults.checkId, checkId), inArray(checkResults.id, ids))
+    : and(eq(checkResults.checkId, checkId), gte(checkResults.checkedAt, from!), sql`${checkResults.checkedAt} <= ${to!}`);
+  const changed = await db.update(checkResults).set({ excluded: exclude, excludedReason: reason }).where(where).returning({ id: checkResults.id });
+  logger.info("checks", `${changed.length} result(s) of check ${checkId} ${exclude ? "excluded from" : "counted again in"} statistics${reason ? `: ${reason}` : ""}`, `Check results were ${exclude ? "excluded from" : "returned to"} uptime and SLA figures.`);
+  res.json({ changed: changed.length });
 });
 
 // Recent result history for one check. `since` (ISO timestamp) narrows to a
@@ -415,12 +488,12 @@ checksRouter.post("/bulk", async (req, res) => {
       affected = (await db.delete(checks).where(inArray(checks.id, ids)).returning({ id: checks.id })).length;
       break;
     case "move": {
-      const endpointId = String(req.body?.endpointId ?? "");
-      if (!(await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) }))) {
-        res.status(400).json({ error: "endpointId not found" });
+      const siteId = String(req.body?.siteId ?? "");
+      if (!(await db.query.sites.findFirst({ where: eq(sites.id, siteId) }))) {
+        res.status(400).json({ error: "siteId not found" });
         return;
       }
-      affected = (await db.update(checks).set({ endpointId }).where(inArray(checks.id, ids)).returning({ id: checks.id })).length;
+      affected = (await db.update(checks).set({ siteId }).where(inArray(checks.id, ids)).returning({ id: checks.id })).length;
       break;
     }
     case "set_interval":
@@ -443,29 +516,37 @@ checksRouter.post("/bulk", async (req, res) => {
       }
       break;
     }
-    case "set_host":
-    case "set_probe_host": {
-      const target = req.body?.hostId ? String(req.body.hostId) : null;
-      if (target && !(await db.query.hosts.findFirst({ where: eq(hosts.id, target) }))) {
-        res.status(400).json({ error: "hostId not found" });
+    case "set_endpoint":
+    case "set_probe_endpoint": {
+      const target = req.body?.endpointId ? String(req.body.endpointId) : null;
+      if (target && !(await db.query.endpoints.findFirst({ where: eq(endpoints.id, target) }))) {
+        res.status(400).json({ error: "endpointId not found" });
         return;
       }
       for (const c of rows) {
-        const hostId = action === "set_host" ? target : c.hostId;
-        const probeHostId = action === "set_probe_host" ? target : c.probeHostId;
-        const err = validate(c.type, hostId, probeHostId, c.intervalSeconds);
+        const endpointId = action === "set_endpoint" ? target : c.endpointId;
+        const probeEndpointId = action === "set_probe_endpoint" ? target : c.probeEndpointId;
+        const err = validate(c.type, endpointId, probeEndpointId, c.intervalSeconds);
         if (err) {
           errors.push({ id: c.id, error: `${c.name}: ${err}` });
           continue;
         }
-        await db.update(checks).set(action === "set_host" ? { hostId, state: {} } : { probeHostId }).where(eq(checks.id, c.id));
+        await db.update(checks).set(action === "set_endpoint" ? { endpointId, state: {} } : { probeEndpointId }).where(eq(checks.id, c.id));
         affected++;
+      }
+      break;
+    }
+    case "resolve": {
+      // Marks every chosen check recovered by hand (see /:id/resolve).
+      const note = typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 300) : "";
+      for (const c of rows) {
+        if (await resolveCheck(c.id, note ? `Manually resolved: ${note}` : "Manually resolved", "manual")) affected++;
       }
       break;
     }
     case "run_now":
       for (const c of rows) {
-        if (CHECK_TYPE_META[c.type].executor !== "engine" || c.probeHostId) {
+        if (CHECK_TYPE_META[c.type].executor !== "engine" || c.probeEndpointId) {
           errors.push({ id: c.id, error: `${c.name}: runs on an agent` });
           continue;
         }
@@ -479,36 +560,36 @@ checksRouter.post("/bulk", async (req, res) => {
       }
       break;
     case "duplicate": {
-      // Destinations: hostIds (one copy per check per host, landing in that
-      // host's endpoint), else endpointIds (one copy per endpoint), else the
+      // Destinations: endpointIds (one copy per check per host, landing in that
+      // host's endpoint), else siteIds (one copy per endpoint), else the
       // check's own endpoint. Copies keep the original's enabled state, alert
       // rules and dependencies, so a copy is ready to monitor straight away.
-      const hostIds: string[] = Array.isArray(req.body?.hostIds) ? req.body.hostIds.map(String) : [];
       const endpointIds: string[] = Array.isArray(req.body?.endpointIds) ? req.body.endpointIds.map(String) : [];
-      const hostRows = hostIds.length ? await db.query.hosts.findMany({ where: inArray(hosts.id, hostIds) }) : [];
-      const endpointRows = new Map((await db.query.endpoints.findMany()).map((e) => [e.id, e]));
-      const allHosts = new Map((await db.query.hosts.findMany()).map((h) => [h.id, h]));
+      const siteIds: string[] = Array.isArray(req.body?.siteIds) ? req.body.siteIds.map(String) : [];
+      const endpointRows = endpointIds.length ? await db.query.endpoints.findMany({ where: inArray(endpoints.id, endpointIds) }) : [];
+      const siteRows = new Map((await db.query.sites.findMany()).map((e) => [e.id, e]));
+      const allEndpoints = new Map((await db.query.endpoints.findMany()).map((h) => [h.id, h]));
       const deps = await db.query.checkDependencies.findMany({ where: inArray(checkDependencies.checkId, ids) });
       for (const c of rows) {
-        const dests: { endpointId: string; hostId: string | null; label: string | null }[] = hostRows.length
-          ? hostRows.map((h) => ({ endpointId: h.endpointId, hostId: h.id, label: h.name }))
-          : endpointIds.length
-            ? endpointIds.filter((id) => endpointRows.has(id)).map((id) => ({ endpointId: id, hostId: c.hostId && allHosts.get(c.hostId)?.endpointId === id ? c.hostId : null, label: endpointRows.get(id)!.name }))
-            : [{ endpointId: c.endpointId, hostId: c.hostId, label: null }];
+        const dests: { siteId: string; endpointId: string | null; label: string | null }[] = endpointRows.length
+          ? endpointRows.map((h) => ({ siteId: h.siteId, endpointId: h.id, label: h.name }))
+          : siteIds.length
+            ? siteIds.filter((id) => siteRows.has(id)).map((id) => ({ siteId: id, endpointId: c.endpointId && allEndpoints.get(c.endpointId)?.siteId === id ? c.endpointId : null, label: siteRows.get(id)!.name }))
+            : [{ siteId: c.siteId, endpointId: c.endpointId, label: null }];
         for (const d of dests) {
-          const err = validate(c.type, d.hostId, c.probeHostId, c.intervalSeconds);
+          const err = validate(c.type, d.endpointId, c.probeEndpointId, c.intervalSeconds);
           if (err) {
             errors.push({ id: c.id, error: `${c.name} → ${d.label}: ${err}` });
             continue;
           }
-          const sameSpot = d.endpointId === c.endpointId && d.hostId === c.hostId;
+          const sameSpot = d.siteId === c.siteId && d.endpointId === c.endpointId;
           const [copy] = await db
             .insert(checks)
             .values({
               name: sameSpot ? `${c.name} (copy)` : `${c.name} (${d.label})`,
+              siteId: d.siteId,
               endpointId: d.endpointId,
-              hostId: d.hostId,
-              probeHostId: c.probeHostId,
+              probeEndpointId: c.probeEndpointId,
               type: c.type,
               config: c.config,
               intervalSeconds: c.intervalSeconds,

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lte } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { alertRules, alertRuleChannels, alertEvents, checks, endpoints } from "../db/schema.js";
+import { alertRules, alertRuleChannels, alertEvents, checks, sites } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const alertRulesRouter = Router();
@@ -11,7 +11,7 @@ alertRulesRouter.use(requireAuth);
 // alertEvents -> alertRules -> checks by hand (same "fetch and merge, skip
 // drizzle relations() wiring for one small join" posture as GET / below)
 // rather than a single relational query.
-// Filters (all optional): endpointId, locationId, checkId, hostId,
+// Filters (all optional): siteId, locationId, checkId, endpointId,
 // status=open|resolved, since/until (ISO), q (check name or message text).
 alertRulesRouter.get("/events", async (req, res) => {
   const q = (k: string) => (typeof req.query[k] === "string" && req.query[k] ? (req.query[k] as string) : undefined);
@@ -19,7 +19,7 @@ alertRulesRouter.get("/events", async (req, res) => {
     const d = q(k) ? new Date(q(k)!) : undefined;
     return d && !Number.isNaN(d.getTime()) ? d : undefined;
   };
-  const endpointId = q("endpointId");
+  const siteId = q("siteId");
   const locationId = q("locationId");
   const validSince = date("since");
   const until = date("until");
@@ -27,12 +27,12 @@ alertRulesRouter.get("/events", async (req, res) => {
   const text = q("q")?.toLowerCase();
   const limit = Math.min(Number(req.query.limit) || 50, 2000);
 
-  const locationEndpoints = locationId ? (await db.query.endpoints.findMany({ where: eq(endpoints.locationId, locationId) })).map((e) => e.id) : null;
-  const checkRows = (await db.query.checks.findMany({ where: endpointId ? eq(checks.endpointId, endpointId) : undefined })).filter(
-    (c) => (!locationEndpoints || locationEndpoints.includes(c.endpointId)) && (!q("checkId") || c.id === q("checkId")) && (!q("hostId") || c.hostId === q("hostId") || c.probeHostId === q("hostId"))
+  const locationSites = locationId ? (await db.query.sites.findMany({ where: eq(sites.locationId, locationId) })).map((e) => e.id) : null;
+  const checkRows = (await db.query.checks.findMany({ where: siteId ? eq(checks.siteId, siteId) : undefined })).filter(
+    (c) => (!locationSites || locationSites.includes(c.siteId)) && (!q("checkId") || c.id === q("checkId")) && (!q("endpointId") || c.endpointId === q("endpointId") || c.probeEndpointId === q("endpointId"))
   );
   const checkById = new Map(checkRows.map((c) => [c.id, c]));
-  const filtered = endpointId || locationId || q("checkId") || q("hostId");
+  const filtered = siteId || locationId || q("checkId") || q("endpointId");
   if (filtered && !checkRows.length) {
     res.json([]);
     return;
@@ -66,8 +66,8 @@ alertRulesRouter.get("/events", async (req, res) => {
       ...e,
       checkId: rule?.checkId ?? null,
       checkName: check?.name ?? "(deleted check)",
+      siteId: check?.siteId ?? null,
       endpointId: check?.endpointId ?? null,
-      hostId: check?.hostId ?? null,
       checkType: check?.type ?? null,
       durationMinutes: Math.round((end.getTime() - e.triggeredAt.getTime()) / 60_000),
     };
@@ -98,8 +98,9 @@ alertRulesRouter.post("/", async (req, res) => {
     res.status(400).json({ error: "checkId is required" });
     return;
   }
+  // Failing results in a row before notifying: 1–1000, default 2.
   const consecutiveFailures = Number.isFinite(req.body?.consecutiveFailures)
-    ? Number(req.body.consecutiveFailures)
+    ? Math.max(1, Math.min(1000, Math.round(Number(req.body.consecutiveFailures))))
     : 2;
   const [rule] = await db
     .insert(alertRules)
@@ -109,14 +110,25 @@ alertRulesRouter.post("/", async (req, res) => {
   res.status(201).json(rule);
 });
 
+// PATCH /api/alert-rules/:id — change any part of a rule: how many failing
+// results in a row trigger it, warn-or-down, reminders, escalation, on/off,
+// and its channels (primary and escalation). Fields left out stay as they are.
 alertRulesRouter.patch("/:id", async (req, res) => {
   const updates: Partial<typeof alertRules.$inferInsert> = {};
-  if (req.body?.consecutiveFailures !== undefined) updates.consecutiveFailures = Number(req.body.consecutiveFailures);
+  // At least 1 result in a row; anything unparseable keeps the old value.
+  if (req.body?.consecutiveFailures !== undefined) {
+    const n = Math.round(Number(req.body.consecutiveFailures));
+    if (Number.isFinite(n)) updates.consecutiveFailures = Math.max(1, Math.min(1000, n));
+  }
   if (req.body?.enabled !== undefined) updates.enabled = Boolean(req.body.enabled);
   if (req.body?.triggerOn !== undefined) updates.triggerOn = req.body.triggerOn === "warn" ? "warn" : "down";
   if (req.body?.renotifyMinutes !== undefined) updates.renotifyMinutes = optInt(req.body.renotifyMinutes);
   if (req.body?.escalateAfterMinutes !== undefined) updates.escalateAfterMinutes = optInt(req.body.escalateAfterMinutes);
-  const [rule] = await db.update(alertRules).set(updates).where(eq(alertRules.id, req.params.id)).returning();
+  // An edit that only changes channels has no column to update; read the
+  // rule instead (an empty update would be an error).
+  const [rule] = Object.keys(updates).length
+    ? await db.update(alertRules).set(updates).where(eq(alertRules.id, String(req.params.id))).returning()
+    : await db.select().from(alertRules).where(eq(alertRules.id, String(req.params.id)));
   if (!rule) {
     res.status(404).json({ error: "Alert rule not found" });
     return;

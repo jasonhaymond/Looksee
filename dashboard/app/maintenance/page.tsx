@@ -5,7 +5,7 @@
 // results, but no alerts go out and SLA reports skip that time. Windows are
 // stored by the engine (engine/src/routes/maintenance.ts), which also decides
 // when each is active (engine/src/services/maintenance.ts). Maintenance can
-// also be started from multi-selections on the Checks, Hosts and Endpoints
+// also be started from multi-selections on the Checks, Endpoints and Sites
 // pages and from a location.
 //
 // Time zones: one-off windows are sent as exact instants, so they're right
@@ -20,9 +20,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, type Check, type Endpoint, type Host, type MaintenanceWindow } from "../lib/api";
+import { api, ApiError, type Check, type Site, type Endpoint, type Group, type MaintenanceWindow } from "../lib/api";
 import { browserTimeZone } from "../lib/localTime";
-import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { Button, EmptyState, Label, Modal, StatusBadge, inputClass, useToast } from "../components/ui";
 
@@ -55,7 +54,7 @@ function describe(w: MaintenanceWindow) {
 const toLocalInput = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 
 /**
- * The page: loads windows and the endpoints/hosts/checks they can target,
+ * The page: loads windows and the sites/endpoints/checks they can target,
  * and shows each window with its state and actions (end now, turn on/off,
  * delete), plus the "Schedule maintenance" dialog.
  */
@@ -64,9 +63,10 @@ export default function MaintenancePage() {
   // useState holds values that re-draw the page when they change.
   const [authChecked, setAuthChecked] = useState(false);
   const [windows, setWindows] = useState<MaintenanceWindow[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
-  const [hosts, setHosts] = useState<Host[]>([]);
   const [checks, setChecks] = useState<Check[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [adding, setAdding] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const toast = useToast();
@@ -74,11 +74,12 @@ export default function MaintenancePage() {
   // Fetches everything the page shows in parallel. useCallback keeps the same
   // function between re-draws so the effect below doesn't re-run needlessly.
   const load = useCallback(async () => {
-    const [w, e, h, c] = await Promise.all([api.maintenance(), api.endpoints(), api.hosts(), api.checks()]);
+    const [w, s, e, c, g] = await Promise.all([api.maintenance(), api.sites(), api.endpoints(), api.checks(), api.groups()]);
     setWindows(w);
+    setSites(s);
     setEndpoints(e);
-    setHosts(h);
     setChecks(c);
+    setGroups(g);
     setLoaded(true);
   }, []);
 
@@ -98,19 +99,18 @@ export default function MaintenancePage() {
 
   // The name of one of a window's targets, looked up in the list matching its scope.
   const targetName = (w: MaintenanceWindow, id: string) =>
-    (w.scope === "endpoint" ? endpoints : w.scope === "host" ? hosts : checks).find((x) => x.id === id)?.name ?? "(deleted)";
+    (w.scope === "site" ? sites : w.scope === "endpoint" ? endpoints : w.scope === "group" ? groups : checks).find((x) => x.id === id)?.name ?? "(deleted)";
 
   if (!authChecked) return null;
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6">
-      <TopNav active="/maintenance" />
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-medium">Maintenance windows</h2>
         <Button variant="primary" onClick={() => setAdding(true)}>
           + Schedule maintenance
         </Button>
       </div>
-      <PageHelp anchor="maintenance">During a window, checks keep running and recording results, but no alerts go out and SLA reports skip that time. You can also start maintenance from a multi-selection on the Checks, Hosts and Endpoints pages.</PageHelp>
+      <PageHelp anchor="maintenance">During a window, checks keep running and recording results, but no alerts go out and SLA reports skip that time. You can also start maintenance from a multi-selection on the Checks, Endpoints and Sites pages.</PageHelp>
 
       {loaded && windows.length === 0 ? (
         <EmptyState>No maintenance windows.</EmptyState>
@@ -147,7 +147,7 @@ export default function MaintenancePage() {
           ))}
         </ul>
       )}
-      {adding && <AddWindow endpoints={endpoints} hosts={hosts} checks={checks} onClose={() => setAdding(false)} onSaved={() => (setAdding(false), load())} />}
+      {adding && <AddWindow sites={sites} endpoints={endpoints} checks={checks} groups={groups} onClose={() => setAdding(false)} onSaved={() => (setAdding(false), load())} />}
       {toast.node}
     </main>
   );
@@ -156,13 +156,13 @@ export default function MaintenancePage() {
 /**
  * The "Schedule maintenance" dialog: a one-time window (start and end in
  * local time) or a weekly one (days, local start time, duration), applied to
- * everything or to chosen endpoints, hosts or checks.
+ * everything or to chosen sites, endpoints or checks.
  *
- * @param endpoints, hosts, checks the things a window can be limited to
+ * @param sites, endpoints, checks, groups the things a window can be limited to
  * @param onClose called when the dialog is cancelled
  * @param onSaved called after the engine accepts the new window
  */
-function AddWindow({ endpoints, hosts, checks, onClose, onSaved }: { endpoints: Endpoint[]; hosts: Host[]; checks: Check[]; onClose: () => void; onSaved: () => void }) {
+function AddWindow({ sites, endpoints, checks, groups, onClose, onSaved }: { sites: Site[]; endpoints: Endpoint[]; checks: Check[]; groups: Group[]; onClose: () => void; onSaved: () => void }) {
   const now = new Date();
   const [name, setName] = useState("");
   const [kind, setKind] = useState<"once" | "weekly">("once");
@@ -177,7 +177,7 @@ function AddWindow({ endpoints, hosts, checks, onClose, onSaved }: { endpoints: 
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   // The choices shown for the selected scope ("everything" has none).
-  const list = scope === "endpoint" ? endpoints : scope === "host" ? hosts : scope === "check" ? checks : [];
+  const list = scope === "site" ? sites : scope === "endpoint" ? endpoints : scope === "check" ? checks : scope === "group" ? groups : [];
   const zone = browserTimeZone();
 
   return (
@@ -258,9 +258,10 @@ function AddWindow({ endpoints, hosts, checks, onClose, onSaved }: { endpoints: 
             className={inputClass}
           >
             <option value="all">Everything</option>
-            <option value="endpoint">Chosen endpoints</option>
-            <option value="host">Chosen hosts (incl. checks run from their agents)</option>
+            <option value="site">Chosen sites</option>
+            <option value="endpoint">Chosen endpoints (incl. checks run from their agents)</option>
             <option value="check">Chosen checks</option>
+            <option value="group">Chosen groups (whatever they contain at the time)</option>
           </select>
         </Label>
         {scope !== "all" && (

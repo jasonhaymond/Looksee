@@ -1,19 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import type { Check, Host, Endpoint, WidgetType } from "../lib/api";
+import type { Check, Endpoint, Site, WidgetType } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
 import { Button, MultiPicker, inputClass, type PickItem } from "./ui";
 
-const WIDGET_TYPES: { type: WidgetType; label: string; help: string; pick?: "check" | "endpoint" | "host" | "endpoint-or-all" }[] = [
+const WIDGET_TYPES: { type: WidgetType; label: string; help: string; pick?: "check" | "site" | "endpoint" | "site-or-all" }[] = [
   { type: "status_tile", label: "Status tile", help: "One check's status, uptime and response time", pick: "check" },
   { type: "uptime_history", label: "Uptime history", help: "One check's up/down bars over time", pick: "check" },
-  { type: "group_summary", label: "Endpoint summary", help: "Every check in one endpoint at a glance", pick: "endpoint" },
-  { type: "status_summary", label: "Problems right now", help: "Everything down or warning", pick: "endpoint-or-all" },
-  { type: "alert_history", label: "Alert history", help: "Recent alert incidents", pick: "endpoint-or-all" },
-  { type: "host_metrics", label: "Host metrics", help: "CPU, memory and disk of one host", pick: "host" },
-  { type: "network_bandwidth", label: "Network bandwidth", help: "One host's traffic", pick: "host" },
-  { type: "all_hosts", label: "All hosts", help: "Every host and its agent state" },
+  { type: "group_summary", label: "Site summary", help: "Every check in one site at a glance", pick: "site" },
+  { type: "status_summary", label: "Problems right now", help: "Everything down or warning", pick: "site-or-all" },
+  { type: "alert_history", label: "Alert history", help: "Recent alert incidents", pick: "site-or-all" },
+  { type: "endpoint_metrics", label: "Endpoint metrics", help: "CPU, memory and disk of one endpoint", pick: "endpoint" },
+  { type: "network_bandwidth", label: "Network bandwidth", help: "One endpoint's traffic", pick: "endpoint" },
+  { type: "all_endpoints", label: "All endpoints", help: "Every host and its agent state" },
   { type: "top_talkers", label: "Top talkers", help: "NetFlow / sFlow conversations" },
   { type: "backup_status", label: "Backup status", help: "Looksee's own backups" },
   { type: "clock", label: "Clock", help: "Date and time" },
@@ -22,17 +22,17 @@ const WIDGET_TYPES: { type: WidgetType; label: string; help: string; pick?: "che
 ];
 
 export function AddWidgetForm({
-  endpoints,
+  sites,
   checks,
-  hosts,
+  endpoints,
   onAdd,
   onCancel,
 }: {
-  endpoints: Endpoint[];
+  sites: Site[];
   checks: Check[];
-  hosts: Host[];
+  endpoints: Endpoint[];
   // For every type except "note"/"section_header", target is the chosen
-  // check/endpoint/host id. For those two, target is the initial text.
+  // check/site/host id. For those two, target is the initial text.
   // Called once per picked target, so several tiles can be added at once.
   onAdd: (type: WidgetType, target: string) => Promise<void> | void;
   onCancel: () => void;
@@ -44,22 +44,22 @@ export function AddWidgetForm({
   // The dashboard refreshes status every few seconds; the lists here are a
   // snapshot taken when the form opened, so the picker never re-sorts or
   // jumps back to the top while you're scrolling it.
-  const [snapshot] = useState(() => ({ endpoints, checks, hosts }));
+  const [snapshot] = useState(() => ({ sites, checks, endpoints }));
   const def = WIDGET_TYPES.find((w) => w.type === type)!;
-  const endpointName = new Map(snapshot.endpoints.map((e) => [e.id, e.name]));
-  const hostName = new Map(snapshot.hosts.map((h) => [h.id, h.name]));
+  const siteName = new Map(snapshot.sites.map((e) => [e.id, e.name]));
+  const endpointName = new Map(snapshot.endpoints.map((h) => [h.id, h.name]));
 
   let items: PickItem[] = [];
   if (def.pick === "check")
     items = snapshot.checks
       .filter((c) => c.enabled)
-      .map((c) => ({ id: c.id, label: c.name, group: endpointName.get(c.endpointId), sub: [typeLabel(c.type), c.hostId ? hostName.get(c.hostId) : null].filter(Boolean).join(" · ") }));
-  else if (def.pick === "host") items = snapshot.hosts.map((h) => ({ id: h.id, label: h.name, group: endpointName.get(h.endpointId), sub: h.hostname ?? undefined }));
-  else if (def.pick === "endpoint" || def.pick === "endpoint-or-all") items = snapshot.endpoints.map((e) => ({ id: e.id, label: e.name, sub: e.description ?? undefined }));
+      .map((c) => ({ id: c.id, label: c.name, group: siteName.get(c.siteId), sub: [typeLabel(c.type), c.endpointId ? endpointName.get(c.endpointId) : null].filter(Boolean).join(" · ") }));
+  else if (def.pick === "endpoint") items = snapshot.endpoints.map((h) => ({ id: h.id, label: h.name, group: siteName.get(h.siteId), sub: h.hostname ?? undefined }));
+  else if (def.pick === "site" || def.pick === "site-or-all") items = snapshot.sites.map((e) => ({ id: e.id, label: e.name, sub: e.description ?? undefined }));
 
   const free = type === "note" || type === "section_header";
-  const multi = def.pick === "check" || def.pick === "host" || def.pick === "endpoint";
-  const canAdd = free ? text.trim().length > 0 : !def.pick || def.pick === "endpoint-or-all" || picked.length > 0;
+  const multi = def.pick === "check" || def.pick === "endpoint" || def.pick === "site";
+  const canAdd = free ? text.trim().length > 0 : !def.pick || def.pick === "site-or-all" || picked.length > 0;
 
   async function add() {
     if (!canAdd) return;
@@ -67,7 +67,7 @@ export function AddWidgetForm({
     try {
       if (free) await onAdd(type, text);
       else if (!def.pick) await onAdd(type, "");
-      else if (def.pick === "endpoint-or-all") await onAdd(type, picked[0] ?? "");
+      else if (def.pick === "site-or-all") await onAdd(type, picked[0] ?? "");
       else for (const id of picked) await onAdd(type, id);
       onCancel();
     } finally {
@@ -99,9 +99,9 @@ export function AddWidgetForm({
       {def.pick && (
         <div>
           <div className="mb-1 text-xs text-[var(--muted)]">
-            {def.pick === "endpoint-or-all" ? "Limit to one endpoint (optional — none picked = all endpoints)" : multi ? `Pick one or more — one widget each` : "Pick one"}
+            {def.pick === "site-or-all" ? "Limit to one site (optional — none picked = all sites)" : multi ? `Pick one or more — one widget each` : "Pick one"}
           </div>
-          <MultiPicker items={items} selected={picked} onChange={setPicked} single={!multi} placeholder={`Search ${def.pick === "check" ? "checks by name, type or host" : def.pick === "host" ? "hosts" : "endpoints"}…`} groupLabel="Endpoint" height="max-h-72" />
+          <MultiPicker items={items} selected={picked} onChange={setPicked} single={!multi} placeholder={`Search ${def.pick === "check" ? "checks by name, type or endpoint" : def.pick === "endpoint" ? "endpoints" : "sites"}…`} groupLabel="Site" height="max-h-72" />
         </div>
       )}
       <div className="flex gap-2">

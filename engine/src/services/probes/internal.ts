@@ -1,43 +1,106 @@
-import { and, desc, eq, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { checkResults, endpoints, events, hosts } from "../../db/schema.js";
+import { checkResults, sites, events, endpoints } from "../../db/schema.js";
 import { readValueThresholds, hasThresholds } from "../thresholds.js";
 import { type Config, type ProbeContext, type ProbeOutcome, down, errMsg, numOr, str, up, warn } from "./types.js";
 
-// H3/H5: counts received traps/syslog lines matching the filter over the
-// window. With no thresholds configured, any match at all is a failure.
+/**
+ * H3/H5: trap and syslog checks. Counts received events matching the
+ * check's filter and fails while matches are recent.
+ *
+ * Settings (all optional except what the filter needs):
+ * - pattern, sourceIp, maxSeverity (syslog): which events count.
+ * - windowMinutes (default 5): the period the count (the check's value,
+ *   for thresholds) covers.
+ * - autoRecoverMinutes (default = windowMinutes): with no thresholds, the
+ *   check stays failing until this long after the newest matching event,
+ *   then recovers on its own.
+ * - clearPattern: an event matching this (same source/site/IP filters) that
+ *   arrives after a failure clears it — e.g. "linkUp" after "linkDown".
+ * - exclude: list of texts; events whose message contains any of them
+ *   (case-insensitive) are ignored entirely.
+ * Events received before the check's state.resolvedAt (set when the check
+ * is resolved by hand, by its "recover with" check, or by an up push) are
+ * ignored too, so old events can't re-trigger it.
+ *
+ * @param source which kind of event to count
+ * @param config the check's settings
+ * @param ctx the check's ID, site and remembered state
+ */
 export async function probeEventMatch(source: "snmp_trap" | "syslog", config: Config, ctx?: ProbeContext): Promise<ProbeOutcome> {
   const windowMinutes = numOr(config, "windowMinutes", 5);
-  const since = new Date(Date.now() - windowMinutes * 60_000);
-  const conds = [eq(events.source, source), gte(events.receivedAt, since)];
+  const recoverMinutes = numOr(config, "autoRecoverMinutes", windowMinutes);
+  const now = Date.now();
+  // Look back far enough for both the count window and the recovery delay.
+  const since = new Date(now - Math.max(windowMinutes, recoverMinutes) * 60_000);
+  // Conditions every query below shares: event kind, how far back, site, sender.
+  const base = [eq(events.source, source), gte(events.receivedAt, since)];
   // Multi-site: a remote site's check (one with a collector or public IPs)
   // counts only its own events; a check for the engine's own site also counts
-  // events received directly on the engine's LAN (endpointId null). Endpoints
-  // sharing a collector or a public IP are one physical site, and events are
-  // stored against just one of them, so the whole group is matched.
-  if (ctx?.endpointId) {
-    const all = await db.query.endpoints.findMany();
-    const ep = all.find((e) => e.id === ctx.endpointId);
-    const remote = Boolean(ep?.collectorHostId || ep?.publicIps?.length);
+  // events received directly on the engine's LAN (siteId null). Sites
+  // sharing a collector or a public IP are one physical place, and events are
+  // stored against just one of them, so the whole set is matched.
+  if (ctx?.siteId) {
+    const all = await db.query.sites.findMany();
+    const ep = all.find((e) => e.id === ctx.siteId);
+    const remote = Boolean(ep?.collectorEndpointId || ep?.publicIps?.length);
     if (ep && remote) {
       const ips = new Set(ep.publicIps ?? []);
-      const site = all.filter((e) => e.id === ep.id || (ep.collectorHostId && e.collectorHostId === ep.collectorHostId) || (e.publicIps ?? []).some((ip) => ips.has(ip)));
-      conds.push(inArray(events.endpointId, site.map((e) => e.id)));
-    } else conds.push(or(isNull(events.endpointId), eq(events.endpointId, ctx.endpointId))!);
+      const site = all.filter((e) => e.id === ep.id || (ep.collectorEndpointId && e.collectorEndpointId === ep.collectorEndpointId) || (e.publicIps ?? []).some((ip) => ips.has(ip)));
+      base.push(inArray(events.siteId, site.map((e) => e.id)));
+    } else base.push(or(isNull(events.siteId), eq(events.siteId, ctx.siteId))!);
   }
   const ip = str(config, "sourceIp");
-  if (ip) conds.push(eq(events.sourceIp, ip));
+  if (ip) base.push(eq(events.sourceIp, ip));
+  // Excluded texts: strpos(...) = 0 means "the message doesn't contain it".
+  // Passed as bound parameters, never pasted into the query text.
+  // Accepts a list, or text with one entry per line (the dashboard's textarea).
+  const rawExclude = Array.isArray(config.exclude) ? (config.exclude as unknown[]).map(String) : typeof config.exclude === "string" ? config.exclude.split(/\r?\n/) : [];
+  const exclude = rawExclude.map((x) => x.trim()).filter(Boolean).slice(0, 50);
+  for (const x of exclude) base.push(sql`strpos(lower(${events.message}), lower(${x})) = 0`);
+
+  // Failing events: the filter's pattern (a Postgres regular expression,
+  // ~* = case-insensitive match) and, for syslog, a severity ceiling.
+  const conds = [...base];
   const pattern = str(config, "pattern");
   if (pattern) conds.push(sql`${events.message} ~* ${pattern}`);
   if (source === "syslog" && config.maxSeverity !== "" && config.maxSeverity != null) conds.push(sql`${events.severity} <= ${numOr(config, "maxSeverity", 7)}`);
+
   try {
+    // Everything before this moment is ignored: the later of a resolve
+    // (state.resolvedAt) and the newest "clear" event.
+    let ignoreBefore = 0;
+    let clearedBy: { at: Date; from: string; message: string } | null = null;
+    const resolvedAt = typeof ctx?.state?.resolvedAt === "string" ? Date.parse(ctx.state.resolvedAt) : NaN;
+    if (Number.isFinite(resolvedAt)) ignoreBefore = resolvedAt;
+    const clearPattern = str(config, "clearPattern");
+    if (clearPattern) {
+      const [clear] = await db.select().from(events).where(and(...base, sql`${events.message} ~* ${clearPattern}`)).orderBy(desc(events.receivedAt)).limit(1);
+      if (clear && clear.receivedAt.getTime() > ignoreBefore) {
+        ignoreBefore = clear.receivedAt.getTime();
+        clearedBy = { at: clear.receivedAt, from: clear.sourceIp, message: clear.message };
+      }
+    }
+    if (ignoreBefore) conds.push(gt(events.receivedAt, new Date(ignoreBefore)));
+
     const rows = await db.select().from(events).where(and(...conds)).orderBy(desc(events.receivedAt)).limit(200);
-    const count = rows.length;
+    // The value: matches within the count window.
+    const inWindow = rows.filter((r) => r.receivedAt.getTime() >= now - windowMinutes * 60_000);
+    const count = inWindow.length;
     const last = rows[0];
     const what = source === "snmp_trap" ? "trap" : "syslog message";
-    const message = count ? `${count} matching ${what}(s) in ${windowMinutes} min — latest from ${last.sourceIp}: ${last.message.slice(0, 200)}` : `No matching ${what}s in the last ${windowMinutes} min`;
     const details = rows.slice(0, 10).map((r) => ({ at: r.receivedAt, from: r.sourceIp, severity: r.severity, message: r.message.slice(0, 500) }));
-    if (!hasThresholds(readValueThresholds(config)) && count > 0) return { status: (str(config, "severity", "down") as "down"), latencyMs: null, message, value: count, details };
+    // With no thresholds, any match newer than the recovery delay fails the check.
+    const recent = last && last.receivedAt.getTime() >= now - recoverMinutes * 60_000;
+    if (!hasThresholds(readValueThresholds(config)) && recent) {
+      const message = `${count || rows.length} matching ${what}(s) — latest from ${last.sourceIp} at ${last.receivedAt.toISOString()}: ${last.message.slice(0, 200)}`;
+      return { status: str(config, "severity", "down") as "down", latencyMs: null, message, value: count, details };
+    }
+    const message = clearedBy && !recent
+      ? `Cleared by a matching message from ${clearedBy.from} at ${clearedBy.at.toISOString()}: ${clearedBy.message.slice(0, 160)}`
+      : count
+        ? `${count} matching ${what}(s) in ${windowMinutes} min`
+        : `No matching ${what}s in the last ${recoverMinutes} min`;
     return { status: "up", latencyMs: null, message, value: count, details };
   } catch (err) {
     return warn(`Filter failed: ${errMsg(err)}`);
@@ -97,8 +160,8 @@ export function probePushStaleness(config: Config, ctx: ProbeContext): ProbeOutc
 
 // L11.
 export async function probeAgentHeartbeat(config: Config, ctx: ProbeContext): Promise<ProbeOutcome> {
-  if (!ctx.hostId) return warn("No host selected");
-  const host = await db.query.hosts.findFirst({ where: eq(hosts.id, ctx.hostId) });
+  if (!ctx.endpointId) return warn("No host selected");
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, ctx.endpointId) });
   if (!host) return warn("Host not found");
   if (!host.lastSeenAt) return down("This host's agent has never reported in");
   const silence = (Date.now() - host.lastSeenAt.getTime()) / 1000;
@@ -132,14 +195,14 @@ export function forecastDaysToFull(points: { t: number; used: number }[], total:
 
 // C4.
 export async function probeDiskForecast(config: Config, ctx: ProbeContext): Promise<ProbeOutcome> {
-  if (!ctx.hostId) return warn("No host selected");
+  if (!ctx.endpointId) return warn("No host selected");
   const lookbackDays = numOr(config, "lookbackDays", 7);
   // One sample per hour is plenty for a multi-day trend and keeps this
   // query cheap no matter how often the agent reports.
   const rows = await db.execute<{ t: Date; disks: DiskSample[] }>(sql`
     SELECT DISTINCT ON (date_trunc('hour', recorded_at)) recorded_at AS t, extended->'disks' AS disks
-    FROM host_metrics
-    WHERE host_id = ${ctx.hostId} AND recorded_at > now() - (${lookbackDays} || ' days')::interval AND extended IS NOT NULL
+    FROM endpoint_metrics
+    WHERE endpoint_id = ${ctx.endpointId} AND recorded_at > now() - (${lookbackDays} || ' days')::interval AND extended IS NOT NULL
     ORDER BY date_trunc('hour', recorded_at), recorded_at DESC`);
   const samples = rows.rows;
   if (samples.length < 3) return up(`Collecting history (${samples.length} hourly samples so far; needs 3+)`, { skip: samples.length === 0 });

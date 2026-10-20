@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { Check, CheckResult, Host } from "../lib/api";
+import type { Check, CheckResult, Endpoint } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
 import { AlertRuleManager } from "./AlertRuleManager";
 import { CheckHistory } from "./CheckHistory";
@@ -12,7 +12,7 @@ import { displayStatus } from "./CheckDetail";
 // Dashboard tile for one check. Editing lives on the Checks page (one place
 // to change a check); the tile links there and keeps the inline alert-rule
 // manager for quick tweaks.
-export function StatusTile({ check, latest }: { check: Check; latest: CheckResult | undefined; hosts?: Host[]; endpointNameById?: Map<string, string>; onChanged?: () => void }) {
+export function StatusTile({ check, latest }: { check: Check; latest: CheckResult | undefined; endpoints?: Endpoint[]; siteNameById?: Map<string, string>; onChanged?: () => void }) {
   const status = displayStatus(check);
   const [showAlerts, setShowAlerts] = useState(false);
 

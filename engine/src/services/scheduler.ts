@@ -1,9 +1,9 @@
 import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { checks, endpoints, hosts, ENGINE_CHECK_TYPES } from "../db/schema.js";
+import { checks, sites, endpoints, ENGINE_CHECK_TYPES } from "../db/schema.js";
 import { COLLECTOR_CHECK_TYPES } from "../db/checkTypes.js";
 import { runProbe, type ProbeResult } from "./prober.js";
-import { recordCheckResult } from "./alerting.js";
+import { recordCheckResult, resolveCheck } from "./alerting.js";
 import { logger } from "../lib/logger.js";
 
 const TICK_MS = 10_000;
@@ -25,9 +25,31 @@ const runningByType = new Map<string, number>();
 export function startScheduler() {
   const timer = setInterval(() => {
     runDueChecks().catch((err) => logger.error("scheduler", `Tick failed: ${err instanceof Error ? err.message : String(err)}`, "The check scheduler hit an error this cycle — it will retry on the next tick."));
+    autoRecoverPushed().catch((err) => logger.error("scheduler", `Auto-recovery sweep failed: ${err instanceof Error ? err.message : String(err)}`, "Pushed-value checks set to recover on their own couldn't be checked this cycle."));
   }, TICK_MS);
   timer.unref();
   return () => clearInterval(timer);
+}
+
+// Pushed-value checks only change when something pushes to them, so a
+// failure pushed in would otherwise stay until the next push. With
+// config.autoRecoverMinutes set, one that has had no new result for that
+// long is marked recovered. (Trap/syslog checks recover through their own
+// probe — services/probes/internal.ts — since they're re-evaluated on a
+// schedule.) The JSON path config->>'autoRecoverMinutes' reads that setting
+// as text inside the query.
+export async function autoRecoverPushed() {
+  const stale = await db
+    .select({ id: checks.id, config: checks.config, lastCheckedAt: checks.lastCheckedAt })
+    .from(checks)
+    .where(and(eq(checks.enabled, true), eq(checks.type, "push_value"), inArray(checks.lastStatus, ["down", "warn"]), sql`(${checks.config}->>'autoRecoverMinutes') IS NOT NULL`));
+  for (const c of stale) {
+    const minutes = Number((c.config as Record<string, unknown>).autoRecoverMinutes);
+    if (!Number.isFinite(minutes) || minutes <= 0 || !c.lastCheckedAt) continue;
+    if (Date.now() - c.lastCheckedAt.getTime() >= minutes * 60_000) {
+      await resolveCheck(c.id, `Auto-recovered: no new failure pushed for ${minutes} min`, "auto");
+    }
+  }
 }
 
 // While a check isn't "up" and has a retry interval, that shorter interval
@@ -47,7 +69,7 @@ export async function runDueChecks() {
       and(
         eq(checks.enabled, true),
         // Pinned to an agent (L9) — that agent runs it and reports back.
-        isNull(checks.probeHostId),
+        isNull(checks.probeEndpointId),
         inArray(checks.type, ENGINE_CHECK_TYPES),
         or(isNull(checks.lastRunAt), lt(checks.lastRunAt, sql`now() - (${effectiveInterval} || ' seconds')::interval`))
       )
@@ -72,18 +94,18 @@ export async function runDueChecks() {
 // the collector has gone quiet, recording "unknown" (once per interval) so
 // stale results don't look current.
 export async function takeCollectorChecks<T extends typeof checks.$inferSelect>(due: T[]): Promise<T[]> {
-  const collectorEndpoints = await db.query.endpoints.findMany({ where: isNotNull(endpoints.collectorHostId) });
-  if (!collectorEndpoints.length) return due;
-  const collectorByEndpoint = new Map<string, string>(collectorEndpoints.map((e) => [e.id, e.collectorHostId!]));
-  const collectorHosts = await db.query.hosts.findMany({ where: inArray(hosts.id, [...collectorByEndpoint.values()]) });
+  const collectorSites = await db.query.sites.findMany({ where: isNotNull(sites.collectorEndpointId) });
+  if (!collectorSites.length) return due;
+  const collectorBySite = new Map<string, string>(collectorSites.map((e) => [e.id, e.collectorEndpointId!]));
+  const collectorEndpoints = await db.query.endpoints.findMany({ where: inArray(endpoints.id, [...collectorBySite.values()]) });
   const engineRuns: T[] = [];
   for (const c of due) {
-    const collectorHostId = collectorByEndpoint.get(c.endpointId);
-    if (!collectorHostId || !COLLECTOR_TYPES.has(c.type) || c.probeHostId) {
+    const collectorEndpointId = collectorBySite.get(c.siteId);
+    if (!collectorEndpointId || !COLLECTOR_TYPES.has(c.type) || c.probeEndpointId) {
       engineRuns.push(c);
       continue;
     }
-    const collector = collectorHosts.find((h) => h.id === collectorHostId);
+    const collector = collectorEndpoints.find((h) => h.id === collectorEndpointId);
     const silentFor = collector?.collectorLastSeenAt ? (Date.now() - collector.collectorLastSeenAt.getTime()) / 1000 : Infinity;
     if (silentFor > Math.max(COLLECTOR_GRACE_SECONDS, c.intervalSeconds * 3)) {
       await db.update(checks).set({ lastRunAt: new Date() }).where(eq(checks.id, c.id));
@@ -104,8 +126,8 @@ export async function runOneCheck(check: typeof checks.$inferSelect): Promise<Pr
     await db.update(checks).set({ lastRunAt: new Date() }).where(eq(checks.id, check.id));
     const outcome = await runProbe(check.type, (check.config as Record<string, unknown>) ?? {}, {
       checkId: check.id,
-      hostId: check.hostId,
       endpointId: check.endpointId,
+      siteId: check.siteId,
       intervalSeconds: check.intervalSeconds,
       state: (check.state as Record<string, unknown>) ?? {},
       createdAt: check.createdAt,

@@ -1,79 +1,173 @@
 import { Router } from "express";
-import { eq, inArray } from "drizzle-orm";
+import crypto from "node:crypto";
+import { and, desc, eq, gte, inArray, or } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { endpoints, hosts, checks, locations, maintenanceWindows } from "../db/schema.js";
-import { invalidateMaintenanceCache } from "../services/maintenance.js";
-import { invalidateSiteIpCache } from "../services/receivers/index.js";
+import { queueCollectorJob, siteCollectorFor } from "../services/sites.js";
+import { endpoints, endpointMetrics, checks, sites, maintenanceWindows } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
+import { sendWakeOnLan } from "../services/probes/protocols.js";
+import { suggestChecks } from "../services/suggestions.js";
+import { invalidateMaintenanceCache } from "../services/maintenance.js";
+import { ENDPOINT_METRICS } from "../services/endpointMetrics.js";
+import { addressHistory } from "../services/addresses.js";
+import { createAlertRule, parseAlertRule, type AlertRuleParams } from "../services/alertRuleFactory.js";
+
+// The full process/service lists can be thousands of rows — they're served
+// by /:id/inventory only, never in list or detail responses.
+type EndpointRow = typeof endpoints.$inferSelect;
+function publicHost({ agentApiKey, processInventory, serviceInventory, ...rest }: EndpointRow) {
+  return {
+    ...rest,
+    hasAgentKey: Boolean(agentApiKey),
+    hasSnapshot: Boolean(rest.lastSnapshot),
+    processCount: Array.isArray(processInventory) ? processInventory.length : null,
+    serviceCount: Array.isArray(serviceInventory) ? serviceInventory.length : null,
+  };
+}
 
 export const endpointsRouter = Router();
 endpointsRouter.use(requireAuth);
 
-endpointsRouter.get("/", async (_req, res) => {
-  res.json(await db.query.endpoints.findMany({ orderBy: (e, { asc }) => asc(e.name) }));
+endpointsRouter.get("/", async (req, res) => {
+  const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
+  const rows = await db.query.endpoints.findMany({
+    where: siteId ? eq(endpoints.siteId, siteId) : undefined,
+    orderBy: (h, { asc }) => asc(h.name),
+  });
+  // agentApiKey is a credential — never returned in a list/read response,
+  // only shown once at issuance (see /:id/agent-key below). The full
+  // snapshot is left to GET /:id; the list stays small.
+  res.json(rows.map((h) => ({ ...publicHost(h), lastSnapshot: undefined })));
+});
+
+// The host-metric catalog (label, unit, which instance it filters on) the
+// check form builds its metric picker from.
+endpointsRouter.get("/metric-catalog", (_req, res) => {
+  res.json(ENDPOINT_METRICS.map(({ read, ...def }) => def));
+});
+
+endpointsRouter.get("/:id", async (req, res) => {
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
+  if (!host) {
+    res.status(404).json({ error: "Host not found" });
+    return;
+  }
+  res.json(publicHost(host));
+});
+
+// Processes and services the agent last reported, plus the scripts in its
+// script_dir — the Hosts page tabs and the check form's pickers.
+endpointsRouter.get("/:id/inventory", async (req, res) => {
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
+  if (!host) {
+    res.status(404).json({ error: "Host not found" });
+    return;
+  }
+  res.json({
+    processes: host.processInventory ?? null,
+    services: host.serviceInventory ?? null,
+    scripts: host.availableScripts ?? null,
+    containers: (host.lastSnapshot as { availableContainers?: string[] } | null)?.availableContainers ?? null,
+    updatedAt: host.inventoryUpdatedAt,
+    // Older agents only send names.
+    processNames: host.availableProcesses ?? null,
+    serviceNames: host.availableServices ?? null,
+  });
+});
+
+endpointsRouter.get("/:id/addresses", async (req, res) => {
+  res.json(await addressHistory(req.params.id));
 });
 
 endpointsRouter.post("/", async (req, res) => {
   const name = String(req.body?.name ?? "").trim();
-  if (!name) {
-    res.status(400).json({ error: "name is required" });
+  const siteId = String(req.body?.siteId ?? "");
+  if (!name || !siteId) {
+    res.status(400).json({ error: "name and siteId are required" });
     return;
   }
-  const description = req.body?.description ? String(req.body.description) : null;
-  const site = await siteFields(req.body);
-  if ("error" in site) {
-    res.status(400).json(site);
-    return;
-  }
-  invalidateSiteIpCache();
-  const [endpoint] = await db.insert(endpoints).values({ name, description, ...site }).returning();
-  res.status(201).json(endpoint);
+  const hostname = req.body?.hostname ? String(req.body.hostname) : null;
+  const os = req.body?.os ? String(req.body.os) : null;
+  const macAddress = req.body?.macAddress ? String(req.body.macAddress) : null;
+  const tags = Array.isArray(req.body?.tags) ? req.body.tags.map(String) : [];
+  const [host] = await db.insert(endpoints).values({ name, siteId, hostname, os, macAddress, tags }).returning();
+  const { agentApiKey, ...rest } = host;
+  res.status(201).json(rest);
 });
 
-const IP_RE = /^(\d{1,3}(\.\d{1,3}){3}|[0-9a-f:]+)$/i;
-
-// Shared by create and update: the site collector and the site's public IPs.
-async function siteFields(body: Record<string, unknown> | undefined): Promise<{ error: string } | Partial<typeof endpoints.$inferInsert>> {
-  const out: Partial<typeof endpoints.$inferInsert> = {};
-  if (body?.collectorHostId !== undefined) {
-    const hostId = body.collectorHostId ? String(body.collectorHostId) : null;
-    if (hostId) {
-      const host = await db.query.hosts.findFirst({ where: eq(hosts.id, hostId) });
-      if (!host?.agentApiKey) return { error: "The site collector must be a host with an agent installed" };
-    }
-    out.collectorHostId = hostId;
-  }
-  if (body?.locationId !== undefined) {
-    const locationId = body.locationId ? String(body.locationId) : null;
-    if (locationId && !(await db.query.locations.findFirst({ where: eq(locations.id, locationId) }))) return { error: "locationId not found" };
-    out.locationId = locationId;
-  }
-  if (body?.publicIps !== undefined) {
-    const raw = Array.isArray(body.publicIps) ? body.publicIps : String(body.publicIps ?? "").split(/[\s,]+/);
-    const ips = [...new Set(raw.map((v) => String(v).trim()).filter(Boolean))];
-    const bad = ips.find((ip) => !IP_RE.test(ip));
-    if (bad) return { error: `"${bad}" isn't an IP address` };
-    out.publicIps = ips;
-  }
-  return out;
-}
-
 endpointsRouter.patch("/:id", async (req, res) => {
-  const site = await siteFields(req.body);
-  if ("error" in site) {
-    res.status(400).json(site);
-    return;
-  }
-  const updates: Partial<typeof endpoints.$inferInsert> = { ...site };
+  const updates: Partial<typeof endpoints.$inferInsert> = {};
   if (req.body?.name !== undefined) updates.name = String(req.body.name).trim();
-  if (req.body?.description !== undefined) updates.description = req.body.description ? String(req.body.description) : null;
-  invalidateSiteIpCache();
-  const [endpoint] = await db.update(endpoints).set(updates).where(eq(endpoints.id, req.params.id)).returning();
-  if (!endpoint) {
-    res.status(404).json({ error: "Endpoint not found" });
+  if (req.body?.hostname !== undefined) updates.hostname = req.body.hostname ? String(req.body.hostname) : null;
+  if (req.body?.os !== undefined) updates.os = req.body.os ? String(req.body.os) : null;
+  if (req.body?.macAddress !== undefined) updates.macAddress = req.body.macAddress ? String(req.body.macAddress) : null;
+  if (req.body?.siteId !== undefined) updates.siteId = String(req.body.siteId);
+  if (Array.isArray(req.body?.tags)) updates.tags = [...new Set(req.body.tags.map(String))] as string[];
+  const [host] = await db.update(endpoints).set(updates).where(eq(endpoints.id, req.params.id)).returning();
+  if (!host) {
+    res.status(404).json({ error: "Host not found" });
     return;
   }
-  res.json(endpoint);
+  const { agentApiKey, ...rest } = host;
+  res.json(rest);
+});
+
+// Issues (or reissues) the agent bearer token for this host. Shown exactly
+// once in the response, per the global "credentials shown once" standard —
+// the plaintext key is never retrievable again after this call, only reset.
+endpointsRouter.post("/:id/agent-key", async (req, res) => {
+  const agentApiKey = crypto.randomBytes(24).toString("hex");
+  const [host] = await db
+    .update(endpoints)
+    .set({ agentApiKey })
+    .where(eq(endpoints.id, req.params.id))
+    .returning();
+  if (!host) {
+    res.status(404).json({ error: "Host not found" });
+    return;
+  }
+  // Copy-pasteable commands per platform: each downloads the right binary,
+  // writes its config with this key baked in, and installs it as a real
+  // service (systemd/launchd on unix, a Scheduled Task on Windows) — see
+  // engine/src/routes/install.ts for what they actually run. The bash
+  // bootstrap (agent.sh) already detects Linux vs. macOS itself via `uname`,
+  // so one command covers both; Windows needs a separate PowerShell one
+  // since bash/curl/sudo aren't available there by default.
+  const publicUrl = process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 4100}`;
+  const installCommands = {
+    unix: `curl -fsSL ${publicUrl}/install/agent.sh | sudo bash -s -- ${agentApiKey}`,
+    windows: `$env:LOOKSEE_ENGINE_URL='${publicUrl}'; $env:LOOKSEE_AGENT_KEY='${agentApiKey}'; iex (irm ${publicUrl}/install/agent.ps1)`,
+  };
+  res.json({ agentApiKey, installCommands });
+});
+
+// Push-to-update: flags this host so its agent updates itself on its next
+// config poll (see routes/agent.ts's GET /config, which consumes this flag
+// one-shot). Doesn't wait for or confirm the update — the host's
+// agentVersion changing on a later report is the real confirmation, shown
+// in the dashboard.
+endpointsRouter.post("/:id/request-update", async (req, res) => {
+  const [host] = await db.update(endpoints).set({ updateRequested: true }).where(eq(endpoints.id, req.params.id)).returning();
+  if (!host) {
+    res.status(404).json({ error: "Host not found" });
+    return;
+  }
+  res.json({ requested: true });
+});
+
+// Recent metrics history for one host, used by the dashboard's host-metrics
+// widget — same clamped-limit/newest-first shape as checks.ts's
+// /:id/results.
+endpointsRouter.get("/:id/metrics", async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 100, 2000);
+  const since = typeof req.query.since === "string" ? new Date(req.query.since) : undefined;
+  const validSince = since && !Number.isNaN(since.getTime()) ? since : undefined;
+  const rows = await db.query.endpointMetrics.findMany({
+    where: validSince ? and(eq(endpointMetrics.endpointId, req.params.id), gte(endpointMetrics.recordedAt, validSince)) : eq(endpointMetrics.endpointId, req.params.id),
+    orderBy: desc(endpointMetrics.recordedAt),
+    limit,
+  });
+  res.json(rows);
 });
 
 endpointsRouter.delete("/:id", async (req, res) => {
@@ -81,8 +175,81 @@ endpointsRouter.delete("/:id", async (req, res) => {
   res.status(204).end();
 });
 
-// Multi-select actions from the endpoints list. "merge" moves every host
-// and check into the target endpoint, then deletes the emptied ones.
+endpointsRouter.post("/:id/wake", async (req, res) => {
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
+  if (!host?.macAddress) {
+    res.status(400).json({ error: "Set this host's MAC address first" });
+    return;
+  }
+  try {
+    const broadcast = req.body?.broadcast ? String(req.body.broadcast) : undefined;
+    // A magic packet only works on the target's own LAN, so a remote site's
+    // host is woken by that site's collector.
+    if (await siteCollectorFor(host.siteId)) {
+      await queueCollectorJob(host.siteId, "wake", { mac: host.macAddress, broadcast });
+      res.json({ sent: true, viaCollector: true });
+      return;
+    }
+    await sendWakeOnLan(host.macAddress, broadcast);
+    res.json({ sent: true });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+async function suggestionsFor(endpointId: string) {
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) });
+  if (!host) return null;
+  const existing = await db.query.checks.findMany({ where: eq(checks.endpointId, endpointId) });
+  return { host, suggestions: suggestChecks(host, existing) };
+}
+
+endpointsRouter.get("/:id/suggestions", async (req, res) => {
+  const found = await suggestionsFor(req.params.id);
+  if (!found) {
+    res.status(404).json({ error: "Host not found" });
+    return;
+  }
+  res.json(found.suggestions);
+});
+
+// overrides: per-suggestion edits from the UI (name, interval, config).
+async function applySuggestions(endpointId: string, keys: string[] | null, opts: { siteId?: string; alertRule?: AlertRuleParams | null; overrides?: Record<string, { name?: string; intervalSeconds?: number; config?: Record<string, unknown> }> } = {}) {
+  const found = await suggestionsFor(endpointId);
+  if (!found) return 0;
+  const chosen = keys ? found.suggestions.filter((s) => keys.includes(s.key)) : found.suggestions;
+  if (!chosen.length) return 0;
+  const created = await db
+    .insert(checks)
+    .values(
+      chosen.map((s) => {
+        const o = opts.overrides?.[s.key] ?? {};
+        return {
+          name: o.name?.trim() || s.name,
+          siteId: opts.siteId ?? found.host.siteId,
+          endpointId: s.endpointScoped === false ? null : endpointId,
+          type: s.type as typeof checks.$inferInsert.type,
+          config: { ...s.config, ...(o.config ?? {}) },
+          intervalSeconds: Number(o.intervalSeconds) >= 5 ? Number(o.intervalSeconds) : (s.intervalSeconds ?? 60),
+        };
+      })
+    )
+    .returning({ id: checks.id });
+  if (opts.alertRule) for (const c of created) await createAlertRule(c.id, opts.alertRule);
+  return chosen.length;
+}
+
+endpointsRouter.post("/:id/suggestions/apply", async (req, res) => {
+  const keys = Array.isArray(req.body?.keys) ? req.body.keys.map(String) : null;
+  const created = await applySuggestions(req.params.id, keys, {
+    siteId: req.body?.siteId ? String(req.body.siteId) : undefined,
+    alertRule: parseAlertRule(req.body?.alertRule),
+    overrides: req.body?.overrides && typeof req.body.overrides === "object" ? req.body.overrides : undefined,
+  });
+  res.json({ created });
+});
+
+// Multi-select actions from the endpoints table.
 endpointsRouter.post("/bulk", async (req, res) => {
   const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
   const action = String(req.body?.action ?? "");
@@ -90,46 +257,78 @@ endpointsRouter.post("/bulk", async (req, res) => {
     res.status(400).json({ error: "ids is required" });
     return;
   }
+  const rows = await db.query.endpoints.findMany({ where: inArray(endpoints.id, ids) });
+  const errors: { id: string; error: string }[] = [];
   let affected = 0;
+  const endpointChecks = or(inArray(checks.endpointId, ids), inArray(checks.probeEndpointId, ids));
   switch (action) {
     case "delete":
       affected = (await db.delete(endpoints).where(inArray(endpoints.id, ids)).returning({ id: endpoints.id })).length;
       break;
-    case "merge": {
-      const targetId = String(req.body?.targetId ?? "");
-      if (!targetId || ids.includes(targetId) || !(await db.query.endpoints.findFirst({ where: eq(endpoints.id, targetId) }))) {
-        res.status(400).json({ error: "targetId must be an existing endpoint that isn't one of the ones being merged" });
+    case "move": {
+      const siteId = String(req.body?.siteId ?? "");
+      if (!(await db.query.sites.findFirst({ where: eq(sites.id, siteId) }))) {
+        res.status(400).json({ error: "siteId not found" });
         return;
       }
-      await db.update(hosts).set({ endpointId: targetId }).where(inArray(hosts.endpointId, ids));
-      await db.update(checks).set({ endpointId: targetId }).where(inArray(checks.endpointId, ids));
-      affected = (await db.delete(endpoints).where(inArray(endpoints.id, ids)).returning({ id: endpoints.id })).length;
+      affected = (await db.update(endpoints).set({ siteId }).where(inArray(endpoints.id, ids)).returning({ id: endpoints.id })).length;
+      if (req.body?.moveChecks) await db.update(checks).set({ siteId }).where(inArray(checks.endpointId, ids));
+      break;
+    }
+    case "request_update":
+      affected = (await db.update(endpoints).set({ updateRequested: true }).where(inArray(endpoints.id, ids)).returning({ id: endpoints.id })).length;
+      break;
+    case "add_tags":
+    case "remove_tags": {
+      const tags: string[] = Array.isArray(req.body?.tags)
+        ? req.body.tags.map(String)
+        : String(req.body?.tags ?? "")
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean);
+      for (const h of rows) {
+        const next = action === "add_tags" ? [...new Set([...(h.tags ?? []), ...tags])] : (h.tags ?? []).filter((t) => !tags.includes(t));
+        await db.update(endpoints).set({ tags: next }).where(eq(endpoints.id, h.id));
+        affected++;
+      }
       break;
     }
     case "enable_checks":
     case "disable_checks":
-      affected = (await db.update(checks).set({ enabled: action === "enable_checks" }).where(inArray(checks.endpointId, ids)).returning({ id: checks.id })).length;
+      affected = (await db.update(checks).set({ enabled: action === "enable_checks" }).where(endpointChecks).returning({ id: checks.id })).length;
       break;
-    case "set_location": {
-      const locationId = req.body?.locationId ? String(req.body.locationId) : null;
-      if (locationId && !(await db.query.locations.findFirst({ where: eq(locations.id, locationId) }))) {
-        res.status(400).json({ error: "locationId not found" });
-        return;
-      }
-      affected = (await db.update(endpoints).set({ locationId }).where(inArray(endpoints.id, ids)).returning({ id: endpoints.id })).length;
+    case "apply_suggestions": {
+      const alertRule = parseAlertRule(req.body?.alertRule);
+      for (const h of rows) affected += await applySuggestions(h.id, null, { alertRule });
       break;
     }
+    case "wake":
+      for (const h of rows) {
+        if (!h.macAddress) {
+          errors.push({ id: h.id, error: `${h.name}: no MAC address` });
+          continue;
+        }
+        if (await siteCollectorFor(h.siteId)) {
+          await queueCollectorJob(h.siteId, "wake", { mac: h.macAddress });
+          affected++;
+          continue;
+        }
+        await sendWakeOnLan(h.macAddress)
+          .then(() => affected++)
+          .catch((e) => errors.push({ id: h.id, error: `${h.name}: ${e instanceof Error ? e.message : String(e)}` }));
+      }
+      break;
     case "maintenance": {
       const minutes = Math.max(1, Number(req.body?.minutes) || 60);
       const now = new Date();
-      await db.insert(maintenanceWindows).values({ name: String(req.body?.name || `Maintenance for ${ids.length} endpoint(s)`), scope: "endpoint", targetIds: ids, startsAt: now, endsAt: new Date(now.getTime() + minutes * 60_000) });
+      await db.insert(maintenanceWindows).values({ name: String(req.body?.name || `Maintenance for ${rows.length} host(s)`), scope: "endpoint", targetIds: ids, startsAt: now, endsAt: new Date(now.getTime() + minutes * 60_000) });
       invalidateMaintenanceCache();
-      affected = ids.length;
+      affected = rows.length;
       break;
     }
     default:
       res.status(400).json({ error: `Unknown action: ${action}` });
       return;
   }
-  res.json({ affected, errors: [] });
+  res.json({ affected, errors });
 });

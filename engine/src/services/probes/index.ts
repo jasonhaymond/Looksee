@@ -28,7 +28,7 @@ export const PROBE_TYPES = Object.keys(PROBES);
 export async function runProbe(type: string, config: Config, ctx?: Partial<ProbeContext>): Promise<ProbeOutcome> {
   const fn = PROBES[type];
   if (!fn) return warn(`Unknown agentless check type: ${type}`);
-  const full: ProbeContext = { checkId: "", hostId: null, endpointId: null, intervalSeconds: 60, state: {}, ...ctx };
+  const full: ProbeContext = { checkId: "", endpointId: null, siteId: null, intervalSeconds: 60, state: {}, ...ctx };
   const result = await fn(config, full);
   if (result.skip || type === "anomaly") return result;
   return applyThresholds(result, config);

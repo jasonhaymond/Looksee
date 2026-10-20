@@ -45,7 +45,7 @@ export const NETWORK_PROBES: Record<string, (config: Config, ctx: ProbeContext) 
 export async function runNetworkProbe(type: string, config: Config, ctx?: Partial<ProbeContext>): Promise<ProbeOutcome> {
   const fn = NETWORK_PROBES[type];
   if (!fn) return warn(`Unknown network check type: ${type}`);
-  const full: ProbeContext = { checkId: "", hostId: null, intervalSeconds: 60, state: {}, ...ctx };
+  const full: ProbeContext = { checkId: "", endpointId: null, intervalSeconds: 60, state: {}, ...ctx };
   const result = await fn(config, full);
   return result.skip ? result : applyThresholds(result, config);
 }

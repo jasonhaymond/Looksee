@@ -16,7 +16,7 @@ second machine. For day-to-day usage once it's running, see
 5. [Restore the database](#5-restore-the-database)
 6. [Build, run, and verify — before cutting over](#6-build-run-and-verify--before-cutting-over)
 7. [Reverse proxy, HTTPS, and firewall](#7-reverse-proxy-https-and-firewall)
-8. [Agent binaries](#8-agent-binaries)
+8. [Agent binaries and the site collector](#8-agent-binaries-and-the-site-collector)
 9. [Cut over](#9-cut-over)
 10. [Re-point already-installed agents](#10-re-point-already-installed-agents)
 11. [Borg backup repository](#11-borg-backup-repository)
@@ -46,7 +46,7 @@ determines how much post-migration cleanup you'll do.
 | Database (endpoints, hosts, checks, history, users, channels, settings, alert rules, dashboards) | `pg_dump` / `pg_restore` — scripted, see §2 and §5 |
 | `engine/.env` and `dashboard/.env` (secrets — `SESSION_SECRET`, VAPID keypair, SMTP fallback, `.env`-based settings) | Copied directly, see §4 |
 | Borg backup repository (if local to the old server) | Copied or re-pointed, see §11 |
-| Agent binaries (`agent/bin/`) | **Not migrated** — gitignored build output, just rebuilt fresh on the new server (§8) |
+| Agent binaries and site collector (`agent/bin/`) | **Not migrated** — gitignored build output, just rebuilt fresh on the new server (§8) |
 | `node_modules`, `.next`, `dist` build output | **Not migrated** — reinstalled/rebuilt fresh from source, same as any deploy |
 
 **About downtime**: this guide runs the new server fully, verified working, *before*
@@ -215,16 +215,38 @@ Same as a first deployment — see deployment-guide.md
 provisions a fresh certificate for the domain automatically once DNS actually points
 here (§9) — nothing to migrate on the TLS side.
 
-## 8. Agent binaries
+## 8. Agent binaries and the site collector
 
 ```sh
 cd ~/Looksee/agent
 ./build-all.sh
+cd ~/Looksee
+bash scripts/build-collector.sh
 ```
 
 Build these fresh on the new server rather than copying `agent/bin/` over — it's
 gitignored build output, and building fresh guarantees the binaries match whatever
 agent code is actually in this checkout.
+
+**Don't skip the site collector** (`build-collector.sh`), even if this is the only step
+of `update.sh` you're doing by hand. It bundles the collector and downloads the Node.js
+runtimes agents fetch when their host runs a remote site's collector (about 250 MB the
+first time, from nodejs.org). Without it, the new server tells every collector host to
+stop its collector, and those hosts show *Site collector … — offline* while their agents
+look perfectly healthy. If the old server's root `.env` set `COLLECTOR_PLATFORMS`, copy
+that line over first (§4), or all five runtimes are fetched.
+
+**Check:**
+
+```sh
+curl -s https://looksee.example.com/install/collector/manifest.json | grep -E '"(version|node)"|-amd64|-arm64'
+```
+
+You should see the `"version"` and `"node"` lines and one line per runtime your collector
+hosts need (e.g. `"windows-amd64": {`). The text `The site
+collector hasn't been built on this engine yet` means the build didn't run or failed —
+check its output. Once it's served, collector hosts pick it up on their next agent cycle
+(within about a minute) and show *online* on the Hosts page.
 
 ## 9. Cut over
 

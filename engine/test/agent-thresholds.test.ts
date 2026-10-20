@@ -6,13 +6,13 @@ import { eq } from "drizzle-orm";
 import { app } from "../src/app.js";
 import { loginWith2fa } from "./helpers.js";
 import { db } from "../src/db/index.js";
-import { users, endpoints, hosts } from "../src/db/schema.js";
+import { users, sites, endpoints } from "../src/db/schema.js";
 
 const email = `test-thresholds-${crypto.randomUUID()}@example.com`;
 const password = "TestPass123";
 let cookie: string;
+let siteId: string;
 let endpointId: string;
-let hostId: string;
 let agentAuth: { Authorization: string };
 
 beforeAll(async () => {
@@ -20,18 +20,18 @@ beforeAll(async () => {
   await db.insert(users).values({ email, passwordHash });
   cookie = await loginWith2fa(email, password);
 
-  const [endpoint] = await db.insert(endpoints).values({ name: `test-thresholds-endpoint-${crypto.randomUUID()}` }).returning();
-  endpointId = endpoint.id;
-  const [host] = await db.insert(hosts).values({ endpointId, name: "test-thresholds-host" }).returning();
-  hostId = host.id;
-  const keyRes = await request(app).post(`/api/hosts/${hostId}/agent-key`).set("Cookie", cookie);
+  const [endpoint] = await db.insert(sites).values({ name: `test-thresholds-endpoint-${crypto.randomUUID()}` }).returning();
+  siteId = endpoint.id;
+  const [host] = await db.insert(endpoints).values({ siteId, name: "test-thresholds-host" }).returning();
+  endpointId = host.id;
+  const keyRes = await request(app).post(`/api/endpoints/${endpointId}/agent-key`).set("Cookie", cookie);
   agentAuth = { Authorization: `Bearer ${keyRes.body.agentApiKey}` };
 });
 
 afterAll(async () => {
-  await db.delete(hosts).where(eq(hosts.id, hostId));
-  await db.delete(users).where(eq(users.email, email));
   await db.delete(endpoints).where(eq(endpoints.id, endpointId));
+  await db.delete(users).where(eq(users.email, email));
+  await db.delete(sites).where(eq(sites.id, siteId));
 });
 
 async function latestResult(checkId: string) {
@@ -44,7 +44,7 @@ describe("host_cpu/host_memory/host_disk threshold evaluation on report arrival"
     const createRes = await request(app)
       .post("/api/checks")
       .set("Cookie", cookie)
-      .send({ endpointId, hostId, name: "cpu-ok", type: "host_cpu", config: { warnPercent: 80, criticalPercent: 95 } });
+      .send({ siteId, endpointId, name: "cpu-ok", type: "host_cpu", config: { warnPercent: 80, criticalPercent: 95 } });
     const checkId = createRes.body.id;
 
     await request(app).post("/api/agent/report").set(agentAuth).send({ metrics: { cpuPercent: 10 } });
@@ -59,7 +59,7 @@ describe("host_cpu/host_memory/host_disk threshold evaluation on report arrival"
     const createRes = await request(app)
       .post("/api/checks")
       .set("Cookie", cookie)
-      .send({ endpointId, hostId, name: "mem-warn", type: "host_memory", config: { warnPercent: 80, criticalPercent: 95 } });
+      .send({ siteId, endpointId, name: "mem-warn", type: "host_memory", config: { warnPercent: 80, criticalPercent: 95 } });
     const checkId = createRes.body.id;
 
     await request(app).post("/api/agent/report").set(agentAuth).send({ metrics: { memPercent: 85 } });
@@ -75,7 +75,7 @@ describe("host_cpu/host_memory/host_disk threshold evaluation on report arrival"
     const createRes = await request(app)
       .post("/api/checks")
       .set("Cookie", cookie)
-      .send({ endpointId, hostId, name: "disk-critical", type: "host_disk", config: { warnPercent: 80, criticalPercent: 95 } });
+      .send({ siteId, endpointId, name: "disk-critical", type: "host_disk", config: { warnPercent: 80, criticalPercent: 95 } });
     const checkId = createRes.body.id;
 
     await request(app).post("/api/agent/report").set(agentAuth).send({ metrics: { diskPercent: 99 } });
@@ -90,7 +90,7 @@ describe("host_cpu/host_memory/host_disk threshold evaluation on report arrival"
     const createRes = await request(app)
       .post("/api/checks")
       .set("Cookie", cookie)
-      .send({ endpointId, hostId, name: "cpu-cross-check", type: "host_cpu", config: { criticalPercent: 10 } });
+      .send({ siteId, endpointId, name: "cpu-cross-check", type: "host_cpu", config: { criticalPercent: 10 } });
     const checkId = createRes.body.id;
 
     // memPercent alone would trip a criticalPercent:10 threshold if the type mapping were wrong.

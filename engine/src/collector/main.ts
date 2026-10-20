@@ -143,7 +143,7 @@ async function runCheck(c: CollectorCheck) {
   try {
     const outcome = await runNetworkProbe(c.type, c.config, {
       checkId: c.id,
-      hostId: null,
+      endpointId: null,
       intervalSeconds: c.intervalSeconds,
       state: c.state ?? {},
       createdAt: new Date(c.createdAt),

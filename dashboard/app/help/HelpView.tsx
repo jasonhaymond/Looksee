@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { TopNav } from "../components/TopNav";
 import { inputClass } from "../components/ui";
 import type { DocSection } from "./docs";
 
@@ -22,7 +21,6 @@ export function HelpView({ docs, current, title, intro, sections }: { docs: { sl
 
   return (
     <main className="mx-auto max-w-6xl p-4 sm:p-6">
-      <TopNav active="/help" />
       <div className="mb-4 flex flex-wrap gap-1.5">
         {docs.map((d) => (
           <Link key={d.slug} href={`/help${d.slug ? `/${d.slug}` : ""}`} className={`rounded-full border px-3 py-1 text-sm ${d.slug === current ? "border-[var(--accent)] bg-[var(--accent)]/15" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]"}`}>

@@ -12,8 +12,8 @@ describe("dashboard and engine check-type registries", () => {
 
   it("agree on which types need a host and which can run on an agent", () => {
     for (const def of DASHBOARD_TYPES) {
-      const meta = CHECK_TYPE_META[def.type as keyof typeof CHECK_TYPE_META] as { hostRequired?: boolean; remoteProbe?: boolean };
-      expect(Boolean(def.needsHost), `${def.type} needsHost`).toBe(Boolean(meta.hostRequired));
+      const meta = CHECK_TYPE_META[def.type as keyof typeof CHECK_TYPE_META] as { endpointRequired?: boolean; remoteProbe?: boolean };
+      expect(Boolean(def.needsEndpoint), `${def.type} needsEndpoint`).toBe(Boolean(meta.endpointRequired));
       expect(Boolean(def.remoteProbe), `${def.type} remoteProbe`).toBe(Boolean(meta.remoteProbe));
     }
   });

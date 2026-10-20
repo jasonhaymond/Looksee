@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { eq, gt, and } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { sessions, users, hosts } from "../db/schema.js";
+import { sessions, users, endpoints } from "../db/schema.js";
 import { SESSION_COOKIE_NAME } from "../lib/session.js";
 import { getSecuritySettings, recordSecurityEvent } from "../services/security.js";
 
@@ -9,7 +9,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: { id: string; email: string };
-      agentHost?: { id: string; endpointId: string };
+      agentEndpoint?: { id: string; siteId: string };
     }
   }
 }
@@ -57,12 +57,12 @@ export async function requireAgentAuth(req: Request, res: Response, next: NextFu
     res.status(401).json({ error: "Missing agent token" });
     return;
   }
-  const host = await db.query.hosts.findFirst({ where: eq(hosts.agentApiKey, token) });
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.agentApiKey, token) });
   if (!host) {
     await recordSecurityEvent("bad_agent_key", { req, detail: "unknown key" });
     res.status(401).json({ error: "Invalid agent token" });
     return;
   }
-  req.agentHost = { id: host.id, endpointId: host.endpointId };
+  req.agentEndpoint = { id: host.id, siteId: host.siteId };
   next();
 }

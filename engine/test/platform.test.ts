@@ -8,7 +8,7 @@ import { eq, desc } from "drizzle-orm";
 import { app } from "../src/app.js";
 import { loginWith2fa } from "./helpers.js";
 import { db } from "../src/db/index.js";
-import { users, endpoints, hosts, checks, checkResults, alertEvents, hostMetrics, notificationChannels } from "../src/db/schema.js";
+import { users, sites, endpoints, checks, checkResults, alertEvents, endpointMetrics, notificationChannels } from "../src/db/schema.js";
 import { processOpenAlerts } from "../src/services/alerting.js";
 import { windowIsActive } from "../src/services/maintenance.js";
 import { runOneCheck } from "../src/services/scheduler.js";
@@ -19,9 +19,9 @@ import { MASK } from "../src/lib/secrets.js";
 const email = `test-platform-${crypto.randomUUID()}@example.com`;
 const password = "TestPass123";
 let cookie: string;
+let siteId: string;
+let otherSiteId: string;
 let endpointId: string;
-let otherEndpointId: string;
-let hostId: string;
 let agentAuth: { Authorization: string };
 let webhookChannelId: string;
 let escalationChannelId: string;
@@ -42,18 +42,18 @@ beforeAll(async () => {
 
   await db.insert(users).values({ email, passwordHash: await bcrypt.hash(password, 10) });
   cookie = await loginWith2fa(email, password);
-  endpointId = (await db.insert(endpoints).values({ name: `platform-${crypto.randomUUID()}` }).returning())[0].id;
-  otherEndpointId = (await db.insert(endpoints).values({ name: `platform-other-${crypto.randomUUID()}` }).returning())[0].id;
-  hostId = (await db.insert(hosts).values({ endpointId, name: "platform-host" }).returning())[0].id;
-  const key = await request(app).post(`/api/hosts/${hostId}/agent-key`).set("Cookie", cookie);
+  siteId = (await db.insert(sites).values({ name: `platform-${crypto.randomUUID()}` }).returning())[0].id;
+  otherSiteId = (await db.insert(sites).values({ name: `platform-other-${crypto.randomUUID()}` }).returning())[0].id;
+  endpointId = (await db.insert(endpoints).values({ siteId, name: "platform-host" }).returning())[0].id;
+  const key = await request(app).post(`/api/endpoints/${endpointId}/agent-key`).set("Cookie", cookie);
   agentAuth = { Authorization: `Bearer ${key.body.agentApiKey}` };
   webhookChannelId = (await db.insert(notificationChannels).values({ name: "test hook", type: "webhook", config: { url: `${hookBase}/primary` } }).returning())[0].id;
   escalationChannelId = (await db.insert(notificationChannels).values({ name: "test escalation", type: "webhook", config: { url: `${hookBase}/escalation` } }).returning())[0].id;
 });
 
 afterAll(async () => {
-  await db.delete(endpoints).where(eq(endpoints.id, endpointId));
-  await db.delete(endpoints).where(eq(endpoints.id, otherEndpointId));
+  await db.delete(sites).where(eq(sites.id, siteId));
+  await db.delete(sites).where(eq(sites.id, otherSiteId));
   await db.delete(notificationChannels).where(eq(notificationChannels.id, webhookChannelId));
   await db.delete(notificationChannels).where(eq(notificationChannels.id, escalationChannelId));
   await db.delete(users).where(eq(users.email, email));
@@ -61,7 +61,7 @@ afterAll(async () => {
 });
 
 async function createCheck(body: Record<string, unknown>) {
-  const res = await request(app).post("/api/checks").set("Cookie", cookie).send({ endpointId, intervalSeconds: 60, ...body });
+  const res = await request(app).post("/api/checks").set("Cookie", cookie).send({ siteId, intervalSeconds: 60, ...body });
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   return res.body as { id: string; pushToken: string | null; config: Record<string, unknown> };
 }
@@ -207,7 +207,7 @@ describe("check management API", () => {
   it("never returns stored secrets, and keeps them when the mask is sent back", async () => {
     const c = await createCheck({ name: "db", type: "database", config: { engine: "postgres", host: "db.local", username: "mon", password: "hunter2" } });
     expect(c.config.password).toBe(MASK);
-    const list = await request(app).get(`/api/checks?endpointId=${endpointId}`).set("Cookie", cookie);
+    const list = await request(app).get(`/api/checks?siteId=${siteId}`).set("Cookie", cookie);
     expect(JSON.stringify(list.body)).not.toContain("hunter2");
     await request(app).patch(`/api/checks/${c.id}`).set("Cookie", cookie).send({ config: { engine: "postgres", host: "db2.local", username: "mon", password: MASK } });
     const stored = await db.query.checks.findFirst({ where: eq(checks.id, c.id) });
@@ -229,9 +229,9 @@ describe("check management API", () => {
     await bulk({ action: "set_retry_interval", seconds: 30 });
     const rowB = await db.query.checks.findFirst({ where: eq(checks.id, b.id) });
     expect([rowB?.intervalSeconds, rowB?.retryIntervalSeconds]).toEqual([300, 30]);
-    await bulk({ action: "move", endpointId: otherEndpointId });
-    expect((await db.query.checks.findFirst({ where: eq(checks.id, a.id) }))?.endpointId).toBe(otherEndpointId);
-    const probe = await bulk({ action: "set_probe_host", hostId });
+    await bulk({ action: "move", siteId: otherSiteId });
+    expect((await db.query.checks.findFirst({ where: eq(checks.id, a.id) }))?.siteId).toBe(otherSiteId);
+    const probe = await bulk({ action: "set_probe_endpoint", endpointId });
     expect(probe.body.affected).toBe(2);
     const dup = await bulk({ action: "duplicate" });
     expect(dup.body.affected).toBe(2);
@@ -243,7 +243,7 @@ describe("check management API", () => {
 
   it("refuses to pin a non-probe type to an agent", async () => {
     const c = await createCheck({ name: "snmp-x", type: "snmp", config: { host: "1.2.3.4", oid: "1.3.6.1.2.1.1.3.0" } });
-    const res = await request(app).post("/api/checks/bulk").set("Cookie", cookie).send({ ids: [c.id], action: "set_probe_host", hostId });
+    const res = await request(app).post("/api/checks/bulk").set("Cookie", cookie).send({ ids: [c.id], action: "set_probe_endpoint", endpointId });
     expect(res.body.affected).toBe(0);
     expect(res.body.errors[0].error).toMatch(/can't run on an agent/);
   });
@@ -276,12 +276,12 @@ describe("status pages and SLA reports (L7, L8)", () => {
     expect(pub.body.checks[0].days).toHaveLength(90);
     expect(JSON.stringify(pub.body)).not.toContain(hb.id);
 
-    const sla = await request(app).get(`/api/insights/reports/sla?days=1&endpointId=${endpointId}`).set("Cookie", cookie);
+    const sla = await request(app).get(`/api/insights/reports/sla?days=1&siteId=${siteId}`).set("Cookie", cookie);
     const row = sla.body.checks.find((c: { checkId: string }) => c.checkId === hb.id);
     expect(row.incidents).toBe(1);
     expect(row.downtimeMinutes).toBe(1);
     expect(row.uptimePercent).toBeLessThan(100);
-    const csv = await request(app).get(`/api/insights/reports/sla?days=1&format=csv&endpointId=${endpointId}`).set("Cookie", cookie);
+    const csv = await request(app).get(`/api/insights/reports/sla?days=1&format=csv&siteId=${siteId}`).set("Cookie", cookie);
     expect(csv.headers["content-type"]).toMatch(/text\/csv/);
     expect(csv.text).toMatch(/^check,type,uptime_percent/);
     await request(app).delete(`/api/status-pages/${page.body.id}`).set("Cookie", cookie);
@@ -308,7 +308,7 @@ const snapshot = (overrides: Record<string, unknown> = {}) => ({
 
 describe("agent protocol 3.0", () => {
   it("evaluates host_metric checks against the extended snapshot", async () => {
-    const make = (name: string, config: Record<string, unknown>) => createCheck({ name, type: "host_metric", hostId, config });
+    const make = (name: string, config: Record<string, unknown>) => createCheck({ name, type: "host_metric", endpointId, config });
     const free = await make("root free", { metric: "disk.free_gb", instance: "/", warnBelow: 10, criticalBelow: 2 });
     const ro = await make("data ro", { metric: "disk.read_only", instance: "/data", severity: "down" });
     const load = await make("load", { metric: "load.5", warnAbove: 1.5 });
@@ -325,13 +325,13 @@ describe("agent protocol 3.0", () => {
     expect((await status(fw.id)).lastStatus).toBe("warn");
     expect((await status(port.id)).lastStatus).toBe("up");
     expect((await status(missing.id)).lastStatus).toBe("unknown");
-    const [row] = await db.query.hostMetrics.findMany({ where: eq(hostMetrics.hostId, hostId), orderBy: desc(hostMetrics.recordedAt), limit: 1 });
+    const [row] = await db.query.endpointMetrics.findMany({ where: eq(endpointMetrics.endpointId, endpointId), orderBy: desc(endpointMetrics.recordedAt), limit: 1 });
     expect((row.extended as { disks: unknown[] }).disks).toHaveLength(2);
   });
 
   it("detects a reboot and a new login session, holding the warn", async () => {
-    const reboot = await createCheck({ name: "reboot", type: "host_reboot", hostId });
-    const sessions = await createCheck({ name: "logins", type: "host_change", hostId, config: { what: "sessions" } });
+    const reboot = await createCheck({ name: "reboot", type: "host_reboot", endpointId });
+    const sessions = await createCheck({ name: "logins", type: "host_change", endpointId, config: { what: "sessions" } });
     const send = (snap: Record<string, unknown>) => request(app).post("/api/agent/report").set(agentAuth).send({ version: "3.0.0", metrics: { extended: snapshot(snap) } }).expect(200);
     await send({});
     const row = async (id: string) => (await db.query.checks.findFirst({ where: eq(checks.id, id) }))!;
@@ -346,10 +346,10 @@ describe("agent protocol 3.0", () => {
   });
 
   it("accepts 3.x results with thresholds, still accepts legacy services[], and rejects foreign checks", async () => {
-    const file = await createCheck({ name: "backup age", type: "agent_file", hostId, config: { path: "/backups", mode: "age", warnAbove: 1440 } });
-    const svc = await createCheck({ name: "nginx", type: "agent_service", hostId, config: { serviceName: "nginx" } });
-    const otherHost = (await db.insert(hosts).values({ endpointId, name: "other" }).returning())[0];
-    const foreign = await createCheck({ name: "not yours", type: "agent_process", hostId: otherHost.id, config: { serviceName: "x" } });
+    const file = await createCheck({ name: "backup age", type: "agent_file", endpointId, config: { path: "/backups", mode: "age", warnAbove: 1440 } });
+    const svc = await createCheck({ name: "nginx", type: "agent_service", endpointId, config: { serviceName: "nginx" } });
+    const otherEndpoint = (await db.insert(endpoints).values({ siteId, name: "other" }).returning())[0];
+    const foreign = await createCheck({ name: "not yours", type: "agent_process", endpointId: otherEndpoint.id, config: { serviceName: "x" } });
     await request(app)
       .post("/api/agent/report")
       .set(agentAuth)
@@ -362,8 +362,8 @@ describe("agent protocol 3.0", () => {
   });
 
   it("withholds new check types from old agents and explains why", async () => {
-    const file = await createCheck({ name: "needs v3", type: "agent_file", hostId, config: { path: "/x", mode: "exists" } });
-    const svc = await createCheck({ name: "legacy ok", type: "agent_service", hostId, config: { serviceName: "sshd" } });
+    const file = await createCheck({ name: "needs v3", type: "agent_file", endpointId, config: { path: "/x", mode: "exists" } });
+    const svc = await createCheck({ name: "legacy ok", type: "agent_service", endpointId, config: { serviceName: "sshd" } });
     await request(app).post("/api/agent/report").set(agentAuth).send({ version: "1.2.0", metrics: {} });
     const cfg = await request(app).get("/api/agent/config").set(agentAuth);
     const ids = cfg.body.checks.map((c: { id: string }) => c.id);
@@ -376,7 +376,7 @@ describe("agent protocol 3.0", () => {
   });
 
   it("sends remote-probe checks to the agent they're pinned to", async () => {
-    const c = await createCheck({ name: "lan-only http", type: "http", probeHostId: hostId, config: { url: "http://10.0.0.1/" } });
+    const c = await createCheck({ name: "lan-only http", type: "http", probeEndpointId: endpointId, config: { url: "http://10.0.0.1/" } });
     const cfg = await request(app).get("/api/agent/config").set(agentAuth);
     expect(cfg.body.checks.find((x: { id: string }) => x.id === c.id)?.type).toBe("http");
     await request(app).post("/api/agent/report").set(agentAuth).send({ version: "3.0.0", results: [{ checkId: c.id, status: "up", latencyMs: 12 }] }).expect(200);
@@ -386,32 +386,32 @@ describe("agent protocol 3.0", () => {
 
 describe("host suggestions and bulk host/endpoint actions (L10)", () => {
   it("suggests checks from the snapshot and applies only the chosen ones", async () => {
-    const res = await request(app).get(`/api/hosts/${hostId}/suggestions`).set("Cookie", cookie);
+    const res = await request(app).get(`/api/endpoints/${endpointId}/suggestions`).set("Cookie", cookie);
     expect(res.status).toBe(200);
     const keys = res.body.map((s: { key: string }) => s.key);
     expect(keys.some((k: string) => k.startsWith("host_metric|disk.used_percent|/"))).toBe(true);
     expect(keys.some((k: string) => k.startsWith("disk_forecast|"))).toBe(true);
     const pick = res.body.filter((s: { type: string }) => s.type === "agent_heartbeat").map((s: { key: string }) => s.key);
-    const applied = await request(app).post(`/api/hosts/${hostId}/suggestions/apply`).set("Cookie", cookie).send({ keys: pick });
+    const applied = await request(app).post(`/api/endpoints/${endpointId}/suggestions/apply`).set("Cookie", cookie).send({ keys: pick });
     expect(applied.body.created).toBe(1);
-    const again = await request(app).get(`/api/hosts/${hostId}/suggestions`).set("Cookie", cookie);
+    const again = await request(app).get(`/api/endpoints/${endpointId}/suggestions`).set("Cookie", cookie);
     expect(again.body.some((s: { type: string }) => s.type === "agent_heartbeat")).toBe(false);
   });
 
-  it("bulk-tags hosts and merges endpoints", async () => {
-    const h2 = (await db.insert(hosts).values({ endpointId: otherEndpointId, name: "merge-me" }).returning())[0];
-    await request(app).post("/api/hosts/bulk").set("Cookie", cookie).send({ ids: [hostId, h2.id], action: "add_tags", tags: "rack1, prod" }).expect(200);
-    expect((await db.query.hosts.findFirst({ where: eq(hosts.id, h2.id) }))?.tags).toEqual(["rack1", "prod"]);
-    const tmp = (await db.insert(endpoints).values({ name: "temp-merge" }).returning())[0];
-    await db.update(hosts).set({ endpointId: tmp.id }).where(eq(hosts.id, h2.id));
-    const merged = await request(app).post("/api/endpoints/bulk").set("Cookie", cookie).send({ ids: [tmp.id], action: "merge", targetId: otherEndpointId });
+  it("bulk-tags endpoints and merges sites", async () => {
+    const h2 = (await db.insert(endpoints).values({ siteId: otherSiteId, name: "merge-me" }).returning())[0];
+    await request(app).post("/api/endpoints/bulk").set("Cookie", cookie).send({ ids: [endpointId, h2.id], action: "add_tags", tags: "rack1, prod" }).expect(200);
+    expect((await db.query.endpoints.findFirst({ where: eq(endpoints.id, h2.id) }))?.tags).toEqual(["rack1", "prod"]);
+    const tmp = (await db.insert(sites).values({ name: "temp-merge" }).returning())[0];
+    await db.update(endpoints).set({ siteId: tmp.id }).where(eq(endpoints.id, h2.id));
+    const merged = await request(app).post("/api/sites/bulk").set("Cookie", cookie).send({ ids: [tmp.id], action: "merge", targetId: otherSiteId });
     expect(merged.body.affected).toBe(1);
-    expect((await db.query.hosts.findFirst({ where: eq(hosts.id, h2.id) }))?.endpointId).toBe(otherEndpointId);
-    expect(await db.query.endpoints.findFirst({ where: eq(endpoints.id, tmp.id) })).toBeUndefined();
+    expect((await db.query.endpoints.findFirst({ where: eq(endpoints.id, h2.id) }))?.siteId).toBe(otherSiteId);
+    expect(await db.query.sites.findFirst({ where: eq(sites.id, tmp.id) })).toBeUndefined();
   });
 
   it("serves the host metric catalog", async () => {
-    const res = await request(app).get("/api/hosts/metric-catalog").set("Cookie", cookie);
+    const res = await request(app).get("/api/endpoints/metric-catalog").set("Cookie", cookie);
     expect(res.body.find((m: { key: string }) => m.key === "disk.free_gb")).toMatchObject({ unit: " GB", instance: "mount" });
   });
 });
@@ -425,12 +425,12 @@ describe("forecasting, anomaly detection, discovery helpers", () => {
     expect(forecastDaysToFull([{ t: 0, used: 5 }, { t: day, used: 4 }], 10).days).toBeNull();
   });
 
-  it("disk_forecast reads hourly host_metrics history", async () => {
-    const h = (await db.insert(hosts).values({ endpointId, name: "forecast-host" }).returning())[0];
+  it("disk_forecast reads hourly endpoint_metrics history", async () => {
+    const h = (await db.insert(endpoints).values({ siteId, name: "forecast-host" }).returning())[0];
     for (let i = 0; i < 6; i++) {
-      await db.insert(hostMetrics).values({ hostId: h.id, recordedAt: new Date(Date.now() - (6 - i) * 3_600_000), extended: { disks: [{ mount: "/", total: 100e9, used: 90e9 + i * 1e9, free: 10e9 - i * 1e9, percent: 90 + i }] } });
+      await db.insert(endpointMetrics).values({ endpointId: h.id, recordedAt: new Date(Date.now() - (6 - i) * 3_600_000), extended: { disks: [{ mount: "/", total: 100e9, used: 90e9 + i * 1e9, free: 10e9 - i * 1e9, percent: 90 + i }] } });
     }
-    const c = await createCheck({ name: "forecast", type: "disk_forecast", hostId: h.id, config: { mount: "/", warnDays: 14, criticalDays: 3 } });
+    const c = await createCheck({ name: "forecast", type: "disk_forecast", endpointId: h.id, config: { mount: "/", warnDays: 14, criticalDays: 3 } });
     const r = await runOneCheck((await db.query.checks.findFirst({ where: eq(checks.id, c.id) }))!);
     expect(r.status).toBe("down");
     expect(r.value!).toBeLessThan(1);
@@ -467,23 +467,23 @@ describe("forecasting, anomaly detection, discovery helpers", () => {
     expect(scan.status).toBe("done");
     expect(scan.results[0].ip).toBe("127.0.0.1");
     expect(scan.results[0].suggestedChecks.some((c: { type: string }) => c.type === "ping")).toBe(true);
-    const add = await request(app).post(`/api/insights/discovery/scans/${scan.id}/add`).set("Cookie", cookie).send({ endpointId, devices: [{ ip: "127.0.0.1", createHost: true, checks: scan.results[0].suggestedChecks.slice(0, 1) }] });
-    expect(add.body).toEqual({ hostsCreated: 1, checksCreated: 1 });
+    const add = await request(app).post(`/api/insights/discovery/scans/${scan.id}/add`).set("Cookie", cookie).send({ siteId, devices: [{ ip: "127.0.0.1", createEndpoint: true, checks: scan.results[0].suggestedChecks.slice(0, 1) }] });
+    expect(add.body).toEqual({ endpointsCreated: 1, checksCreated: 1 });
   }, 40_000);
 });
 
 describe("host metric instance matching", () => {
   it("prefers an exact mount over substring matches", async () => {
-    const { evaluateHostMetric } = await import("../src/services/hostMetrics.js");
+    const { evaluateEndpointMetric } = await import("../src/services/endpointMetrics.js");
     const snap = { disks: [{ mount: "/etc/resolv.conf", total: 1, used: 1, free: 0, percent: 99, inodesPercent: 50 }, { mount: "/", total: 10, used: 1, free: 9, percent: 10, inodesPercent: 3 }] };
-    expect(evaluateHostMetric(snap, { metric: "disk.inodes_percent", instance: "/" })?.value).toBe(3);
-    expect(evaluateHostMetric(snap, { metric: "disk.used_percent", instance: "resolv" })?.value).toBe(99);
+    expect(evaluateEndpointMetric(snap, { metric: "disk.inodes_percent", instance: "/" })?.value).toBe(3);
+    expect(evaluateEndpointMetric(snap, { metric: "disk.used_percent", instance: "resolv" })?.value).toBe(99);
   });
 });
 
 describe("single-host API", () => {
   it("reports hasSnapshot once a 3.x agent has reported (the check form relies on it)", async () => {
-    const res = await request(app).get(`/api/hosts/${hostId}`).set("Cookie", cookie);
+    const res = await request(app).get(`/api/endpoints/${endpointId}`).set("Cookie", cookie);
     expect(res.status).toBe(200);
     expect(res.body.hasSnapshot).toBe(true);
     expect(res.body.lastSnapshot).toBeTruthy();

@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import qrcode from "qrcode-generator";
 import { startRegistration } from "@simplewebauthn/browser";
 import { api, type Passkey, type Channel, type IpBlock, type SecurityEvent, type SecurityOverview, type SecurityRule, type SessionRow, type TrustedIp } from "../lib/api";
-import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { ActionMenu, Button, FilterChip, Label, Modal, inputClass, relativeTime, useToast } from "../components/ui";
 import { Tooltip } from "../components/Tooltip";
@@ -451,7 +450,6 @@ export default function SecurityPage() {
 
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6">
-      <TopNav active="/security" />
       <h2 className="mb-3 text-lg font-medium">Security</h2>
       <PageHelp anchor="security">
         How Looksee protects itself while it&apos;s reachable from the internet: required two-factor sign-in, lockouts, optional IP allowlist and new-IP email confirmation, and rules that spot attacks, email you, and block the attacker&apos;s IP. Locked out? Run <code>npm run security:reset</code> in the engine folder on the server.

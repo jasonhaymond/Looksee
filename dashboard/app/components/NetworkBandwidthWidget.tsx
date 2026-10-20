@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type Host, type HostMetric, type Widget } from "../lib/api";
+import { api, type Endpoint, type EndpointMetric, type Widget } from "../lib/api";
 import { rangeToSince, DEFAULT_RANGE_HOURS } from "../lib/timeRange";
 import { RangeSelect } from "./RangeSelect";
 import { Sparkline } from "./Sparkline";
+import { pollEvery } from "../lib/poll";
 
 const POLL_MS = 15_000;
 const POINTS = 20;
@@ -18,17 +19,17 @@ function formatBytes(bytes: number): string {
 }
 
 // netRxBytes/netTxBytes have been in every agent report since v1.0.0 but
-// were never visualized until this widget — same hostMetrics data
-// HostMetricsWidget already reads, just the two fields it doesn't show.
-export function NetworkBandwidthWidget({ widget, host, onChanged }: { widget: Widget; host: Host | undefined; onChanged: () => void }) {
+// were never visualized until this widget — same endpointMetrics data
+// EndpointMetricsWidget already reads, just the two fields it doesn't show.
+export function NetworkBandwidthWidget({ widget, host, onChanged }: { widget: Widget; host: Endpoint | undefined; onChanged: () => void }) {
   const rangeHours = widget.config.rangeHours ?? DEFAULT_RANGE_HOURS;
-  const [metrics, setMetrics] = useState<HostMetric[] | null>(null);
+  const [metrics, setMetrics] = useState<EndpointMetric[] | null>(null);
 
   useEffect(() => {
     if (!host) return;
-    const load = () => api.hostMetrics(host.id, RANGE_LIMIT, rangeToSince(rangeHours)).then(setMetrics);
+    const load = () => api.endpointMetrics(host.id, RANGE_LIMIT, rangeToSince(rangeHours)).then(setMetrics);
     load();
-    const timer = setInterval(load, POLL_MS);
+    const timer = pollEvery(load, POLL_MS);
     return () => clearInterval(timer);
   }, [host, rangeHours]);
 
@@ -40,7 +41,7 @@ export function NetworkBandwidthWidget({ widget, host, onChanged }: { widget: Wi
   if (!host) {
     return (
       <p className="surface rounded-lg p-3 text-xs text-[var(--muted)]">
-        Host not found — it may have been deleted.
+        Endpoint not found — it may have been deleted.
       </p>
     );
   }

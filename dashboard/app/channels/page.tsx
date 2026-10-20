@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type Channel, type ChannelTemplate, type SmtpSettings, type TemplateInfo } from "../lib/api";
-import { TopNav } from "../components/TopNav";
 import { Tooltip } from "../components/Tooltip";
 import { PageHelp } from "../components/PageHelp";
 import { ActionMenu, Button, FilterChip, Label, Modal, inputClass, useToast } from "../components/ui";
@@ -18,7 +17,7 @@ import {
 
 function SmtpSettingsSection() {
   const [settings, setSettings] = useState<SmtpSettings | null>(null);
-  const [host, setHost] = useState("");
+  const [host, setEndpoint] = useState("");
   const [port, setPort] = useState("");
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
@@ -31,7 +30,7 @@ function SmtpSettingsSection() {
   const load = useCallback(async () => {
     const { settings: s } = await api.smtpSettings();
     setSettings(s);
-    setHost(s.host ?? "");
+    setEndpoint(s.host ?? "");
     setPort(s.port != null ? String(s.port) : "");
     setUser(s.user ?? "");
     setFrom(s.from ?? "");
@@ -84,8 +83,8 @@ function SmtpSettingsSection() {
       <form onSubmit={handleSave} className="space-y-2 text-sm">
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
-            <span className="text-[var(--muted)]">Host</span>
-            <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.example.com" className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1 outline-none" />
+            <span className="text-[var(--muted)]">Endpoint</span>
+            <input value={host} onChange={(e) => setEndpoint(e.target.value)} placeholder="smtp.example.com" className="mt-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1 outline-none" />
           </label>
           <label className="block">
             <span className="text-[var(--muted)]">Port</span>
@@ -363,7 +362,6 @@ export default function ChannelsPage() {
 
   return (
     <main className="mx-auto max-w-4xl p-4 sm:p-6">
-      <TopNav active="/channels" />
       <h2 className="mb-3 text-lg font-medium">Notification channels</h2>
       <PageHelp anchor="channels">Channels are where alerts go: email, Slack, Teams, Telegram, push, or any webhook. A check&apos;s alert rules decide when; each channel&apos;s templates decide what the message says.</PageHelp>
 

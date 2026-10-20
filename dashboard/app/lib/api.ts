@@ -39,7 +39,7 @@ export class ApiError extends Error {
 /**
  * Calls one engine route and returns its parsed JSON body.
  *
- * @param path the route, e.g. "/api/checks?endpointId=..."
+ * @param path the route, e.g. "/api/checks?siteId=..."
  * @param options fetch options (method, body, extra headers)
  * @returns the response body (with embedded times localized), or undefined
  *          for a 204 No Content
@@ -68,22 +68,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 // A check's latest result.
 export type Status = "up" | "down" | "warn" | "unknown";
 
-export type Endpoint = {
+export type Site = {
   id: string;
   name: string;
   description: string | null;
   // The agent host that runs this site's network checks/receivers/discovery
   // (a remote site); null = the Looksee server does it.
-  collectorHostId: string | null;
+  collectorEndpointId: string | null;
   // For devices pushing syslog/traps/flows straight to the server.
   publicIps: string[];
   locationId: string | null;
 };
-export type EndpointInput = { name?: string; description?: string | null; collectorHostId?: string | null; publicIps?: string[]; locationId?: string | null };
+export type SiteInput = { name?: string; description?: string | null; collectorEndpointId?: string | null; publicIps?: string[]; locationId?: string | null };
 export type Location = { id: string; name: string; description: string | null; address: string | null; createdAt: string };
-export type Host = {
+export type Endpoint = {
   id: string;
-  endpointId: string;
+  siteId: string;
   name: string;
   hostname: string | null;
   os: string | null;
@@ -112,9 +112,9 @@ export type Host = {
 };
 export type ProcessInfo = { pid: number; name: string; user?: string; cpuPercent?: number; memoryMb?: number; command?: string; started?: number };
 export type ServiceInfo = { name: string; displayName?: string; state: string; startType?: string };
-export type HostInventory = { processes: ProcessInfo[] | null; services: ServiceInfo[] | null; scripts: string[] | null; containers: string[] | null; updatedAt: string | null; processNames: string[] | null; serviceNames: string[] | null };
+export type EndpointInventory = { processes: ProcessInfo[] | null; services: ServiceInfo[] | null; scripts: string[] | null; containers: string[] | null; updatedAt: string | null; processNames: string[] | null; serviceNames: string[] | null };
 export type AddressRow = { id: string; mac: string; ip: string; source: string; firstSeenAt: string; lastSeenAt: string };
-export type HostSnapshot = {
+export type EndpointSnapshot = {
   cpu?: { percent?: number; iowait?: number; steal?: number; perCore?: number[] };
   load?: { l1: number; l5: number; l15: number; cores: number };
   mem?: { total: number; available: number; percent: number; swapTotal: number; swapPercent: number };
@@ -134,15 +134,15 @@ export type HostSnapshot = {
   listening?: { port: number; proto: string; process?: string }[];
   availableContainers?: string[];
 };
-export type HostDetail = Host & { lastSnapshot: HostSnapshot | null };
+export type EndpointDetail = Endpoint & { lastSnapshot: EndpointSnapshot | null };
 
 export type Check = {
   id: string;
-  endpointId: string;
-  hostId: string | null;
-  probeHostId: string | null;
-  // Set when the endpoint's site collector runs this check.
-  collectorHostId?: string | null;
+  siteId: string;
+  endpointId: string | null;
+  probeEndpointId: string | null;
+  // Set when the site's site collector runs this check.
+  collectorEndpointId?: string | null;
   name: string;
   type: string;
   config: Record<string, unknown>;
@@ -189,9 +189,9 @@ export type AlertRulePayload = { channelIds: string[]; escalationChannelIds: str
 export type WalkRow = { oid: string; type: string; value: string };
 export type CheckInput = {
   name: string;
-  endpointId: string;
-  hostId: string | null;
-  probeHostId: string | null;
+  siteId: string;
+  endpointId: string | null;
+  probeEndpointId: string | null;
   config: Record<string, unknown>;
   intervalSeconds: number;
   retryIntervalSeconds: number | null;
@@ -207,6 +207,9 @@ export type CheckResult = {
   value?: number | null;
   details?: unknown;
   inMaintenance?: boolean;
+  // Excluded from statistics by the admin afterwards, and why.
+  excluded?: boolean;
+  excludedReason?: string | null;
   checkedAt: string;
 };
 export type BulkResult = { affected: number; errors: { id: string; error: string }[] };
@@ -280,12 +283,12 @@ export type Dashboard = { id: string; name: string; refreshSeconds: number; crea
 export type WidgetType =
   | "status_tile"
   | "group_summary"
-  | "host_metrics"
+  | "endpoint_metrics"
   | "uptime_history"
   | "note"
   | "alert_history"
   | "network_bandwidth"
-  | "all_hosts"
+  | "all_endpoints"
   | "backup_status"
   | "clock"
   | "section_header"
@@ -295,7 +298,7 @@ export type Widget = {
   id: string;
   dashboardId: string;
   type: WidgetType;
-  config: { checkId?: string; endpointId?: string; hostId?: string; text?: string; rangeHours?: number; rangeMinutes?: number; groupBy?: string };
+  config: { checkId?: string; siteId?: string; endpointId?: string; text?: string; rangeHours?: number; rangeMinutes?: number; groupBy?: string };
   x: number;
   y: number;
   w: number;
@@ -311,15 +314,15 @@ export type AlertEvent = {
   message?: string | null;
   triggeredAt: string;
   resolvedAt: string | null;
+  siteId?: string | null;
   endpointId?: string | null;
-  hostId?: string | null;
   checkType?: string | null;
   durationMinutes?: number;
 };
-export type AlertEventQuery = { endpointId?: string; locationId?: string; checkId?: string; hostId?: string; status?: "open" | "resolved"; since?: string; until?: string; q?: string; limit?: number };
-export type HostMetric = {
+export type AlertEventQuery = { siteId?: string; locationId?: string; checkId?: string; endpointId?: string; status?: "open" | "resolved"; since?: string; until?: string; q?: string; limit?: number };
+export type EndpointMetric = {
   id: string;
-  hostId: string;
+  endpointId: string;
   cpuPercent: number | null;
   memPercent: number | null;
   diskPercent: number | null;
@@ -331,7 +334,8 @@ export type HostMetric = {
 export type MaintenanceWindow = {
   id: string;
   name: string;
-  scope: "all" | "endpoint" | "host" | "check";
+  // What the window covers; targetIds lists IDs of that kind (group IDs for "group").
+  scope: "all" | "site" | "endpoint" | "check" | "group";
   targetIds: string[];
   startsAt: string | null;
   endsAt: string | null;
@@ -345,6 +349,47 @@ export type MaintenanceWindow = {
   active: boolean;
 };
 export type StatusPage = { id: string; slug: string; title: string; description: string | null; checkIds: string[]; published: boolean };
+
+// ---- Groups and the navigation tree (routes/groups.ts, routes/tree.ts) ----
+// The kinds of object a group can hold or a filter can select.
+export type MemberType = "location" | "site" | "endpoint" | "check";
+export type GroupRules = { match: "all" | "any"; conditions: { field: string; op: string; value: string }[] };
+// A group as listed: its definition plus what it currently contains.
+export type Group = {
+  id: string;
+  name: string;
+  description: string | null;
+  kind: "manual" | "filter";
+  target: MemberType | null;
+  rules: GroupRules;
+  createdAt: string;
+  counts: { locations: number; sites: number; endpoints: number; checks: number; coveredChecks: number };
+  status: Status | null;
+  problems: number;
+};
+// One group opened: its direct members, and every check/endpoint it covers
+// through the hierarchy (what bulk actions on the group act on).
+export type GroupDetail = Omit<Group, "id" | "name" | "description" | "kind" | "target" | "rules" | "createdAt"> & {
+  group: Pick<Group, "id" | "name" | "description" | "kind" | "target" | "rules" | "createdAt">;
+  members: {
+    locations: { id: string; name: string }[];
+    sites: { id: string; name: string; status: Status | null }[];
+    endpoints: { id: string; name: string; os: string | null; site: string | null; status: Status | null }[];
+    checks: { id: string; name: string; type: string; status: Status | null; enabled: boolean; endpoint: string | null; site: string | null }[];
+  };
+  coveredCheckIds: string[];
+  coveredEndpointIds: string[];
+};
+export type GroupFields = { fields: Record<MemberType, { field: string; label: string; hint?: string }[]>; ops: string[] };
+// Navigation tree nodes. status = worst status of the node's enabled checks;
+// problems = how many of them are warn or down; checkCount = enabled checks.
+export type TreeSummary = { status: Status | null; problems: number; checkCount: number };
+export type TreeCheck = { id: string; name: string; type: string; status: Status | null; enabled: boolean };
+export type TreeEndpoint = TreeSummary & { id: string; name: string; os: string | null; agent: boolean; collector: boolean; children: TreeCheck[] };
+export type TreeSite = TreeSummary & { id: string; name: string; endpoints: TreeEndpoint[]; checks: TreeCheck[] };
+export type TreeLocation = TreeSummary & { id: string; name: string; sites: TreeSite[] };
+export type TreeGroup = TreeSummary & { id: string; name: string; kind: "manual" | "filter" };
+export type Tree = { locations: TreeLocation[]; unassignedSites: TreeSite[]; groups: TreeGroup[] };
 export type PublicStatus = {
   title: string;
   description: string | null;
@@ -359,7 +404,7 @@ export type SlaRow = {
   checkId: string;
   name: string;
   type: string;
-  endpointId: string;
+  siteId: string;
   uptimePercent: number | null;
   downtimeMinutes: number;
   degradedMinutes: number;
@@ -368,7 +413,7 @@ export type SlaRow = {
   avgLatencyMs: number | null;
   results: number;
 };
-export type EventRow = { id: string; source: "snmp_trap" | "syslog"; endpointId: string | null; sourceIp: string; severity: number | null; facility: number | null; message: string; data: Record<string, unknown> | null; receivedAt: string };
+export type EventRow = { id: string; source: "snmp_trap" | "syslog"; siteId: string | null; sourceIp: string; severity: number | null; facility: number | null; message: string; data: Record<string, unknown> | null; receivedAt: string };
 export type FlowRow = { label: string; bytes: number; packets: number; avgMbps: number };
 export type SuggestedCheck = { type: string; name: string; config: Record<string, unknown> };
 export type DiscoveredDevice = {
@@ -378,7 +423,7 @@ export type DiscoveredDevice = {
   pingable: boolean;
   openPorts: { port: number; service: string }[];
   snmp: { sysName?: string; sysDescr?: string } | null;
-  knownHostId: string | null;
+  knownEndpointId: string | null;
   suggestedChecks: SuggestedCheck[];
 };
 export type LoginStep = { challengeId: string; step: "enroll" | "totp"; emailCode: boolean; enroll?: { secret: string; uri: string }; passkey?: PublicKeyCredentialRequestOptionsJSON | null };
@@ -405,7 +450,7 @@ export type SecurityRule = { id: string; name: string; enabled: boolean; kinds: 
 export type IpBlock = { id: string; ip: string; reason: string | null; until: string | null; createdAt: string };
 export type TrustedIp = { id: string; ip: string; firstSeenAt: string; lastSeenAt: string };
 export type SessionRow = { id: string; ip: string | null; userAgent: string | null; createdAt: string; lastSeenAt: string | null; expiresAt: string; current: boolean };
-export type DiscoveryScan = { id: string; cidr: string; endpointId: string | null; status: "queued" | "running" | "done" | "error"; results: DiscoveredDevice[]; error: string | null; startedAt: string; finishedAt: string | null };
+export type DiscoveryScan = { id: string; cidr: string; siteId: string | null; status: "queued" | "running" | "done" | "error"; results: DiscoveredDevice[]; error: string | null; startedAt: string; finishedAt: string | null };
 
 // ---- Request helpers -------------------------------------------------------
 
@@ -469,55 +514,62 @@ export const api = {
 
   // Locations (routes/locations.ts), sign-out/current user, and the health check.
   locations: () => request<Location[]>("/api/locations"),
-  createLocation: (input: { name: string; description?: string | null; address?: string | null; endpointIds?: string[] }) => request<Location>("/api/locations", json(input)),
-  updateLocation: (id: string, input: { name?: string; description?: string | null; address?: string | null; endpointIds?: string[] }) => request<Location>(`/api/locations/${id}`, patch(input)),
+  createLocation: (input: { name: string; description?: string | null; address?: string | null; siteIds?: string[] }) => request<Location>("/api/locations", json(input)),
+  updateLocation: (id: string, input: { name?: string; description?: string | null; address?: string | null; siteIds?: string[] }) => request<Location>(`/api/locations/${id}`, patch(input)),
   deleteLocation: (id: string) => request<void>(`/api/locations/${id}`, del),
-  locationMaintenance: (id: string, minutes: number) => request<{ endpoints: number; checks: number }>(`/api/locations/${id}/maintenance`, json({ minutes })),
+  locationMaintenance: (id: string, minutes: number) => request<{ sites: number; checks: number }>(`/api/locations/${id}/maintenance`, json({ minutes })),
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   me: () => request<{ id: string; email: string }>("/api/auth/me"),
   health: () => request<{ status: string; db: string; version: string; agentVersion: string | null }>("/api/health"),
 
-  // Endpoints = networks/sites (routes/endpoints.ts).
-  endpoints: () => request<Endpoint[]>("/api/endpoints"),
-  createEndpoint: (input: EndpointInput & { name: string }) => request<Endpoint>("/api/endpoints", json(input)),
-  updateEndpoint: (id: string, input: EndpointInput) => request<Endpoint>(`/api/endpoints/${id}`, patch(input)),
-  deleteEndpoint: (id: string) => request<void>(`/api/endpoints/${id}`, del),
-  bulkEndpoints: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/endpoints/bulk", json({ ids, action, ...params })),
+  // Sites = networks/sites (routes/sites.ts).
+  sites: () => request<Site[]>("/api/sites"),
+  createSite: (input: SiteInput & { name: string }) => request<Site>("/api/sites", json(input)),
+  updateSite: (id: string, input: SiteInput) => request<Site>(`/api/sites/${id}`, patch(input)),
+  deleteSite: (id: string) => request<void>(`/api/sites/${id}`, del),
+  bulkSites: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/sites/bulk", json({ ids, action, ...params })),
 
-  // Hosts, agent keys, inventory, suggested checks, Wake-on-LAN and host
-  // metrics (routes/hosts.ts).
-  hosts: (endpointId?: string) => request<Host[]>(`/api/hosts${qs({ endpointId })}`),
-  host: (id: string) => request<HostDetail>(`/api/hosts/${id}`),
-  createHost: (input: { endpointId: string; name: string; hostname?: string; os?: string; macAddress?: string; tags?: string[] }) => request<Host>("/api/hosts", json(input)),
-  updateHost: (id: string, input: { name?: string; hostname?: string | null; os?: string | null; macAddress?: string | null; endpointId?: string; tags?: string[] }) =>
-    request<Host>(`/api/hosts/${id}`, patch(input)),
-  deleteHost: (hostId: string) => request<void>(`/api/hosts/${hostId}`, del),
-  issueAgentKey: (hostId: string) => request<{ agentApiKey: string; installCommands: { unix: string; windows: string } }>(`/api/hosts/${hostId}/agent-key`, { method: "POST" }),
-  requestHostUpdate: (hostId: string) => request<{ requested: boolean }>(`/api/hosts/${hostId}/request-update`, { method: "POST" }),
-  hostMetricCatalog: () => request<MetricDef[]>("/api/hosts/metric-catalog"),
-  hostSuggestions: (id: string) => request<Suggestion[]>(`/api/hosts/${id}/suggestions`),
-  applySuggestions: (id: string, keys: string[], opts: { alertRule?: AlertRulePayload | null; overrides?: Record<string, { name?: string; intervalSeconds?: number }> } = {}) => request<{ created: number }>(`/api/hosts/${id}/suggestions/apply`, json({ keys, ...opts })),
-  hostInventory: (id: string) => request<HostInventory>(`/api/hosts/${id}/inventory`),
-  hostAddresses: (id: string) => request<AddressRow[]>(`/api/hosts/${id}/addresses`),
-  wakeHost: (id: string) => request<{ sent: boolean; viaCollector?: boolean }>(`/api/hosts/${id}/wake`, { method: "POST" }),
-  bulkHosts: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/hosts/bulk", json({ ids, action, ...params })),
-  hostMetrics: (hostId: string, limit = 30, since?: string) => request<HostMetric[]>(`/api/hosts/${hostId}/metrics${qs({ limit, since })}`),
+  // Endpoints, agent keys, inventory, suggested checks, Wake-on-LAN and host
+  // metrics (routes/endpoints.ts).
+  endpoints: (siteId?: string) => request<Endpoint[]>(`/api/endpoints${qs({ siteId })}`),
+  endpoint: (id: string) => request<EndpointDetail>(`/api/endpoints/${id}`),
+  createEndpoint: (input: { siteId: string; name: string; hostname?: string; os?: string; macAddress?: string; tags?: string[] }) => request<Endpoint>("/api/endpoints", json(input)),
+  updateEndpoint: (id: string, input: { name?: string; hostname?: string | null; os?: string | null; macAddress?: string | null; siteId?: string; tags?: string[] }) =>
+    request<Endpoint>(`/api/endpoints/${id}`, patch(input)),
+  deleteEndpoint: (endpointId: string) => request<void>(`/api/endpoints/${endpointId}`, del),
+  issueAgentKey: (endpointId: string) => request<{ agentApiKey: string; installCommands: { unix: string; windows: string } }>(`/api/endpoints/${endpointId}/agent-key`, { method: "POST" }),
+  requestEndpointUpdate: (endpointId: string) => request<{ requested: boolean }>(`/api/endpoints/${endpointId}/request-update`, { method: "POST" }),
+  endpointMetricCatalog: () => request<MetricDef[]>("/api/endpoints/metric-catalog"),
+  endpointSuggestions: (id: string) => request<Suggestion[]>(`/api/endpoints/${id}/suggestions`),
+  applySuggestions: (id: string, keys: string[], opts: { alertRule?: AlertRulePayload | null; overrides?: Record<string, { name?: string; intervalSeconds?: number }> } = {}) => request<{ created: number }>(`/api/endpoints/${id}/suggestions/apply`, json({ keys, ...opts })),
+  endpointInventory: (id: string) => request<EndpointInventory>(`/api/endpoints/${id}/inventory`),
+  endpointAddresses: (id: string) => request<AddressRow[]>(`/api/endpoints/${id}/addresses`),
+  wakeEndpoint: (id: string) => request<{ sent: boolean; viaCollector?: boolean }>(`/api/endpoints/${id}/wake`, { method: "POST" }),
+  bulkEndpoints: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/endpoints/bulk", json({ ids, action, ...params })),
+  endpointMetrics: (endpointId: string, limit = 30, since?: string) => request<EndpointMetric[]>(`/api/endpoints/${endpointId}/metrics${qs({ limit, since })}`),
 
   // Checks: create (one or many targets), edit, run now, results, statistics,
   // SNMP walks and bulk actions (routes/checks.ts).
-  checks: (endpointId?: string) => request<Check[]>(`/api/checks${qs({ endpointId })}`),
-  createCheck: (input: Partial<CheckInput> & { endpointId: string; type: string; name: string; alertRule?: AlertRulePayload | null }) => request<Check>("/api/checks", json(input)),
-  createChecksBatch: (input: Partial<CheckInput> & { type: string; name: string; alertRule?: AlertRulePayload | null; targets: { endpointId?: string; hostId?: string }[] }) =>
+  checks: (siteId?: string) => request<Check[]>(`/api/checks${qs({ siteId })}`),
+  createCheck: (input: Partial<CheckInput> & { siteId: string; type: string; name: string; alertRule?: AlertRulePayload | null }) => request<Check>("/api/checks", json(input)),
+  createChecksBatch: (input: Partial<CheckInput> & { type: string; name: string; alertRule?: AlertRulePayload | null; targets: { siteId?: string; endpointId?: string }[] }) =>
     request<{ created: Check[]; errors: { target: string; error: string }[] }>("/api/checks/batch", json(input)),
   check: (id: string) => request<Check>(`/api/checks/${id}`),
   checkStats: (id: string, hours: number) => request<CheckStats>(`/api/checks/${id}/stats${qs({ hours })}`),
-  snmpWalk: (input: { config: Record<string, unknown>; endpointId?: string; checkId?: string }) => request<{ rows: WalkRow[]; truncated: boolean } | { jobId: string }>("/api/checks/snmp-walk", json(input)),
+  snmpWalk: (input: { config: Record<string, unknown>; siteId?: string; checkId?: string }) => request<{ rows: WalkRow[]; truncated: boolean } | { jobId: string }>("/api/checks/snmp-walk", json(input)),
   snmpWalkJob: (jobId: string) => request<{ rows: WalkRow[]; truncated: boolean } | { pending: true }>(`/api/checks/snmp-walk/${jobId}`),
   updateCheck: (id: string, input: Partial<CheckInput>) => request<Check>(`/api/checks/${id}`, patch(input)),
   deleteCheck: (id: string) => request<void>(`/api/checks/${id}`, del),
   // A check run by a site collector comes back { queued, message } instead.
   runCheck: (id: string) => request<CheckResult | { queued: true; message: string }>(`/api/checks/${id}/run`, { method: "POST" }),
+  // A new secret URL: for heartbeat/push checks where results are pushed; for
+  // any other check a "recovery URL" that marks it recovered when called.
   regeneratePushToken: (id: string) => request<Check>(`/api/checks/${id}/regenerate-token`, { method: "POST" }),
+  removeCheckToken: (id: string) => request<Check>(`/api/checks/${id}/remove-token`, { method: "POST" }),
+  // Marks a failing check recovered by hand (with an optional note).
+  // Excludes results from statistics (or counts them again): specific ones, or a time range.
+  excludeResults: (id: string, input: { resultIds?: string[]; from?: string; to?: string; exclude?: boolean; reason?: string }) => request<{ changed: number }>(`/api/checks/${id}/results/exclude`, json(input)),
+  resolveCheck: (id: string, note?: string) => request<{ resolved: true }>(`/api/checks/${id}/resolve`, json({ note })),
   bulkChecks: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/checks/bulk", json({ ids, action, ...params })),
   checkResults: (checkId: string, limit = 50, since?: string) => request<CheckResult[]>(`/api/checks/${checkId}/results${qs({ limit, since })}`),
 
@@ -570,6 +622,19 @@ export const api = {
   updateWidget: (widgetId: string, input: Partial<Pick<Widget, "x" | "y" | "w" | "h" | "config">>) => request<Widget>(`/api/dashboards/widgets/${widgetId}`, patch(input)),
   deleteWidget: (widgetId: string) => request<void>(`/api/dashboards/widgets/${widgetId}`, del),
 
+  // Groups and the navigation tree (routes/groups.ts, routes/tree.ts).
+  tree: () => request<Tree>("/api/tree"),
+  groups: () => request<Group[]>("/api/groups"),
+  group: (id: string) => request<GroupDetail>(`/api/groups/${id}`),
+  groupFields: () => request<GroupFields>("/api/groups/fields"),
+  groupPreview: (target: MemberType, rules: GroupRules) => request<{ total: number; matches: { id: string; name: string }[] }>("/api/groups/preview", json({ target, rules })),
+  groupsOf: (type: MemberType, id: string) => request<{ id: string; name: string; kind: "manual" | "filter" }[]>(`/api/groups/of/${type}/${id}`),
+  createGroup: (input: { name: string; description?: string | null; kind: "manual" | "filter"; target?: MemberType; rules?: GroupRules; members?: { type: MemberType; id: string }[] }) => request<Group>("/api/groups", json(input)),
+  updateGroup: (id: string, input: { name?: string; description?: string | null; target?: MemberType; rules?: GroupRules }) => request<Group>(`/api/groups/${id}`, patch(input)),
+  deleteGroup: (id: string) => request<void>(`/api/groups/${id}`, del),
+  groupMembers: (id: string, change: { add?: { type: MemberType; id: string }[]; remove?: { type: MemberType; id: string }[] }) =>
+    request<{ added: number; removed: number; members: number }>(`/api/groups/${id}/members`, json(change)),
+
   // Maintenance windows (routes/maintenance.ts).
   maintenance: () => request<MaintenanceWindow[]>("/api/maintenance"),
   createMaintenance: (input: Partial<MaintenanceWindow>) => request<MaintenanceWindow>("/api/maintenance", json(input)),
@@ -588,11 +653,11 @@ export const api = {
 
   // Reports, received events (syslog/traps), top talkers and discovery (routes/insights.ts).
 
-  slaReport: (days: number, endpointId?: string) => request<{ days: number; checks: SlaRow[] }>(`/api/insights/reports/sla${qs({ days, endpointId })}`),
+  slaReport: (days: number, siteId?: string) => request<{ days: number; checks: SlaRow[] }>(`/api/insights/reports/sla${qs({ days, siteId })}`),
   // Fetched as a blob (not a plain link) so the session cookie travels with
   // it in the dev setup, where the API is on a different origin.
-  slaCsv: async (days: number, endpointId?: string) => {
-    const res = await fetch(`${API_URL}/api/insights/reports/sla${qs({ days, endpointId, format: "csv" })}`, { credentials: "include" });
+  slaCsv: async (days: number, siteId?: string) => {
+    const res = await fetch(`${API_URL}/api/insights/reports/sla${qs({ days, siteId, format: "csv" })}`, { credentials: "include" });
     if (!res.ok) throw new ApiError(res.status, "CSV export failed");
     return res.blob();
   },
@@ -601,7 +666,7 @@ export const api = {
   flowExporters: () => request<{ exporter: string; last: string }[]>("/api/insights/flows/exporters"),
   discoveryScans: () => request<DiscoveryScan[]>("/api/insights/discovery/scans"),
   discoveryScan: (id: string) => request<DiscoveryScan>(`/api/insights/discovery/scans/${id}`),
-  startDiscovery: (cidr: string, community?: string, endpointId?: string) => request<DiscoveryScan>("/api/insights/discovery/scans", json({ cidr, community, endpointId })),
-  addDiscovered: (scanId: string, input: { endpointId: string; alertRule?: AlertRulePayload | null; devices: { ip: string; name?: string; mac?: string | null; createHost: boolean; checks: SuggestedCheck[] }[] }) =>
-    request<{ hostsCreated: number; checksCreated: number }>(`/api/insights/discovery/scans/${scanId}/add`, json(input)),
+  startDiscovery: (cidr: string, community?: string, siteId?: string) => request<DiscoveryScan>("/api/insights/discovery/scans", json({ cidr, community, siteId })),
+  addDiscovered: (scanId: string, input: { siteId: string; alertRule?: AlertRulePayload | null; devices: { ip: string; name?: string; mac?: string | null; createEndpoint: boolean; checks: SuggestedCheck[] }[] }) =>
+    request<{ endpointsCreated: number; checksCreated: number }>(`/api/insights/discovery/scans/${scanId}/add`, json(input)),
 };

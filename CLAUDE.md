@@ -42,9 +42,23 @@ global doc governs.
   the engine), not as remote commands.
 - **Two-factor sign-in is mandatory** (4.0, Jason's request). Never add a way to turn it
   off in the app; the only bypass is the shell-only `npm run security:reset -- --2fa`.
-- **Location → Endpoint → Host → Check.** A location (physical place) groups endpoints
-  (networks); hosts and checks get their location only through their endpoint — don't add
-  a location column to hosts or checks.
+- **Location → Site → Endpoint → Check** (5.0, Jason's decision 2026-10-19). A location
+  (physical place) groups sites (networks — called "endpoints" before 5.0); a site holds
+  endpoints (devices — called "hosts" before 5.0); an endpoint may run the agent and may
+  be its site's collector. Checks belong to an endpoint or, for network-level checks
+  (URLs, DNS…), directly to a site. Endpoints and checks get their location only through
+  their site — don't add a location column to them. Groups (manual, or saved filters) cut
+  across locations, sites and endpoints without changing this hierarchy. The rename was
+  done everywhere including the database (5.0 migration renames tables/columns; rolling
+  back to 4.x needs the pre-update snapshot). Check-type IDs (e.g. `host_change`) are
+  stable identifiers shared with agents and doc anchors — labels change, IDs don't.
+- **Linux agents install with the privileged systemd drop-in by default** (5.0): still a
+  dedicated service user, not root, but with the capabilities every check needs (SMART,
+  /home read, journal, Docker, package managers), so checks work without extra setup.
+  Windows (SYSTEM) and macOS already run with full privileges.
+- **Watchdog agents** (5.0): one or more agents can be enabled to alert when the Looksee
+  engine itself is unreachable, per agent by email (it receives the SMTP settings) and/or
+  a chat/webhook channel.
 - **Every color is a theme token** in `dashboard/app/globals.css` (light and dark), checked
   for WCAG AA. Components never hard-code a color; status always carries a text label.
 - **The in-app help is `docs/`**, rendered at build time (`dashboard/app/help/`). Edit the

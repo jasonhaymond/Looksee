@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type DiscoveryScan, type Endpoint } from "../lib/api";
+import { api, type DiscoveryScan, type Site } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
-import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { AlertOptions, Button, Checkbox, EmptyState, Label, Modal, alertRulePayload, emptyAlertOptions, inputClass, relativeTime, useToast } from "../components/ui";
 import type { Channel } from "../lib/api";
 import { usePageAuth } from "../components/usePageAuth";
+import { pollEvery } from "../lib/poll";
 
 // Per device: create a host? which suggested checks (by index)?
 type Pick = { host: boolean; checks: Set<number> };
@@ -18,9 +18,9 @@ export default function DiscoveryPage() {
   const [community, setCommunity] = useState("public");
   const [scan, setScan] = useState<DiscoveryScan | null>(null);
   const [history, setHistory] = useState<DiscoveryScan[]>([]);
-  const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
-  const [endpointId, setEndpointId] = useState("");
-  // "" = scan from the Looksee server; otherwise an endpoint whose site
+  const [sites, setSites] = useState<Site[]>([]);
+  const [siteId, setSiteId] = useState("");
+  // "" = scan from the Looksee server; otherwise a site whose site
   // collector runs the scan on its own network.
   const [scanFrom, setScanFrom] = useState("");
   const [picks, setPicks] = useState<Record<string, Pick>>({});
@@ -35,9 +35,9 @@ export default function DiscoveryPage() {
 
   useEffect(() => {
     if (!authed) return;
-    api.endpoints().then((e) => {
-      setEndpoints(e);
-      setEndpointId((cur) => cur || e[0]?.id || "");
+    api.sites().then((e) => {
+      setSites(e);
+      setSiteId((cur) => cur || e[0]?.id || "");
     });
     api.discoveryScans().then((list) => {
       setHistory(list);
@@ -48,7 +48,7 @@ export default function DiscoveryPage() {
   // Poll while the scan runs; results stream in as devices are found.
   useEffect(() => {
     if (!scan || (scan.status !== "running" && scan.status !== "queued")) return;
-    const t = setInterval(async () => setScan(await api.discoveryScan(scan.id)), 1500);
+    const t = pollEvery(async () => setScan(await api.discoveryScan(scan.id)), 1500);
     return () => clearInterval(t);
   }, [scan]);
 
@@ -57,7 +57,7 @@ export default function DiscoveryPage() {
     if (!scan) return;
     setPicks((prev) => {
       const next = { ...prev };
-      for (const d of scan.results) if (!next[d.ip]) next[d.ip] = { host: !d.knownHostId, checks: new Set(d.knownHostId ? [] : [0]) };
+      for (const d of scan.results) if (!next[d.ip]) next[d.ip] = { host: !d.knownEndpointId, checks: new Set(d.knownEndpointId ? [] : [0]) };
       return next;
     });
   }, [scan]);
@@ -76,7 +76,6 @@ export default function DiscoveryPage() {
   if (!authed) return null;
   return (
     <main className="mx-auto max-w-6xl p-4 sm:p-6">
-      <TopNav active="/discovery" />
       <h2 className="mb-3 text-lg font-medium">Network discovery</h2>
       <PageHelp anchor="discovery">Sweeps a subnet (ping plus a few common ports — many devices ignore ping), then looks up names, MAC addresses and SNMP info. Tick what you want and add it in one go. A scan sees only the network it runs from: pick a remote site&apos;s collector under “Scan from” to scan that site.</PageHelp>
 
@@ -87,7 +86,7 @@ export default function DiscoveryPage() {
           setError(null);
           try {
             const s = await api.startDiscovery(cidr, community, scanFrom || undefined);
-            if (scanFrom) setEndpointId(scanFrom);
+            if (scanFrom) setSiteId(scanFrom);
             setScan(s);
             setPicks({});
             setHistory((h) => [s, ...h]);
@@ -96,11 +95,11 @@ export default function DiscoveryPage() {
           }
         }}
       >
-        <Label label="Scan from" help="The Looksee server scans networks it can reach itself. An endpoint with a site collector scans from that site's collector host instead.">
+        <Label label="Scan from" help="The Looksee server scans networks it can reach itself. A site with a site collector scans from that site's collector host instead.">
           <select value={scanFrom} onChange={(e) => setScanFrom(e.target.value)} className={`${inputClass} w-56`}>
             <option value="">Looksee server</option>
-            {endpoints
-              .filter((e) => e.collectorHostId)
+            {sites
+              .filter((e) => e.collectorEndpointId)
               .map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.name} (site collector)
@@ -150,7 +149,7 @@ export default function DiscoveryPage() {
                         {d.pingable ? "answers ping" : "no ping"}
                         {d.openPorts.length ? ` · ${d.openPorts.map((o) => o.service).join(", ")}` : ""}
                       </span>
-                      {d.knownHostId && <span className="rounded bg-[var(--border)] px-1.5 py-0.5 text-[10px]">already a host</span>}
+                      {d.knownEndpointId && <span className="rounded bg-[var(--border)] px-1.5 py-0.5 text-[10px]">already a host</span>}
                     </div>
                     {d.snmp?.sysDescr && <p className="mt-1 truncate text-xs text-[var(--muted)]">{d.snmp.sysDescr}</p>}
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
@@ -175,8 +174,8 @@ export default function DiscoveryPage() {
               <span className="px-2 text-sm">{chosen.length} device(s) selected</span>
               <label className="flex items-center gap-2 text-sm">
                 into
-                <select value={endpointId} onChange={(e) => setEndpointId(e.target.value)} className="rounded-md border border-[var(--border)] bg-transparent px-2 py-1">
-                  {endpoints.map((e) => (
+                <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className="rounded-md border border-[var(--border)] bg-transparent px-2 py-1">
+                  {sites.map((e) => (
                     <option key={e.id} value={e.id}>
                       {e.name}
                     </option>
@@ -186,14 +185,14 @@ export default function DiscoveryPage() {
               <Button onClick={() => setAlertOpen(true)}>{alertRulePayload(alert) ? `Alerts: ${alert.channelIds.length + alert.escalationChannelIds.length} channel(s)` : "Alerts: none"}</Button>
               <Button
                 variant="primary"
-                disabled={!chosen.length || !endpointId}
+                disabled={!chosen.length || !siteId}
                 onClick={async () => {
                   const res = await api.addDiscovered(scan.id, {
-                    endpointId,
+                    siteId,
                     alertRule: alertRulePayload(alert),
-                    devices: chosen.map((d) => ({ ip: d.ip, name: d.hostname ?? d.snmp?.sysName ?? d.ip, mac: d.mac, createHost: picks[d.ip].host, checks: d.suggestedChecks.filter((_, i) => picks[d.ip].checks.has(i)) })),
+                    devices: chosen.map((d) => ({ ip: d.ip, name: d.hostname ?? d.snmp?.sysName ?? d.ip, mac: d.mac, createEndpoint: picks[d.ip].host, checks: d.suggestedChecks.filter((_, i) => picks[d.ip].checks.has(i)) })),
                   });
-                  toast.show(`Added ${res.hostsCreated} host(s) and ${res.checksCreated} check(s).`);
+                  toast.show(`Added ${res.endpointsCreated} host(s) and ${res.checksCreated} check(s).`);
                   setPicks({});
                 }}
               >

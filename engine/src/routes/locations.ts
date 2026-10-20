@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { checks, endpoints, locations, maintenanceWindows } from "../db/schema.js";
+import { checks, sites, locations, maintenanceWindows } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { invalidateMaintenanceCache } from "../services/maintenance.js";
 
-// Locations group endpoints (networks) by physical place. Hosts and checks
+// Locations group sites (networks) by physical place. Hosts and checks
 // belong to a location through their endpoint, so there's nothing to keep
 // in sync below this level.
 export const locationsRouter = Router();
@@ -24,8 +24,8 @@ locationsRouter.post("/", async (req, res) => {
     return;
   }
   const [location] = await db.insert(locations).values({ name, description: text(req.body?.description) ?? null, address: text(req.body?.address) ?? null }).returning();
-  if (Array.isArray(req.body?.endpointIds) && req.body.endpointIds.length) {
-    await db.update(endpoints).set({ locationId: location.id }).where(inArray(endpoints.id, req.body.endpointIds.map(String)));
+  if (Array.isArray(req.body?.siteIds) && req.body.siteIds.length) {
+    await db.update(sites).set({ locationId: location.id }).where(inArray(sites.id, req.body.siteIds.map(String)));
   }
   res.status(201).json(location);
 });
@@ -49,16 +49,16 @@ locationsRouter.patch("/:id", async (req, res) => {
     res.status(404).json({ error: "Location not found" });
     return;
   }
-  // endpointIds, when sent, is the complete membership list.
-  if (Array.isArray(req.body?.endpointIds)) {
-    const ids: string[] = req.body.endpointIds.map(String);
-    await db.update(endpoints).set({ locationId: null }).where(eq(endpoints.locationId, location.id));
-    if (ids.length) await db.update(endpoints).set({ locationId: location.id }).where(inArray(endpoints.id, ids));
+  // siteIds, when sent, is the complete membership list.
+  if (Array.isArray(req.body?.siteIds)) {
+    const ids: string[] = req.body.siteIds.map(String);
+    await db.update(sites).set({ locationId: null }).where(eq(sites.locationId, location.id));
+    if (ids.length) await db.update(sites).set({ locationId: location.id }).where(inArray(sites.id, ids));
   }
   res.json(location);
 });
 
-// Deleting a location leaves its endpoints in place, just unassigned.
+// Deleting a location leaves its sites in place, just unassigned.
 locationsRouter.delete("/:id", async (req, res) => {
   await db.delete(locations).where(eq(locations.id, req.params.id));
   res.status(204).end();
@@ -70,15 +70,15 @@ locationsRouter.post("/:id/maintenance", async (req, res) => {
     res.status(404).json({ error: "Location not found" });
     return;
   }
-  const eps = await db.query.endpoints.findMany({ where: eq(endpoints.locationId, location.id) });
+  const eps = await db.query.sites.findMany({ where: eq(sites.locationId, location.id) });
   if (!eps.length) {
-    res.status(400).json({ error: "This location has no endpoints yet" });
+    res.status(400).json({ error: "This location has no sites yet" });
     return;
   }
   const minutes = Math.max(1, Number(req.body?.minutes) || 60);
   const now = new Date();
-  await db.insert(maintenanceWindows).values({ name: `Maintenance: ${location.name}`, scope: "endpoint", targetIds: eps.map((e) => e.id), startsAt: now, endsAt: new Date(now.getTime() + minutes * 60_000) });
+  await db.insert(maintenanceWindows).values({ name: `Maintenance: ${location.name}`, scope: "site", targetIds: eps.map((e) => e.id), startsAt: now, endsAt: new Date(now.getTime() + minutes * 60_000) });
   invalidateMaintenanceCache();
-  const affected = await db.select({ id: checks.id }).from(checks).where(inArray(checks.endpointId, eps.map((e) => e.id)));
-  res.json({ endpoints: eps.length, checks: affected.length });
+  const affected = await db.select({ id: checks.id }).from(checks).where(inArray(checks.siteId, eps.map((e) => e.id)));
+  res.json({ sites: eps.length, checks: affected.length });
 });

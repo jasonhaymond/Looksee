@@ -6,7 +6,7 @@ import { eq, inArray } from "drizzle-orm";
 import { app } from "../src/app.js";
 import { loginWith2fa } from "./helpers.js";
 import { db } from "../src/db/index.js";
-import { checks, endpoints, events, hosts, users } from "../src/db/schema.js";
+import { checks, sites, events, endpoints, users } from "../src/db/schema.js";
 import { runOneCheck, takeCollectorChecks } from "../src/services/scheduler.js";
 import { storeEvents } from "../src/services/receivers/index.js";
 
@@ -16,15 +16,15 @@ let cookie: string;
 let siteId: string; // remote site, has a collector
 let localId: string; // the engine's own LAN
 let pushSiteId: string; // remote site with direct push only
-let collectorHostId: string;
-let otherHostId: string;
+let collectorEndpointId: string;
+let otherEndpointId: string;
 let collectorAuth: { Authorization: string };
 let otherAuth: { Authorization: string };
 const pushIp = `198.51.100.${Math.floor(Math.random() * 200) + 20}`;
 
 const auth = () => ({ Cookie: cookie });
-async function makeCheck(endpointId: string, type: string, config: Record<string, unknown>, extra: Record<string, unknown> = {}) {
-  const res = await request(app).post("/api/checks").set(auth()).send({ endpointId, name: `${type}-${crypto.randomUUID().slice(0, 6)}`, type, config, ...extra });
+async function makeCheck(siteId: string, type: string, config: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  const res = await request(app).post("/api/checks").set(auth()).send({ siteId, name: `${type}-${crypto.randomUUID().slice(0, 6)}`, type, config, ...extra });
   expect(res.status).toBe(201);
   return res.body as { id: string };
 }
@@ -34,40 +34,40 @@ beforeAll(async () => {
   cookie = await loginWith2fa(email, password);
 
   const [site, local, pushSite] = await db
-    .insert(endpoints)
+    .insert(sites)
     .values([{ name: `test-site-${crypto.randomUUID()}` }, { name: `test-local-${crypto.randomUUID()}` }, { name: `test-push-${crypto.randomUUID()}` }])
     .returning();
   siteId = site.id;
   localId = local.id;
   pushSiteId = pushSite.id;
   const [collector, other] = await db
-    .insert(hosts)
+    .insert(endpoints)
     .values([
-      { endpointId: siteId, name: "test-collector-host" },
-      { endpointId: siteId, name: "test-sleepy-host", macAddress: "00:11:22:33:44:55" },
+      { siteId: siteId, name: "test-collector-host" },
+      { siteId: siteId, name: "test-sleepy-host", macAddress: "00:11:22:33:44:55" },
     ])
     .returning();
-  collectorHostId = collector.id;
-  otherHostId = other.id;
-  collectorAuth = { Authorization: `Bearer ${(await request(app).post(`/api/hosts/${collectorHostId}/agent-key`).set(auth())).body.agentApiKey}` };
-  otherAuth = { Authorization: `Bearer ${(await request(app).post(`/api/hosts/${otherHostId}/agent-key`).set(auth())).body.agentApiKey}` };
+  collectorEndpointId = collector.id;
+  otherEndpointId = other.id;
+  collectorAuth = { Authorization: `Bearer ${(await request(app).post(`/api/endpoints/${collectorEndpointId}/agent-key`).set(auth())).body.agentApiKey}` };
+  otherAuth = { Authorization: `Bearer ${(await request(app).post(`/api/endpoints/${otherEndpointId}/agent-key`).set(auth())).body.agentApiKey}` };
 });
 
 afterAll(async () => {
-  await db.delete(endpoints).where(inArray(endpoints.id, [siteId, localId, pushSiteId]));
+  await db.delete(sites).where(inArray(sites.id, [siteId, localId, pushSiteId]));
   await db.delete(users).where(eq(users.email, email));
 });
 
 describe("site collector setup", () => {
   it("only an agent host can be a site's collector", async () => {
-    const [bare] = await db.insert(hosts).values({ endpointId: siteId, name: "test-no-agent" }).returning();
-    const res = await request(app).patch(`/api/endpoints/${siteId}`).set(auth()).send({ collectorHostId: bare.id });
+    const [bare] = await db.insert(endpoints).values({ siteId: siteId, name: "test-no-agent" }).returning();
+    const res = await request(app).patch(`/api/sites/${siteId}`).set(auth()).send({ collectorEndpointId: bare.id });
     expect(res.status).toBe(400);
-    await db.delete(hosts).where(eq(hosts.id, bare.id));
+    await db.delete(endpoints).where(eq(endpoints.id, bare.id));
   });
 
   it("rejects public IPs that aren't addresses", async () => {
-    const res = await request(app).patch(`/api/endpoints/${pushSiteId}`).set(auth()).send({ publicIps: "203.0.113.5, not-an-ip" });
+    const res = await request(app).patch(`/api/sites/${pushSiteId}`).set(auth()).send({ publicIps: "203.0.113.5, not-an-ip" });
     expect(res.status).toBe(400);
   });
 
@@ -80,16 +80,16 @@ describe("site collector setup", () => {
     const before = await request(app).get("/api/agent/config").set(collectorAuth);
     expect(before.body.collector).toBeNull();
 
-    const res = await request(app).patch(`/api/endpoints/${siteId}`).set(auth()).send({ collectorHostId });
+    const res = await request(app).patch(`/api/sites/${siteId}`).set(auth()).send({ collectorEndpointId });
     expect(res.status).toBe(200);
-    expect(res.body.collectorHostId).toBe(collectorHostId);
+    expect(res.body.collectorEndpointId).toBe(collectorEndpointId);
 
     const after = await request(app).get("/api/agent/config").set(collectorAuth);
     if (after.body.collector) {
       expect(typeof after.body.collector.bundleSha256).toBe("string");
     } else {
       // No collector build on this machine: the host says why instead.
-      const host = await db.query.hosts.findFirst({ where: eq(hosts.id, collectorHostId) });
+      const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, collectorEndpointId) });
       expect(host?.collectorError).toMatch(/hasn't been built/);
     }
     // Another agent at the same site isn't the collector.
@@ -117,7 +117,7 @@ describe("collector config and results", () => {
     expect(ids).not.toContain(matchId); // event matching stays on the engine
     expect(ids).not.toContain(localPingId);
     expect(res.body.receivers.syslog).toBeGreaterThan(0);
-    const host = await db.query.hosts.findFirst({ where: eq(hosts.id, collectorHostId) });
+    const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, collectorEndpointId) });
     expect(host?.collectorVersion).toBe("3.2.0-test");
     expect(Date.now() - host!.collectorLastSeenAt!.getTime()).toBeLessThan(10_000);
     expect(host?.collectorError).toBeNull();
@@ -150,7 +150,7 @@ describe("collector config and results", () => {
     expect(engineRuns).toEqual(expect.arrayContaining([matchId, localPingId]));
     expect(engineRuns).not.toContain(pingId);
 
-    await db.update(hosts).set({ collectorLastSeenAt: new Date(Date.now() - 3600_000) }).where(eq(hosts.id, collectorHostId));
+    await db.update(endpoints).set({ collectorLastSeenAt: new Date(Date.now() - 3600_000) }).where(eq(endpoints.id, collectorEndpointId));
     await takeCollectorChecks(due);
     const ping = await db.query.checks.findFirst({ where: eq(checks.id, pingId) });
     expect(ping?.lastStatus).toBe("unknown");
@@ -167,7 +167,7 @@ describe("collector config and results", () => {
       });
     expect(res.body).toEqual({ events: 1, flows: 1 });
     const [stored] = await db.select().from(events).where(eq(events.sourceIp, "10.9.9.1"));
-    expect(stored.endpointId).toBe(siteId);
+    expect(stored.siteId).toBe(siteId);
 
     const siteMatch = await runOneCheck((await db.query.checks.findFirst({ where: eq(checks.id, matchId) }))!);
     expect(siteMatch.value).toBe(1);
@@ -179,7 +179,7 @@ describe("collector config and results", () => {
 
 describe("one-off work", () => {
   it("runs a remote site's discovery scan on its collector", async () => {
-    const res = await request(app).post("/api/insights/discovery/scans").set(auth()).send({ cidr: "10.9.9.0/30", endpointId: siteId });
+    const res = await request(app).post("/api/insights/discovery/scans").set(auth()).send({ cidr: "10.9.9.0/30", siteId: siteId });
     expect(res.status).toBe(202);
     expect(res.body.status).toBe("queued");
 
@@ -196,7 +196,7 @@ describe("one-off work", () => {
   });
 
   it("sends Wake-on-LAN through the target's site collector", async () => {
-    const res = await request(app).post(`/api/hosts/${otherHostId}/wake`).set(auth());
+    const res = await request(app).post(`/api/endpoints/${otherEndpointId}/wake`).set(auth());
     expect(res.body).toEqual({ sent: true, viaCollector: true });
     const cfg = await request(app).get("/api/collector/config").set(collectorAuth);
     const job = cfg.body.jobs.find((j: { payload: { mac: string } }) => j.payload.mac === "00:11:22:33:44:55");
@@ -207,9 +207,9 @@ describe("one-off work", () => {
 
 describe("direct push", () => {
   it("files events from a site's public IP under that site", async () => {
-    await request(app).patch(`/api/endpoints/${pushSiteId}`).set(auth()).send({ publicIps: pushIp }).expect(200);
+    await request(app).patch(`/api/sites/${pushSiteId}`).set(auth()).send({ publicIps: pushIp }).expect(200);
     await storeEvents([{ source: "syslog", sourceIp: pushIp, severity: 4, facility: 1, message: "pushed", data: null, receivedAt: new Date().toISOString() }], null);
     const [stored] = await db.select().from(events).where(eq(events.sourceIp, pushIp));
-    expect(stored.endpointId).toBe(pushSiteId);
+    expect(stored.siteId).toBe(pushSiteId);
   });
 });

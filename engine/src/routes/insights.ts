@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { discoveryScans, events, endpoints, hosts, checks } from "../db/schema.js";
+import { discoveryScans, events, sites, endpoints, checks } from "../db/schema.js";
 import { createAlertRule, parseAlertRule } from "../services/alertRuleFactory.js";
 import { requireAuth } from "../middleware/auth.js";
 import { MAX_SCAN_ADDRESSES, expandCidr, runDiscoveryScan } from "../services/discovery.js";
@@ -10,8 +10,8 @@ import { MAX_SCAN_ADDRESSES, expandCidr, runDiscoveryScan } from "../services/di
 // an endpoint id = that remote site (its collector or direct push).
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 function siteFilter(site: unknown) {
-  if (site === "local") return sql`endpoint_id IS NULL`;
-  if (typeof site === "string" && UUID_RE.test(site)) return sql`endpoint_id = ${site}`;
+  if (site === "local") return sql`site_id IS NULL`;
+  if (typeof site === "string" && UUID_RE.test(site)) return sql`site_id = ${site}`;
   return null;
 }
 
@@ -24,7 +24,7 @@ type SlaRow = {
   check_id: string;
   name: string;
   type: string;
-  endpoint_id: string;
+  site_id: string;
   total_s: number | null;
   down_s: number | null;
   warn_s: number | null;
@@ -39,19 +39,19 @@ type SlaRow = {
 // downtime). Maintenance time is reported separately and excluded.
 insightsRouter.get("/reports/sla", async (req, res) => {
   const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 400);
-  const endpointId = typeof req.query.endpointId === "string" && req.query.endpointId ? req.query.endpointId : null;
+  const siteId = typeof req.query.siteId === "string" && req.query.siteId ? req.query.siteId : null;
   const since = new Date(Date.now() - days * 86_400_000);
   const rows = (
     await db.execute<SlaRow>(sql`
       WITH r AS (
-        SELECT cr.check_id, cr.status, cr.latency_ms, cr.in_maintenance,
+        SELECT cr.check_id, cr.status, cr.latency_ms, (cr.in_maintenance OR cr.excluded) AS in_maintenance,
                LEAST(EXTRACT(EPOCH FROM (COALESCE(LEAD(cr.checked_at) OVER w, now()) - cr.checked_at)), c.interval_seconds * 2) AS dur,
                LAG(cr.status) OVER w AS prev
         FROM check_results cr JOIN checks c ON c.id = cr.check_id
-        WHERE cr.checked_at >= ${since} ${endpointId ? sql`AND c.endpoint_id = ${endpointId}` : sql``}
+        WHERE cr.checked_at >= ${since} ${siteId ? sql`AND c.site_id = ${siteId}` : sql``}
         WINDOW w AS (PARTITION BY cr.check_id ORDER BY cr.checked_at)
       )
-      SELECT r.check_id, c.name, c.type::text AS type, c.endpoint_id,
+      SELECT r.check_id, c.name, c.type::text AS type, c.site_id,
              sum(dur) FILTER (WHERE NOT in_maintenance)::float AS total_s,
              sum(dur) FILTER (WHERE status = 'down' AND NOT in_maintenance)::float AS down_s,
              sum(dur) FILTER (WHERE status = 'warn' AND NOT in_maintenance)::float AS warn_s,
@@ -60,7 +60,7 @@ insightsRouter.get("/reports/sla", async (req, res) => {
              count(*) FILTER (WHERE status = 'down' AND (prev IS NULL OR prev <> 'down') AND NOT in_maintenance)::int AS incidents,
              count(*)::int AS results
       FROM r JOIN checks c ON c.id = r.check_id
-      GROUP BY r.check_id, c.name, c.type, c.endpoint_id
+      GROUP BY r.check_id, c.name, c.type, c.site_id
       ORDER BY c.name`)
   ).rows;
   const report = rows.map((r) => {
@@ -70,7 +70,7 @@ insightsRouter.get("/reports/sla", async (req, res) => {
       checkId: r.check_id,
       name: r.name,
       type: r.type,
-      endpointId: r.endpoint_id,
+      siteId: r.site_id,
       uptimePercent: total > 0 ? Math.round(((total - down) / total) * 100000) / 1000 : null,
       downtimeMinutes: Math.round(down / 60),
       degradedMinutes: Math.round((r.warn_s ?? 0) / 60),
@@ -150,22 +150,22 @@ insightsRouter.post("/discovery/scans", async (req, res) => {
   }
   const community = String(req.body?.community || "public");
   // A scan for an endpoint with a site collector runs on that site's LAN.
-  const endpointId = typeof req.body?.endpointId === "string" && req.body.endpointId ? req.body.endpointId : null;
-  const site = endpointId ? await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) }) : null;
-  if (endpointId && !site) {
-    res.status(400).json({ error: "endpointId not found" });
+  const siteId = typeof req.body?.siteId === "string" && req.body.siteId ? req.body.siteId : null;
+  const site = siteId ? await db.query.sites.findFirst({ where: eq(sites.id, siteId) }) : null;
+  if (siteId && !site) {
+    res.status(400).json({ error: "siteId not found" });
     return;
   }
-  const viaCollector = Boolean(site?.collectorHostId);
+  const viaCollector = Boolean(site?.collectorEndpointId);
   // One scan at a time per network: the engine's own LAN, or each collector site.
   const active = await db.query.discoveryScans.findMany({ where: and(inArray(discoveryScans.status, ["running", "queued"]), gte(discoveryScans.startedAt, new Date(Date.now() - 30 * 60_000))) });
-  const collectorSites = new Set((await db.query.endpoints.findMany()).filter((e) => e.collectorHostId).map((e) => e.id));
-  const running = active.find((s) => (viaCollector ? s.endpointId === endpointId : !s.endpointId || !collectorSites.has(s.endpointId)));
+  const collectorSites = new Set((await db.query.sites.findMany()).filter((e) => e.collectorEndpointId).map((e) => e.id));
+  const running = active.find((s) => (viaCollector ? s.siteId === siteId : !s.siteId || !collectorSites.has(s.siteId)));
   if (running) {
     res.status(409).json({ error: `A scan of ${running.cidr} is already running` });
     return;
   }
-  const [scan] = await db.insert(discoveryScans).values({ cidr, endpointId, community, status: viaCollector ? "queued" : "running" }).returning();
+  const [scan] = await db.insert(discoveryScans).values({ cidr, siteId, community, status: viaCollector ? "queued" : "running" }).returning();
   if (!viaCollector) void runDiscoveryScan(scan.id, cidr, community);
   res.status(202).json(scan);
 });
@@ -173,27 +173,27 @@ insightsRouter.post("/discovery/scans", async (req, res) => {
 // Adds chosen devices from a finished scan: optionally a host row each
 // (with its MAC for Wake-on-LAN), plus whichever suggested checks were ticked.
 insightsRouter.post("/discovery/scans/:id/add", async (req, res) => {
-  const endpointId = String(req.body?.endpointId ?? "");
-  if (!(await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) }))) {
-    res.status(400).json({ error: "endpointId not found" });
+  const siteId = String(req.body?.siteId ?? "");
+  if (!(await db.query.sites.findFirst({ where: eq(sites.id, siteId) }))) {
+    res.status(400).json({ error: "siteId not found" });
     return;
   }
-  const devices: { ip: string; name?: string; mac?: string | null; createHost?: boolean; checks?: { type: string; name: string; config: Record<string, unknown> }[] }[] = Array.isArray(req.body?.devices) ? req.body.devices : [];
+  const devices: { ip: string; name?: string; mac?: string | null; createEndpoint?: boolean; checks?: { type: string; name: string; config: Record<string, unknown> }[] }[] = Array.isArray(req.body?.devices) ? req.body.devices : [];
   const alertRule = parseAlertRule(req.body?.alertRule);
-  let hostsCreated = 0;
+  let endpointsCreated = 0;
   let checksCreated = 0;
   for (const d of devices) {
-    let hostId: string | null = null;
-    if (d.createHost) {
-      const [h] = await db.insert(hosts).values({ endpointId, name: d.name || d.ip, hostname: d.ip, macAddress: d.mac ?? null }).returning();
-      hostId = h.id;
-      hostsCreated++;
+    let endpointId: string | null = null;
+    if (d.createEndpoint) {
+      const [h] = await db.insert(endpoints).values({ siteId, name: d.name || d.ip, hostname: d.ip, macAddress: d.mac ?? null }).returning();
+      endpointId = h.id;
+      endpointsCreated++;
     }
     for (const c of d.checks ?? []) {
-      const [created] = await db.insert(checks).values({ endpointId, hostId, name: c.name, type: c.type as typeof checks.$inferInsert.type, config: c.config ?? {} }).returning({ id: checks.id });
+      const [created] = await db.insert(checks).values({ siteId, endpointId, name: c.name, type: c.type as typeof checks.$inferInsert.type, config: c.config ?? {} }).returning({ id: checks.id });
       if (alertRule) await createAlertRule(created.id, alertRule);
       checksCreated++;
     }
   }
-  res.json({ hostsCreated, checksCreated });
+  res.json({ endpointsCreated, checksCreated });
 });

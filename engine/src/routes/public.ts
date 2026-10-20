@@ -11,14 +11,14 @@
 // unknown tokens are logged as security events (so guessing is detected and
 // can be auto-blocked by a security rule) and rate-limited. A status page
 // returns only the names, status and uptime of the checks the admin put on
-// it — never hosts, messages or configuration.
+// it — never endpoints, messages or configuration.
 
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { checks, statusPages } from "../db/schema.js";
-import { recordCheckResult } from "../services/alerting.js";
+import { recordCheckResult, resolveCheck } from "../services/alerting.js";
 import { recordSecurityEvent } from "../services/security.js";
 import { applyThresholds, type Status } from "../services/thresholds.js";
 import { isValidTimeZone, localMidnight, recentDates } from "../lib/timeZone.js";
@@ -40,11 +40,26 @@ const STATUS_WORDS: Record<string, Status> = { up: "up", ok: "up", success: "up"
 publicRouter.all("/hb/:token", pushLimiter, async (req, res) => {
   // The token is the only credential: look up the one check it belongs to.
   const check = await db.query.checks.findFirst({ where: eq(checks.pushToken, String(req.params.token)) });
-  if (!check || (check.type !== "heartbeat" && check.type !== "push_value")) {
+  if (!check) {
     // The token itself is masked in the log (path "/api/hb/…") so a real
     // token mistyped by one character isn't written down anywhere.
     await recordSecurityEvent("bad_push_token", { req, path: "/api/hb/…" });
     res.status(404).type("text/plain").send("Unknown push token");
+    return;
+  }
+  // Any other kind of check with a token has a "recovery URL": the only
+  // thing it accepts is status=up (or ok/success/0), which marks the check
+  // recovered. It can't report a failure or a value — the check's own probe
+  // does that.
+  if (check.type !== "heartbeat" && check.type !== "push_value") {
+    const input = { ...(req.body && typeof req.body === "object" ? req.body : {}), ...req.query } as Record<string, unknown>;
+    if (STATUS_WORDS[String(input.status ?? "up").toLowerCase()] !== "up") {
+      res.status(400).type("text/plain").send("This is a recovery URL: it only accepts status=up");
+      return;
+    }
+    const msg = input.msg ?? input.message;
+    await resolveCheck(check.id, `Recovered by an external "up" event${msg != null ? `: ${String(msg).slice(0, 200)}` : ""}`, "push");
+    res.type("text/plain").send("OK (recovered)");
     return;
   }
   if (!check.enabled) {
@@ -118,7 +133,7 @@ publicRouter.get("/public/status/:slug", async (req, res) => {
           FROM check_results
           WHERE check_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
             AND checked_at >= ${bounds[0]}::timestamptz AND checked_at < ${bounds[bounds.length - 1]}::timestamptz
-            AND NOT in_maintenance
+            AND NOT (in_maintenance OR excluded)
           GROUP BY check_id, bucket`)
       ).rows.map((r) => ({ ...r, day: days[Number(r.bucket) - 1] }))
     : [];

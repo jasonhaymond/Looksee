@@ -97,7 +97,7 @@ export type ScannedDevice = {
 };
 
 export type DiscoveredDevice = ScannedDevice & {
-  knownHostId: string | null;
+  knownEndpointId: string | null;
   suggestedChecks: { type: string; name: string; config: Record<string, unknown> }[];
 };
 

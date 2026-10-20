@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type EventRow } from "../lib/api";
-import { TopNav } from "../components/TopNav";
 import { SiteSelect } from "../components/SiteSelect";
 import { PageHelp } from "../components/PageHelp";
 import { EmptyState, inputClass } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
+import { pollEvery } from "../lib/poll";
 
 const SEVERITY = ["emerg", "alert", "crit", "error", "warning", "notice", "info", "debug"];
 const SEV_COLOR = (s: number | null) => (s == null ? "var(--muted)" : s <= 3 ? "var(--down)" : s === 4 ? "var(--warn)" : "var(--muted)");
@@ -23,7 +23,7 @@ export default function EventsPage() {
   const [siteNames, setSiteNames] = useState<Map<string, string>>(new Map());
   useEffect(() => {
     api
-      .endpoints()
+      .sites()
       .then((all) => setSiteNames(new Map(all.map((e) => [e.id, e.name]))))
       .catch(() => undefined);
   }, []);
@@ -33,14 +33,13 @@ export default function EventsPage() {
     if (!authed) return;
     load();
     if (!live) return;
-    const t = setInterval(load, 10_000);
+    const t = pollEvery(load, 10_000);
     return () => clearInterval(t);
   }, [authed, load, live]);
 
   if (!authed) return null;
   return (
     <main className="mx-auto max-w-6xl p-4 sm:p-6">
-      <TopNav active="/events" />
       <h2 className="mb-3 text-lg font-medium">SNMP traps &amp; syslog</h2>
       <PageHelp anchor="traps-and-syslog">
         Everything devices have sent to the engine or to a site collector. Point SNMP traps at UDP 1162 and syslog at UDP/TCP 1514 on the engine — or on a remote site&apos;s collector host (only private-network senders are accepted by default, plus each remote site&apos;s public IPs). To alert on these, add an “SNMP trap received” or “Syslog message received” check.
@@ -87,7 +86,7 @@ export default function EventsPage() {
                   <td className="whitespace-nowrap px-2 py-1.5 text-[var(--muted)]">{new Date(r.receivedAt).toLocaleString()}</td>
                   <td className="px-2 py-1.5">
                     <span className="font-mono">{r.sourceIp}</span>
-                    {r.endpointId && siteNames.has(r.endpointId) && <span className="block text-[var(--muted)]">{siteNames.get(r.endpointId)}</span>}
+                    {r.siteId && siteNames.has(r.siteId) && <span className="block text-[var(--muted)]">{siteNames.get(r.siteId)}</span>}
                   </td>
                   <td className="px-2 py-1.5">{r.source === "snmp_trap" ? "trap" : `syslog${(r.data as { app?: string } | null)?.app ? ` · ${(r.data as { app: string }).app}` : ""}`}</td>
                   <td className="px-2 py-1.5" style={{ color: SEV_COLOR(r.severity) }}>

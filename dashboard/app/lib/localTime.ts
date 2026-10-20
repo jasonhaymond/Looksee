@@ -5,7 +5,7 @@
 // that are just a timestamp (createdAt, lastCheckedAt, ...) are already turned
 // into local time by the page that shows them (`new Date(x).toLocaleString()`
 // runs in the browser, so it uses the browser's time zone). But some check
-// messages have a time baked into the sentence — "Host rebooted at
+// messages have a time baked into the sentence — "Endpoint rebooted at
 // 2026-10-13 14:05 UTC", "Agent silent for 9 min (last report
 // 2026-10-13T14:05:12.000Z)" — and a sentence can't be reformatted by the
 // page. lib/api.ts runs every API response through `localizeResponse` below,

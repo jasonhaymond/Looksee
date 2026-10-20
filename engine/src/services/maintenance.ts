@@ -15,18 +15,21 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { maintenanceWindows } from "../db/schema.js";
 import { isValidTimeZone, serverTimeZone, wallClock } from "../lib/timeZone.js";
+import { checkIdsForGroups } from "./groups.js";
 
 // One stored window row, as Drizzle (the database library) returns it.
 type Window = typeof maintenanceWindows.$inferSelect;
-// What a window can apply to: a check, identified by itself, its endpoint,
-// and the host(s) it runs on or about.
-type Target = { id: string; endpointId: string; hostId: string | null; probeHostId?: string | null };
+// What a window can apply to: a check, identified by itself, its site, the
+// endpoint it's about, and the endpoint whose agent runs it (if pinned).
+type Target = { id: string; siteId: string; endpointId: string | null; probeEndpointId?: string | null };
 
 // Windows change rarely and every result consults them, so the enabled ones
 // are cached in memory for 15 s instead of queried per result.
 // routes/maintenance.ts calls invalidateMaintenanceCache() after any write so
-// an edit takes effect immediately rather than up to 15 s later.
-let cache: { at: number; rows: Window[] } | null = null;
+// an edit takes effect immediately rather than up to 15 s later. Windows
+// scoped to groups also cache each group's checks (resolved once per
+// refresh), since a filter group's members can change at any time.
+let cache: { at: number; rows: Window[]; groupChecks: Map<string, Set<string>> } | null = null;
 const CACHE_MS = 15_000;
 
 /** Drops the cached window list so the next lookup re-reads the database. */
@@ -39,11 +42,13 @@ export function invalidateMaintenanceCache() {
  *
  * @returns every window with enabled = true (active or not)
  */
-async function activeWindows(): Promise<Window[]> {
+async function activeWindows(): Promise<{ rows: Window[]; groupChecks: Map<string, Set<string>> }> {
   if (!cache || Date.now() - cache.at > CACHE_MS) {
-    cache = { at: Date.now(), rows: await db.query.maintenanceWindows.findMany({ where: eq(maintenanceWindows.enabled, true) }) };
+    const rows = await db.query.maintenanceWindows.findMany({ where: eq(maintenanceWindows.enabled, true) });
+    const groupIds = [...new Set(rows.filter((w) => w.scope === "group").flatMap((w) => w.targetIds ?? []))];
+    cache = { at: Date.now(), rows, groupChecks: await checkIdsForGroups(groupIds) };
   }
-  return cache.rows;
+  return cache;
 }
 
 /**
@@ -96,27 +101,43 @@ export function windowIsActive(
 /**
  * Whether a window covers a particular check.
  *
- * @param w the window's scope ("all", "endpoint", "host" or "check") and the
- *          IDs it names
+ * @param w the window's scope ("all", "site", "endpoint", "check" or
+ *          "group") and the IDs it names
  * @param target the check being tested
+ * @param groupChecks for "group" windows: each group's check IDs
  * @returns true if the window applies to this check
  */
-export function windowAppliesTo(w: Pick<Window, "scope" | "targetIds">, target: Target): boolean {
+export function windowAppliesTo(w: Pick<Window, "scope" | "targetIds">, target: Target, groupChecks: Map<string, Set<string>> = new Map()): boolean {
   const ids = w.targetIds ?? [];
   switch (w.scope) {
     case "all":
       return true;
+    case "site":
+      return ids.includes(target.siteId);
     case "endpoint":
-      return ids.includes(target.endpointId);
-    case "host":
-      // Either the host the check is about, or the agent host that runs it.
-      return (target.hostId != null && ids.includes(target.hostId)) || (target.probeHostId != null && ids.includes(target.probeHostId));
+      // Either the endpoint the check is about, or the endpoint whose agent runs it.
+      return (target.endpointId != null && ids.includes(target.endpointId)) || (target.probeEndpointId != null && ids.includes(target.probeEndpointId));
+    case "group":
+      return ids.some((g) => groupChecks.get(g)?.has(target.id));
     case "check":
       return ids.includes(target.id);
     default:
       // An unrecognised scope applies to nothing rather than everything.
       return false;
   }
+}
+
+/**
+ * The windows in effect right now, with the check sets of any groups they
+ * target — for list views that mark many checks "in maintenance" at once
+ * (call once, then test each check with windowAppliesTo).
+ *
+ * @returns active windows and each targeted group's check IDs
+ */
+export async function activeMaintenance(now = new Date()): Promise<{ windows: Window[]; groupChecks: Map<string, Set<string>> }> {
+  const windows = (await db.query.maintenanceWindows.findMany()).filter((w) => windowIsActive(w, now));
+  const groupIds = [...new Set(windows.filter((w) => w.scope === "group").flatMap((w) => w.targetIds ?? []))];
+  return { windows, groupChecks: await checkIdsForGroups(groupIds) };
 }
 
 /**
@@ -127,5 +148,6 @@ export function windowAppliesTo(w: Pick<Window, "scope" | "targetIds">, target: 
  * @returns true if the check is in maintenance
  */
 export async function isInMaintenance(target: Target, now = new Date()): Promise<boolean> {
-  return (await activeWindows()).some((w) => windowAppliesTo(w, target) && windowIsActive(w, now));
+  const { rows, groupChecks } = await activeWindows();
+  return rows.some((w) => windowAppliesTo(w, target, groupChecks) && windowIsActive(w, now));
 }

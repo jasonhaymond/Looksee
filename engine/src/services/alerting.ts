@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { checks, checkResults, alertRules, alertRuleChannels, alertEvents, notificationChannels, checkDependencies, hosts, endpoints, locations } from "../db/schema.js";
+import { checks, checkResults, alertRules, alertRuleChannels, alertEvents, notificationChannels, checkDependencies, endpoints, sites, locations } from "../db/schema.js";
 import { sendEmail } from "./notifications/email.js";
 import { sendWebhook } from "./notifications/webhook.js";
 import { sendWebPush } from "./notifications/webpush.js";
@@ -79,11 +79,66 @@ export async function recordCheckResult(checkId: string, input: ResultInput) {
     const cfg = (check.config ?? {}) as { mac?: string; ip?: string };
     const mac = d.mac ?? cfg.mac;
     const ip = d.ip ?? cfg.ip;
-    if (mac && ip) await recordSighting({ mac, ip, source: "arp", hostId: check.hostId, endpointId: check.endpointId }).catch(() => undefined);
+    if (mac && ip) await recordSighting({ mac, ip, source: "arp", endpointId: check.endpointId, siteId: check.siteId }).catch(() => undefined);
+  }
+
+  // A recovery (failing → up) also recovers every check set to "recover
+  // with" this one (config.recoverWithCheckId). Done before the maintenance
+  // early-return, so followers recover even while this check is silenced.
+  if (input.status === "up" && check.lastStatus && check.lastStatus !== "up") {
+    await resolveFollowers(check).catch((err) => logger.error("alerting", `Recovering checks that follow ${checkId} failed: ${err instanceof Error ? err.message : String(err)}`, `Checks set to recover together with "${check.name}" couldn't be recovered automatically.`));
   }
 
   if (inMaintenance) return;
   await evaluateAlertRules({ ...check, flapping }, input);
+}
+
+// How a check was resolved without a new probe result of its own: by hand,
+// because the check it follows recovered, by an "up" push to its recovery
+// URL, or automatically after its auto-recovery delay.
+export type ResolvedBy = "manual" | "check" | "push" | "auto";
+
+/**
+ * Marks a check as recovered now, without running it: records an "up"
+ * result (which closes its open alert incident and sends the usual
+ * "recovered" notification) and remembers the moment in the check's state as
+ * `resolvedAt`. Event checks (traps/syslog) ignore events received up to
+ * that moment, so old messages can't make them fail again; checks that poll
+ * simply report their real status on their next run.
+ *
+ * @param checkId the check to resolve
+ * @param message shown as the result message, e.g. "Manually resolved: …"
+ * @param by how it was resolved (kept in the result's details)
+ * @returns false if the check doesn't exist
+ */
+export async function resolveCheck(checkId: string, message: string, by: ResolvedBy): Promise<boolean> {
+  const check = await db.query.checks.findFirst({ where: eq(checks.id, checkId) });
+  if (!check) return false;
+  const now = new Date();
+  await db
+    .update(checks)
+    .set({ state: { ...((check.state as Record<string, unknown>) ?? {}), resolvedAt: now.toISOString(), resolvedBy: by } })
+    .where(eq(checks.id, checkId));
+  await recordCheckResult(checkId, { status: "up", message: message.slice(0, 1000), details: { resolved: by, at: now.toISOString() } });
+  return true;
+}
+
+/**
+ * Recovers the failing checks that are set to recover together with this
+ * one (config.recoverWithCheckId = its ID). A follower recovering in turn
+ * recovers its own followers; cycles end because only failing checks are
+ * touched.
+ */
+async function resolveFollowers(check: typeof checks.$inferSelect) {
+  const followers = await db
+    .select({ id: checks.id, config: checks.config, lastStatus: checks.lastStatus })
+    .from(checks)
+    .where(inArray(checks.lastStatus, ["down", "warn"]));
+  for (const f of followers) {
+    if ((f.config as Record<string, unknown>)?.recoverWithCheckId === check.id) {
+      await resolveCheck(f.id, `Recovered together with "${check.name}"`, "check");
+    }
+  }
 }
 
 async function parentDown(checkId: string): Promise<string | null> {
@@ -155,8 +210,8 @@ export async function processOpenAlerts(now = new Date()) {
 
 // Everything a template can mention, looked up once per notification.
 export async function alertContext(check: typeof checks.$inferSelect, event: AlertEvent, status: string, message: string | null, openedAt: Date | null): Promise<AlertContext> {
-  const host = check.hostId ? await db.query.hosts.findFirst({ where: eq(hosts.id, check.hostId) }) : undefined;
-  const endpoint = await db.query.endpoints.findFirst({ where: eq(endpoints.id, check.endpointId) });
+  const host = check.endpointId ? await db.query.endpoints.findFirst({ where: eq(endpoints.id, check.endpointId) }) : undefined;
+  const endpoint = await db.query.sites.findFirst({ where: eq(sites.id, check.siteId) });
   const location = endpoint?.locationId ? await db.query.locations.findFirst({ where: eq(locations.id, endpoint.locationId) }) : undefined;
   const hints = remediationFor({ type: check.type, status: event === "resolved" ? "up" : status, message, config: check.config });
   return {

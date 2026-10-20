@@ -17,7 +17,7 @@ const MESSAGE_RULES: Rule[] = [
   { test: /\b401\b|\b403\b|unauthori[sz]ed|forbidden|authentication failed|access denied/i, hints: ["Credentials or permissions were rejected — re-enter the password/token on the check, and check the account isn't locked or expired."] },
   { test: /\b404\b|not found/i, hints: ["The URL/path/name doesn't exist (any more) — check for typos, a moved endpoint, or a renamed service/container/file."] },
   { test: /\b5\d\d\b|bad gateway|service unavailable|internal server error/i, hints: ["The server answered with an error — check the application's logs and its upstream (database, app server behind the proxy)."] },
-  { test: /packet loss|100%|no reply|didn't answer|not respond/i, hints: ["Is the device powered on and its link up?", "Some devices and Windows hosts block ICMP by default — allow ping, or use a TCP check instead."] },
+  { test: /packet loss|100%|no reply|didn't answer|not respond/i, hints: ["Is the device powered on and its link up?", "Some devices and Windows endpoints block ICMP by default — allow ping, or use a TCP check instead."] },
   { test: /isn't in the ARP table/i, hints: ["The device isn't on this LAN segment right now — powered off, asleep, or moved to another VLAN.", "ARP checks only see the same Layer-2 network as the engine/collector."] },
   { test: /Needs agent/i, hints: ["Update the agent from the Hosts page (Update agent), or reinstall it with the host's install command."] },
   { test: /script not found|script checks are disabled|plain file name/i, hints: ["Put the script directly in the agent's script_dir and set script_dir in looksee-agent.yaml (agent README → Custom scripts)."] },

@@ -134,6 +134,27 @@
       "when": 1791939520583,
       "tag": "0018_v4_2_maintenance_time_zone",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792434910033,
+      "tag": "0019_v5_0_sites_and_endpoints",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792453561469,
+      "tag": "0020_v5_0_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792455634015,
+      "tag": "0021_v5_0_result_exclusions",
+      "breakpoints": true
     }
   ]
 }

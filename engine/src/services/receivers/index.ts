@@ -7,12 +7,12 @@ import { type EventInput, type FlowRow, FlowAggregator, portFromEnv, sourceAllow
 export { parseSyslog, sourceAllowed } from "./core.js";
 
 // Direct push: sites that send syslog/traps/flows straight to the engine's
-// public address are identified by their public IPs (endpoints.publicIps).
+// public address are identified by their public IPs (sites.publicIps).
 // Cached briefly — every received packet consults it.
 let siteIps: { at: number; map: Map<string, string> } | null = null;
 async function siteByIp(): Promise<Map<string, string>> {
   if (!siteIps || Date.now() - siteIps.at > 60_000) {
-    const rows = await db.query.endpoints.findMany();
+    const rows = await db.query.sites.findMany();
     const map = new Map<string, string>();
     for (const e of rows) for (const ip of e.publicIps ?? []) map.set(ip.trim(), e.id);
     siteIps = { at: Date.now(), map };
@@ -25,9 +25,9 @@ export function invalidateSiteIpCache() {
 // Synchronous view for the per-packet allow check; refreshed in the background.
 let siteIpSnapshot = new Map<string, string>();
 
-export async function storeEvents(list: EventInput[], endpointId: string | null) {
+export async function storeEvents(list: EventInput[], siteId: string | null) {
   if (!list.length) return;
-  const map = endpointId ? null : await siteByIp();
+  const map = siteId ? null : await siteByIp();
   const rows = list.map((e) => ({
     source: e.source,
     sourceIp: e.sourceIp,
@@ -36,15 +36,15 @@ export async function storeEvents(list: EventInput[], endpointId: string | null)
     message: e.message.slice(0, 4000),
     data: e.data,
     receivedAt: new Date(e.receivedAt),
-    endpointId: endpointId ?? map!.get(e.sourceIp) ?? null,
+    siteId: siteId ?? map!.get(e.sourceIp) ?? null,
   }));
   for (let i = 0; i < rows.length; i += 500) await db.insert(events).values(rows.slice(i, i + 500));
 }
 
-export async function storeFlows(rows: FlowRow[], endpointId: string | null) {
+export async function storeFlows(rows: FlowRow[], siteId: string | null) {
   if (!rows.length) return 0;
-  const map = endpointId ? null : await siteByIp();
-  const values = rows.map((r) => ({ ...r, bucket: new Date(r.bucket), endpointId: endpointId ?? map!.get(r.exporter) ?? null }));
+  const map = siteId ? null : await siteByIp();
+  const values = rows.map((r) => ({ ...r, bucket: new Date(r.bucket), siteId: siteId ?? map!.get(r.exporter) ?? null }));
   for (let i = 0; i < values.length; i += 500) await db.insert(flowRecords).values(values.slice(i, i + 500));
   return values.length;
 }

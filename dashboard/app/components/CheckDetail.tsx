@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type Check, type CheckResult, type Endpoint, type Host } from "../lib/api";
+import { RecoveryUrl, ResolveButton } from "./CheckRecovery";
+import { api, type Check, type CheckResult, type Site, type Endpoint } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
 import { AlertRuleManager } from "./AlertRuleManager";
 import { CheckForm } from "./CheckForm";
@@ -94,14 +95,14 @@ export function displayStatus(c: Check): string {
 
 export function CheckDetail({
   check,
+  sites,
   endpoints,
-  hosts,
   checks,
   onChanged,
 }: {
   check: Check;
+  sites: Site[];
   endpoints: Endpoint[];
-  hosts: Host[];
   checks: Check[];
   onChanged: () => void;
 }) {
@@ -114,11 +115,13 @@ export function CheckDetail({
     api.checkResults(check.id, 30).then(setResults).catch(() => setResults([]));
   }, [check.id, check.lastCheckedAt, tab]);
 
-  const host = hosts.find((h) => h.id === check.hostId);
-  const probeHost = hosts.find((h) => h.id === check.probeHostId);
-  const collectorHost = check.collectorHostId ? hosts.find((h) => h.id === check.collectorHostId) : undefined;
+  const host = endpoints.find((h) => h.id === check.endpointId);
+  const probeEndpoint = endpoints.find((h) => h.id === check.probeEndpointId);
+  const collectorEndpoint = check.collectorEndpointId ? endpoints.find((h) => h.id === check.collectorEndpointId) : undefined;
   const latestDetails = results?.find((r) => r.details != null)?.details;
-  const upCount = results?.filter((r) => r.status === "up").length ?? 0;
+  // Uptime ignores maintenance-time and excluded results, like the reports.
+  const counted = results?.filter((r) => !r.inMaintenance && !r.excluded) ?? [];
+  const upCount = counted.filter((r) => r.status === "up").length;
 
   return (
     <div className="space-y-3 border-t border-[var(--border)] bg-[var(--bg)] p-3">
@@ -154,7 +157,7 @@ export function CheckDetail({
             </div>
             <div>
               <div className="text-xs text-[var(--muted)]">Recent uptime</div>
-              {results?.length ? `${Math.round((upCount / results.length) * 1000) / 10}% of last ${results.length}` : "—"}
+              {counted.length ? `${Math.round((upCount / counted.length) * 1000) / 10}% of last ${counted.length}` : "—"}
             </div>
           </div>
           {check.lastMessage && <p className="rounded-md bg-[var(--panel)] p-2 text-xs">{check.lastMessage}</p>}
@@ -162,10 +165,11 @@ export function CheckDetail({
           <p className="text-xs text-[var(--muted)]">
             {typeLabel(check.type)} · every {check.intervalSeconds}s{check.retryIntervalSeconds ? ` (retry ${check.retryIntervalSeconds}s)` : ""}
             {host ? ` · host ${host.name}` : ""}
-            {probeHost ? ` · runs from agent on ${probeHost.name}` : ""}
-            {collectorHost ? ` · runs on the site collector on ${collectorHost.name}` : ""}
+            {probeEndpoint ? ` · runs from agent on ${probeEndpoint.name}` : ""}
+            {collectorEndpoint ? ` · runs on the site collector on ${collectorEndpoint.name}` : ""}
           </p>
-          {check.pushUrl && (
+          <RecoveryUrl check={check} onChanged={onChanged} />
+          {check.pushUrl && (check.type === "heartbeat" || check.type === "push_value") && (
             <div className="space-y-1.5 rounded-md border border-[var(--border)] p-2">
               <p className="text-xs text-[var(--muted)]">
                 Call this URL from your job{check.type === "push_value" ? " with ?value=NUMBER" : " when it finishes"}. Add <code>?status=down&amp;msg=…</code> to report a failure.
@@ -185,6 +189,7 @@ export function CheckDetail({
             </div>
           )}
           <div className="flex flex-wrap gap-2">
+            <ResolveButton check={check} onDone={onChanged} />
             <Button
               disabled={running}
               onClick={async () => {
@@ -232,8 +237,8 @@ export function CheckDetail({
         <CheckForm
           type={check.type}
           check={check}
+          sites={sites}
           endpoints={endpoints}
-          hosts={hosts}
           checks={checks}
           onSaved={() => {
             setTab("overview");

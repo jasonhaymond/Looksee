@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { api, type Check, type StatusPage } from "../lib/api";
-import { TopNav } from "../components/TopNav";
 import { PageHelp } from "../components/PageHelp";
 import { Button, EmptyState, Label, Modal, inputClass } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
@@ -25,14 +24,13 @@ export default function StatusPagesAdmin() {
   if (!authed) return null;
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6">
-      <TopNav active="/status-pages" />
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-medium">Status pages</h2>
         <Button variant="primary" onClick={() => setEditing("new")}>
           + New status page
         </Button>
       </div>
-      <PageHelp anchor="status-pages">Public pages anyone can open without signing in, showing only the checks you pick — their names, current status and 90 days of uptime. Nothing else (hosts, IPs, messages) is exposed.</PageHelp>
+      <PageHelp anchor="status-pages">Public pages anyone can open without signing in, showing only the checks you pick — their names, current status and 90 days of uptime. Nothing else (endpoints, IPs, messages) is exposed.</PageHelp>
       {pages.length === 0 ? (
         <EmptyState>No status pages yet.</EmptyState>
       ) : (

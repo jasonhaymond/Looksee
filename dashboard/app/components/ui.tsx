@@ -273,7 +273,7 @@ export function BulkBar({ count, noun, actions, onClear }: { count: number; noun
 export type PickItem = { id: string; label: string; sub?: string; group?: string };
 
 // Searchable, filterable checkbox list for choosing many of something
-// (hosts, endpoints, checks). Keeps its own scroll position across parent
+// (endpoints, sites, checks). Keeps its own scroll position across parent
 // re-renders, since items are keyed by id and the list never remounts.
 export function MultiPicker({
   items,
@@ -427,7 +427,7 @@ export function AlertOptions({ channels, value, onChange }: { channels: { id: st
 }
 
 // A small one-field prompt modal for bulk actions that need a parameter
-// (minutes, interval, tags, target endpoint...).
+// (minutes, interval, tags, target site...).
 export function PromptDialog({
   title,
   label,

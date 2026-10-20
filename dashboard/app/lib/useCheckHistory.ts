@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type CheckResult } from "./api";
 import { rangeToSince } from "./timeRange";
+import { pollEvery } from "./poll";
 
 const HISTORY_LIMIT = 50;
 // A time-windowed fetch can span far more than 50 results, so it uses a much
@@ -24,14 +25,17 @@ export function useCheckHistory(checkId: string, rangeHours?: number) {
         ? api.checkResults(checkId, RANGE_LIMIT, rangeToSince(rangeHours)).then(setResults)
         : api.checkResults(checkId, HISTORY_LIMIT).then(setResults);
     load();
-    const timer = setInterval(load, POLL_MS);
+    const timer = pollEvery(load, POLL_MS);
     return () => clearInterval(timer);
   }, [checkId, rangeHours]);
 
   if (!results || results.length === 0) return { results: null, uptimePercent: null, latencies: [] as number[] };
 
-  const upCount = results.filter((r) => r.status === "up").length;
-  const uptimePercent = Math.round((upCount / results.length) * 1000) / 10;
+  // Maintenance-time and excluded results don't count toward uptime, the
+  // same rule the engine's reports use.
+  const counted = results.filter((r) => !r.inMaintenance && !r.excluded);
+  const upCount = counted.filter((r) => r.status === "up").length;
+  const uptimePercent = counted.length ? Math.round((upCount / counted.length) * 1000) / 10 : null;
 
   // API returns newest-first; sparkline reads left-to-right chronologically.
   const latencies = results

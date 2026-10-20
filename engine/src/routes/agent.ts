@@ -1,19 +1,19 @@
 import { Router } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { endpoints, hosts, hostMetrics, checks, AGENT_CHECK_TYPES, REPORT_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/schema.js";
+import { sites, endpoints, endpointMetrics, checks, AGENT_CHECK_TYPES, REPORT_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/schema.js";
 import { minAgentVersionFor, versionAtLeast } from "../db/checkTypes.js";
 import { requireAgentAuth } from "../middleware/auth.js";
 import { recordCheckResult } from "../services/alerting.js";
 import { applyThresholds, type Status } from "../services/thresholds.js";
-import { evaluateChange, evaluateHostMetric, evaluateReboot, type Snapshot } from "../services/hostMetrics.js";
+import { evaluateChange, evaluateEndpointMetric, evaluateReboot, type Snapshot } from "../services/endpointMetrics.js";
 import { logger } from "../lib/logger.js";
 import { collectorManifest } from "../services/sites.js";
 import { recordFromSnapshot } from "../services/addresses.js";
 import { evaluateScriptOutput } from "../services/scriptOutput.js";
 
 // Inventory rows the 4.0 agent sends every few cycles; anything else in the
-// array is dropped so a malformed report can't bloat the hosts table.
+// array is dropped so a malformed report can't bloat the endpoints table.
 function cleanInventory(raw: unknown, keys: string[], max = 5000): Record<string, unknown>[] | null {
   if (!Array.isArray(raw)) return null;
   return raw.slice(0, max).filter((r) => r && typeof r === "object").map((r) => Object.fromEntries(keys.filter((k) => (r as Record<string, unknown>)[k] !== undefined).map((k) => [k, (r as Record<string, unknown>)[k]])));
@@ -26,23 +26,23 @@ const STATUSES = new Set(["up", "down", "warn", "unknown"]);
 
 // GET /api/agent/config
 // The checks this host's agent should run: its own agent_* checks plus any
-// engine-type checks pinned to it as a remote probe (probeHostId). Polled
+// engine-type checks pinned to it as a remote probe (probeEndpointId). Polled
 // every cycle, so dashboard edits take effect without an agent restart.
 // Types newer than the running agent understands are withheld and recorded
 // as a warn instead, so an old agent never reports them as "down".
 agentRouter.get("/config", async (req, res) => {
-  const hostId = req.agentHost!.id;
-  const host = await db.query.hosts.findFirst({ where: eq(hosts.id, hostId) });
+  const endpointId = req.agentEndpoint!.id;
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) });
   const owned = await db.query.checks.findMany({
-    where: and(eq(checks.hostId, hostId), inArray(checks.type, AGENT_CHECK_TYPES), eq(checks.enabled, true)),
+    where: and(eq(checks.endpointId, endpointId), inArray(checks.type, AGENT_CHECK_TYPES), eq(checks.enabled, true)),
   });
   const probes = await db.query.checks.findMany({
-    where: and(eq(checks.probeHostId, hostId), inArray(checks.type, REMOTE_PROBE_CHECK_TYPES), eq(checks.enabled, true)),
+    where: and(eq(checks.probeEndpointId, endpointId), inArray(checks.type, REMOTE_PROBE_CHECK_TYPES), eq(checks.enabled, true)),
   });
   const agentVersion = host?.agentVersion ?? null;
   const sendable: typeof owned = [];
   for (const c of [...owned, ...probes]) {
-    const min = minAgentVersionFor(c.type) ?? (c.probeHostId === hostId ? "3.0.0" : undefined);
+    const min = minAgentVersionFor(c.type) ?? (c.probeEndpointId === endpointId ? "3.0.0" : undefined);
     if (min && !versionAtLeast(agentVersion, min)) {
       if (c.lastMessage?.startsWith("Needs agent") !== true || !c.lastCheckedAt || Date.now() - c.lastCheckedAt.getTime() > 600_000) {
         await recordCheckResult(c.id, { status: "warn", message: `Needs agent ${min}+ (this host runs ${agentVersion ?? "an unknown version"}) — use "Update agent" on the Hosts page` });
@@ -56,18 +56,18 @@ agentRouter.get("/config", async (req, res) => {
   // it's read, regardless of whether the agent actually manages to update.
   const updateAvailable = host?.updateRequested ?? false;
   if (updateAvailable) {
-    await db.update(hosts).set({ updateRequested: false }).where(eq(hosts.id, hostId));
-    logger.info("agent", `Host ${hostId} polled /config with an update pending — flag consumed`, `An agent update was requested for this host and has been handed off.`, { hostId });
+    await db.update(endpoints).set({ updateRequested: false }).where(eq(endpoints.id, endpointId));
+    logger.info("agent", `Host ${endpointId} polled /config with an update pending — flag consumed`, `An agent update was requested for this host and has been handed off.`, { endpointId });
   }
 
-  logger.debug("agent", `Host ${hostId} polled /config, returned ${sendable.length} check(s)`, { hostId, checkIds: sendable.map((c) => c.id) });
+  logger.debug("agent", `Host ${endpointId} polled /config, returned ${sendable.length} check(s)`, { endpointId, checkIds: sendable.map((c) => c.id) });
   // Site collector: the agent downloads and supervises it while this host is
   // some endpoint's collector, and stops it otherwise.
   let collector: { version: string; node: string; bundleSha256: string } | null = null;
-  if (await db.query.endpoints.findFirst({ where: eq(endpoints.collectorHostId, hostId) })) {
+  if (await db.query.sites.findFirst({ where: eq(sites.collectorEndpointId, endpointId) })) {
     const manifest = collectorManifest();
     if (manifest) collector = { version: manifest.version, node: manifest.node, bundleSha256: manifest.bundle.sha256 };
-    else await db.update(hosts).set({ collectorError: "The site collector hasn't been built on the Looksee server yet — run scripts/update.sh there" }).where(eq(hosts.id, hostId));
+    else await db.update(endpoints).set({ collectorError: "The site collector hasn't been built on the Looksee server yet — run scripts/update.sh there" }).where(eq(endpoints.id, endpointId));
   }
 
   res.json({ checks: sendable.map((c) => ({ id: c.id, type: c.type, config: c.config, intervalSeconds: c.intervalSeconds })), updateAvailable, collector });
@@ -87,37 +87,37 @@ type AgentResult = { checkId?: unknown; status?: unknown; running?: unknown; mes
 // Pre-3.0 agents send `services: [{checkId, running, message?}]` instead of
 // `results`; both are accepted.
 agentRouter.post("/report", async (req, res) => {
-  const hostId = req.agentHost!.id;
-  const host = await db.query.hosts.findFirst({ where: eq(hosts.id, hostId) });
+  const endpointId = req.agentEndpoint!.id;
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) });
   const body = req.body ?? {};
-  const hostUpdate: Partial<typeof hosts.$inferInsert> = { lastSeenAt: new Date() };
-  if (Array.isArray(body.availableProcesses)) hostUpdate.availableProcesses = body.availableProcesses.map(String);
-  if (Array.isArray(body.availableServices)) hostUpdate.availableServices = body.availableServices.map(String);
-  if (typeof body.version === "string" && body.version) hostUpdate.agentVersion = body.version;
-  if (body.inventory && typeof body.inventory === "object") hostUpdate.inventory = body.inventory;
+  const endpointUpdate: Partial<typeof endpoints.$inferInsert> = { lastSeenAt: new Date() };
+  if (Array.isArray(body.availableProcesses)) endpointUpdate.availableProcesses = body.availableProcesses.map(String);
+  if (Array.isArray(body.availableServices)) endpointUpdate.availableServices = body.availableServices.map(String);
+  if (typeof body.version === "string" && body.version) endpointUpdate.agentVersion = body.version;
+  if (body.inventory && typeof body.inventory === "object") endpointUpdate.inventory = body.inventory;
   const procs = cleanInventory(body.processInventory, ["pid", "name", "user", "cpuPercent", "memoryMb", "command", "started"]);
   const svcs = cleanInventory(body.serviceInventory, ["name", "displayName", "state", "startType", "description"]);
-  if (procs) hostUpdate.processInventory = procs;
-  if (svcs) hostUpdate.serviceInventory = svcs;
-  if (procs || svcs) hostUpdate.inventoryUpdatedAt = new Date();
-  if (Array.isArray(body.availableScripts)) hostUpdate.availableScripts = body.availableScripts.map(String).slice(0, 500);
+  if (procs) endpointUpdate.processInventory = procs;
+  if (svcs) endpointUpdate.serviceInventory = svcs;
+  if (procs || svcs) endpointUpdate.inventoryUpdatedAt = new Date();
+  if (Array.isArray(body.availableScripts)) endpointUpdate.availableScripts = body.availableScripts.map(String).slice(0, 500);
   // The agent's side of running a site collector (download/start failures);
   // the collector clears it once it's up and polling.
-  if (typeof body.collectorError === "string" && body.collectorError) hostUpdate.collectorError = body.collectorError.slice(0, 1000);
+  if (typeof body.collectorError === "string" && body.collectorError) endpointUpdate.collectorError = body.collectorError.slice(0, 1000);
 
   const metrics = body.metrics;
   const extended: Snapshot | null = metrics?.extended && typeof metrics.extended === "object" ? metrics.extended : null;
   if (extended) {
     // Container names ride along with the snapshot for the check form's
     // suggestions, the same way processes/services do.
-    hostUpdate.lastSnapshot = { ...extended, availableContainers: Array.isArray(body.availableContainers) ? body.availableContainers.map(String) : undefined };
+    endpointUpdate.lastSnapshot = { ...extended, availableContainers: Array.isArray(body.availableContainers) ? body.availableContainers.map(String) : undefined };
   }
-  await db.update(hosts).set(hostUpdate).where(eq(hosts.id, hostId));
+  await db.update(endpoints).set(endpointUpdate).where(eq(endpoints.id, endpointId));
   if (extended && host) await recordFromSnapshot(host, extended).catch(() => undefined);
 
   if (metrics && typeof metrics === "object") {
-    await db.insert(hostMetrics).values({
-      hostId,
+    await db.insert(endpointMetrics).values({
+      endpointId,
       cpuPercent: numberOrNull(metrics.cpuPercent),
       memPercent: numberOrNull(metrics.memPercent),
       diskPercent: numberOrNull(metrics.diskPercent),
@@ -125,7 +125,7 @@ agentRouter.post("/report", async (req, res) => {
       netTxBytes: numberOrNull(metrics.netTxBytes),
       extended,
     });
-    await evaluateReportChecks(hostId, metrics, extended, (hostUpdate.inventory ?? host?.inventory ?? null) as Record<string, unknown> | null);
+    await evaluateReportChecks(endpointId, metrics, extended, (endpointUpdate.inventory ?? host?.inventory ?? null) as Record<string, unknown> | null);
   }
 
   const results: AgentResult[] = [...(Array.isArray(body.results) ? body.results : []), ...(Array.isArray(body.services) ? body.services : [])];
@@ -136,7 +136,7 @@ agentRouter.post("/report", async (req, res) => {
     const check = await db.query.checks.findFirst({ where: eq(checks.id, checkId) });
     // Only results for checks this host actually owns (or probes for) are
     // accepted — one agent's token can't write another host's results.
-    const owns = check && ((check.hostId === hostId && (AGENT_CHECK_TYPES as readonly string[]).includes(check.type)) || (check.probeHostId === hostId && (REMOTE_PROBE_CHECK_TYPES as readonly string[]).includes(check.type)));
+    const owns = check && ((check.endpointId === endpointId && (AGENT_CHECK_TYPES as readonly string[]).includes(check.type)) || (check.probeEndpointId === endpointId && (REMOTE_PROBE_CHECK_TYPES as readonly string[]).includes(check.type)));
     if (!check || !owns) continue;
     const status: Status = typeof r.status === "string" && STATUSES.has(r.status) ? (r.status as Status) : r.running ? "up" : "down";
     const measured = applyThresholds(
@@ -155,13 +155,13 @@ agentRouter.post("/report", async (req, res) => {
     await recordCheckResult(checkId, stateful);
     accepted++;
   }
-  logger.debug("agent", `Host ${hostId} reported ${results.length} result(s), ${accepted} accepted`, { hostId, reported: results.length, accepted });
+  logger.debug("agent", `Host ${endpointId} reported ${results.length} result(s), ${accepted} accepted`, { endpointId, reported: results.length, accepted });
   res.json({ ok: true });
 });
 
-async function evaluateReportChecks(hostId: string, metrics: Record<string, unknown>, extended: Snapshot | null, inventory: Record<string, unknown> | null) {
+async function evaluateReportChecks(endpointId: string, metrics: Record<string, unknown>, extended: Snapshot | null, inventory: Record<string, unknown> | null) {
   const reportChecks = await db.query.checks.findMany({
-    where: and(eq(checks.hostId, hostId), inArray(checks.type, REPORT_CHECK_TYPES), eq(checks.enabled, true)),
+    where: and(eq(checks.endpointId, endpointId), inArray(checks.type, REPORT_CHECK_TYPES), eq(checks.enabled, true)),
   });
   for (const check of reportChecks) {
     const config = (check.config as Record<string, unknown>) ?? {};
@@ -180,7 +180,7 @@ async function evaluateReportChecks(hostId: string, metrics: Record<string, unkn
     // /config already records a "needs agent 3.0" warn for older agents.
     if (!extended) continue;
     if (check.type === "host_metric") {
-      const result = evaluateHostMetric(extended, config);
+      const result = evaluateEndpointMetric(extended, config);
       if (result) await recordCheckResult(check.id, result);
     } else if (check.type === "host_reboot") {
       const { result, state: next } = evaluateReboot(extended, config, state);

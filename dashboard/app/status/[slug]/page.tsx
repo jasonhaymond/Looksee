@@ -3,7 +3,7 @@
 // Where this sits: published from System → Status pages. Anyone with the link
 // can open it, so it shows only what the engine's public route returns
 // (engine/src/routes/public.ts) — each listed check's name, current status
-// and 90 daily uptime bars — never hosts, addresses or messages.
+// and 90 daily uptime bars — never endpoints, addresses or messages.
 //
 // "use client" (below) makes this a React component that runs in the
 // visitor's browser, so the data is fetched from there — which is also how
@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api, type PublicStatus } from "../../lib/api";
 import { STATUS_COLOR } from "../../components/ui";
+import { pollEvery } from "../../lib/poll";
 
 // The banner text and color for the page's overall state.
 const OVERALL = {
@@ -67,7 +68,7 @@ export default function PublicStatusPage() {
         })
         .catch(() => setMissing(true));
     load();
-    const t = setInterval(load, 60_000);
+    const t = pollEvery(load, 60_000);
     return () => clearInterval(t);
   }, [slug]);
 

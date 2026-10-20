@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { checks, collectorJobs, discoveryScans, endpoints, hosts } from "../db/schema.js";
+import { checks, collectorJobs, discoveryScans, sites, endpoints } from "../db/schema.js";
 import { COLLECTOR_CHECK_TYPES } from "../db/checkTypes.js";
 import { requireAgentAuth } from "../middleware/auth.js";
 import { recordCheckResult } from "../services/alerting.js";
@@ -26,23 +26,23 @@ function portSetting(name: string, fallback: number): number | null {
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : fallback;
 }
 
-// The endpoints this host collects for; the first is where its received
+// The sites this host collects for; the first is where its received
 // events are filed (event matching treats all of them as one site).
-async function sitesFor(hostId: string) {
-  return db.query.endpoints.findMany({ where: eq(endpoints.collectorHostId, hostId), orderBy: asc(endpoints.createdAt) });
+async function sitesFor(endpointId: string) {
+  return db.query.sites.findMany({ where: eq(sites.collectorEndpointId, endpointId), orderBy: asc(sites.createdAt) });
 }
 
 collectorRouter.use(async (req, res, next) => {
-  const sites = await sitesFor(req.agentHost!.id);
-  if (!sites.length) {
-    res.status(403).json({ error: "This host isn't the site collector for any endpoint" });
+  const collected = await sitesFor(req.agentEndpoint!.id);
+  if (!collected.length) {
+    res.status(403).json({ error: "This endpoint isn't the site collector for any site" });
     return;
   }
-  res.locals.sites = sites;
+  res.locals.sites = collected;
   next();
 });
 
-const siteIds = (res: { locals: Record<string, unknown> }) => (res.locals.sites as (typeof endpoints.$inferSelect)[]).map((e) => e.id);
+const siteIds = (res: { locals: Record<string, unknown> }) => (res.locals.sites as (typeof sites.$inferSelect)[]).map((e) => e.id);
 
 // GET /api/collector/config?version=&error=
 // Polled every ~15s. Returns the checks to run (with real, unmasked config —
@@ -50,21 +50,21 @@ const siteIds = (res: { locals: Record<string, unknown> }) => (res.locals.sites 
 // one-off work: queued discovery scans and Wake-on-LAN jobs, which are marked
 // handed-out as they're returned.
 collectorRouter.get("/config", async (req, res) => {
-  const hostId = req.agentHost!.id;
+  const endpointId = req.agentEndpoint!.id;
   const ids = siteIds(res);
   const version = typeof req.query.version === "string" ? req.query.version.slice(0, 40) : null;
   const error = typeof req.query.error === "string" && req.query.error ? req.query.error.slice(0, 1000) : null;
-  await db.update(hosts).set({ collectorLastSeenAt: new Date(), collectorVersion: version, collectorError: error }).where(eq(hosts.id, hostId));
+  await db.update(endpoints).set({ collectorLastSeenAt: new Date(), collectorVersion: version, collectorError: error }).where(eq(endpoints.id, endpointId));
 
   const rows = await db.query.checks.findMany({
-    where: and(inArray(checks.endpointId, ids), inArray(checks.type, COLLECTOR_CHECK_TYPES), eq(checks.enabled, true), isNull(checks.probeHostId)),
+    where: and(inArray(checks.siteId, ids), inArray(checks.type, COLLECTOR_CHECK_TYPES), eq(checks.enabled, true), isNull(checks.probeEndpointId)),
   });
-  const scans = await db.update(discoveryScans).set({ status: "running" }).where(and(inArray(discoveryScans.endpointId, ids), eq(discoveryScans.status, "queued"))).returning();
-  const jobs = await db.update(collectorJobs).set({ status: "sent" }).where(and(inArray(collectorJobs.endpointId, ids), eq(collectorJobs.status, "queued"))).returning();
+  const scans = await db.update(discoveryScans).set({ status: "running" }).where(and(inArray(discoveryScans.siteId, ids), eq(discoveryScans.status, "queued"))).returning();
+  const jobs = await db.update(collectorJobs).set({ status: "sent" }).where(and(inArray(collectorJobs.siteId, ids), eq(collectorJobs.status, "queued"))).returning();
 
   res.json({
     pollSeconds: 15,
-    sites: (res.locals.sites as (typeof endpoints.$inferSelect)[]).map((e) => ({ id: e.id, name: e.name })),
+    sites: (res.locals.sites as (typeof sites.$inferSelect)[]).map((e) => ({ id: e.id, name: e.name })),
     checks: rows.map((c) => ({
       id: c.id,
       type: c.type,
@@ -100,7 +100,7 @@ collectorRouter.post("/results", async (req, res) => {
   const ids = siteIds(res);
   const wanted = [...new Set(list.map((r) => String(r.checkId ?? "")).filter(Boolean))];
   const owned = wanted.length
-    ? await db.query.checks.findMany({ where: and(inArray(checks.id, wanted), inArray(checks.endpointId, ids), inArray(checks.type, COLLECTOR_CHECK_TYPES), isNull(checks.probeHostId)) })
+    ? await db.query.checks.findMany({ where: and(inArray(checks.id, wanted), inArray(checks.siteId, ids), inArray(checks.type, COLLECTOR_CHECK_TYPES), isNull(checks.probeEndpointId)) })
     : [];
   const ownedIds = new Set(owned.map((c) => c.id));
   let accepted = 0;
@@ -151,7 +151,7 @@ collectorRouter.post("/events", async (req, res) => {
 // POST /api/collector/scans/:id { devices?, done?, error? }
 // devices without done = progress so far; done = the finished list.
 collectorRouter.post("/scans/:id", async (req, res) => {
-  const scan = await db.query.discoveryScans.findFirst({ where: and(eq(discoveryScans.id, req.params.id), inArray(discoveryScans.endpointId, siteIds(res))) });
+  const scan = await db.query.discoveryScans.findFirst({ where: and(eq(discoveryScans.id, req.params.id), inArray(discoveryScans.siteId, siteIds(res))) });
   if (!scan) {
     res.status(404).json({ error: "Scan not found for this collector" });
     return;
@@ -172,7 +172,7 @@ collectorRouter.post("/jobs/:id", async (req, res) => {
   const [job] = await db
     .update(collectorJobs)
     .set({ status: ok ? "done" : "error", result: message, finishedAt: new Date() })
-    .where(and(eq(collectorJobs.id, req.params.id), inArray(collectorJobs.endpointId, siteIds(res))))
+    .where(and(eq(collectorJobs.id, req.params.id), inArray(collectorJobs.siteId, siteIds(res))))
     .returning();
   if (!job) {
     res.status(404).json({ error: "Job not found for this collector" });

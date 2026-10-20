@@ -1,8 +1,8 @@
-import type { Host } from "../lib/api";
+import type { Endpoint } from "../lib/api";
 
 // A collector polls the engine every ~15s; a minute of silence is worth
 // flagging, three (the engine's own cut-off) means its checks go unknown.
-export function collectorState(host: Host): { label: string; tone: "ok" | "warn" | "bad" } {
+export function collectorState(host: Endpoint): { label: string; tone: "ok" | "warn" | "bad" } {
   if (!host.collectorLastSeenAt) {
     if (host.collectorError) return { label: `not running — ${host.collectorError}`, tone: "bad" };
     return { label: "waiting to start (needs agent 3.2.0+)", tone: "warn" };
