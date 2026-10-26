@@ -7,9 +7,16 @@
 // agent can only report results for checks that belong to its own endpoint (or
 // that are pinned to it as a remote probe) — one agent's key can't write
 // another endpoint's results. Reported data is size-limited and cleaned before
-// it's stored.
+// it's stored (app.ts also strips characters PostgreSQL can't store from
+// every request body first).
+//
+// Reliability: a report's check-in (last seen time and agent version) is
+// stored on its own before anything else, so data that can't be stored —
+// one bad value in a software list — can never make a running agent look
+// offline. Such failures are logged with the endpoint's name and shown on
+// its page (endpoints.last_report_error).
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { sites, endpoints, endpointMetrics, checks, AGENT_CHECK_TYPES, REPORT_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/schema.js";
@@ -26,6 +33,7 @@ import { withExclusions } from "../services/exclusions.js";
 import { cleanWatchdogStatus, watchdogSpecFor } from "../services/watchdogAgents.js";
 import { cleanSoftware, evaluatePackages, evaluateSoftwareChange, lockfilesFrom, type SoftwareReport } from "../services/software.js";
 import { own } from "../lib/own.js";
+import { describeError } from "../lib/errorDetail.js";
 
 // Inventory rows the 4.0 agent sends every few cycles; anything else in the
 // array is dropped so a malformed report can't bloat the endpoints table.
@@ -39,6 +47,17 @@ agentRouter.use(requireAgentAuth);
 
 const STATUSES = new Set(["up", "down", "warn", "unknown"]);
 
+/** The authenticated agent's endpoint, as requireAgentAuth sets it. */
+type AgentEndpoint = NonNullable<Request["agentEndpoint"]>;
+
+/**
+ * How log lines name the agent's endpoint: its name, hostname when known,
+ * and ID — so a failure in the Logs page says which machine it's about.
+ */
+function who(agent: AgentEndpoint): string {
+  return `endpoint "${agent.name}"${agent.hostname ? ` (${agent.hostname})` : ""} [${agent.id}]`;
+}
+
 // GET /api/agent/config
 // The checks this host's agent should run: its own agent_* checks plus any
 // engine-type checks pinned to it as a remote probe (probeEndpointId). Polled
@@ -47,6 +66,10 @@ const STATUSES = new Set(["up", "down", "warn", "unknown"]);
 // as a warn instead, so an old agent never reports them as "down".
 agentRouter.get("/config", async (req, res) => {
   const endpointId = req.agentEndpoint!.id;
+  // Remember the poll (shown on the endpoint page as "last config poll"):
+  // an agent that polls but whose reports never arrive is a different
+  // problem from one that never connects at all.
+  await db.update(endpoints).set({ lastConfigAt: new Date() }).where(eq(endpoints.id, endpointId));
   const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) });
   const owned = await db.query.checks.findMany({
     where: and(eq(checks.endpointId, endpointId), inArray(checks.type, AGENT_CHECK_TYPES), eq(checks.enabled, true)),
@@ -72,10 +95,10 @@ agentRouter.get("/config", async (req, res) => {
   const updateAvailable = host?.updateRequested ?? false;
   if (updateAvailable) {
     await db.update(endpoints).set({ updateRequested: false }).where(eq(endpoints.id, endpointId));
-    logger.info("agent", `Endpoint ${endpointId} polled /config with an update pending — flag consumed`, `An agent update was requested for this endpoint and has been handed off.`, { endpointId });
+    logger.info("agent", `${who(req.agentEndpoint!)} polled /config with an update pending — flag consumed`, `An agent update was requested for "${req.agentEndpoint!.name}" and has been handed off.`, { endpointId, endpointName: req.agentEndpoint!.name });
   }
 
-  logger.debug("agent", `Endpoint ${endpointId} polled /config, returned ${sendable.length} check(s)`, { endpointId, checkIds: sendable.map((c) => c.id) });
+  logger.debug("agent", `${who(req.agentEndpoint!)} polled /config, returned ${sendable.length} check(s)`, { endpointId, endpointName: req.agentEndpoint!.name, checkIds: sendable.map((c) => c.id) });
   // Site collector: the agent downloads and supervises it while this host is
   // some endpoint's collector, and stops it otherwise.
   let collector: { version: string; node: string; bundleSha256: string } | null = null;
@@ -112,13 +135,66 @@ type AgentResult = { checkId?: unknown; status?: unknown; running?: unknown; mes
 // Pre-3.0 agents send `services: [{checkId, running, message?}]` instead of
 // `results`; both are accepted.
 agentRouter.post("/report", async (req, res) => {
-  const endpointId = req.agentEndpoint!.id;
-  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) });
+  const agent = req.agentEndpoint!;
+  const endpointId = agent.id;
   const body = req.body ?? {};
-  const endpointUpdate: Partial<typeof endpoints.$inferInsert> = { lastSeenAt: new Date() };
+
+  // Step 1 — the check-in itself, stored on its own: last seen time and the
+  // agent's version. This is what makes the endpoint show as online, so it
+  // must not depend on anything else in the report being storable.
+  const checkIn: Partial<typeof endpoints.$inferInsert> = { lastSeenAt: new Date() };
+  if (typeof body.version === "string" && body.version) checkIn.agentVersion = body.version.slice(0, 40);
+  await db.update(endpoints).set(checkIn).where(eq(endpoints.id, endpointId));
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) });
+
+  try {
+    await storeReport(agent, host, body);
+  } catch (err) {
+    // Step 2 failed (the report's inventory, snapshot, software or results
+    // couldn't be stored). The check-in above already counts; record why
+    // the rest didn't, on the endpoint page and in the log, then let the
+    // error handler answer 500 so the agent keeps its check results and
+    // sends them again with its next report.
+    await noteReportError(agent, host, describeError(err));
+    throw err;
+  }
+  res.json({ ok: true });
+});
+
+/**
+ * Records why (part of) an agent's report couldn't be stored: on the
+ * endpoint (last_report_error, shown on its page) and in the log, with the
+ * endpoint's ID, name and hostname in the log entry's metadata so the Logs
+ * page can filter by and link to it. Logged when the reason changes or at
+ * most once an hour, since a broken agent repeats the same report every
+ * cycle. Never throws — it runs while another error is being handled.
+ */
+async function noteReportError(agent: AgentEndpoint, host: typeof endpoints.$inferSelect | undefined, reason: string) {
+  const stored = reason.slice(0, 2000);
+  const last = host?.lastReportErrorAt?.getTime() ?? 0;
+  if (host?.lastReportError !== stored || Date.now() - last > 3_600_000) {
+    logger.error("agent", `Report from ${who(agent)} couldn't be fully stored: ${stored}`, `Part of the latest report from "${agent.name}" couldn't be saved. The endpoint still shows as online; its page shows the reason.`, { endpointId: agent.id, endpointName: agent.name, hostname: agent.hostname });
+  }
+  await db.update(endpoints).set({ lastReportError: stored, lastReportErrorAt: new Date() }).where(eq(endpoints.id, agent.id)).catch(() => undefined);
+}
+
+/**
+ * Step 2 of a report: everything except the check-in — inventories,
+ * snapshot, software, metrics history, report-based checks and the agent's
+ * check results. Throws if any of it can't be stored (the caller records
+ * why). Clears the endpoint's last report error once a report goes through
+ * completely.
+ *
+ * @param agent the authenticated endpoint (requireAgentAuth)
+ * @param host its database row as it was before this report
+ * @param body the report the agent posted (already cleaned of NULs); untyped
+ *   JSON, so every field is checked before it's used
+ */
+async function storeReport(agent: AgentEndpoint, host: typeof endpoints.$inferSelect | undefined, body: Request["body"]) {
+  const endpointId = agent.id;
+  const endpointUpdate: Partial<typeof endpoints.$inferInsert> = {};
   if (Array.isArray(body.availableProcesses)) endpointUpdate.availableProcesses = body.availableProcesses.map(String);
   if (Array.isArray(body.availableServices)) endpointUpdate.availableServices = body.availableServices.map(String);
-  if (typeof body.version === "string" && body.version) endpointUpdate.agentVersion = body.version;
   if (body.inventory && typeof body.inventory === "object") endpointUpdate.inventory = body.inventory;
   const procs = cleanInventory(body.processInventory, ["pid", "name", "user", "cpuPercent", "memoryMb", "command", "started"]);
   const svcs = cleanInventory(body.serviceInventory, ["name", "displayName", "state", "startType", "description"]);
@@ -146,7 +222,8 @@ agentRouter.post("/report", async (req, res) => {
     // suggestions, the same way processes/services do.
     endpointUpdate.lastSnapshot = { ...extended, availableContainers: Array.isArray(body.availableContainers) ? body.availableContainers.map(String) : undefined };
   }
-  await db.update(endpoints).set(endpointUpdate).where(eq(endpoints.id, endpointId));
+  // The big one: inventories, snapshot and software in one row update.
+  if (Object.keys(endpointUpdate).length) await db.update(endpoints).set(endpointUpdate).where(eq(endpoints.id, endpointId));
   if (extended && host) await recordFromSnapshot(host, extended).catch(() => undefined);
 
   if (metrics && typeof metrics === "object") {
@@ -189,9 +266,11 @@ agentRouter.post("/report", async (req, res) => {
     await recordCheckResult(checkId, stateful);
     accepted++;
   }
-  logger.debug("agent", `Endpoint ${endpointId} reported ${results.length} result(s), ${accepted} accepted`, { endpointId, reported: results.length, accepted });
-  res.json({ ok: true });
-});
+  logger.debug("agent", `${who(agent)} reported ${results.length} result(s), ${accepted} accepted`, { endpointId, endpointName: agent.name, reported: results.length, accepted });
+  // Everything stored: clear an earlier failure so the endpoint page stops
+  // showing it.
+  if (host?.lastReportError) await db.update(endpoints).set({ lastReportError: null, lastReportErrorAt: null }).where(eq(endpoints.id, endpointId));
+}
 
 async function evaluateReportChecks(endpointId: string, metrics: Record<string, unknown>, extended: Snapshot | null, inventory: Record<string, unknown> | null, software: SoftwareReport | null) {
   const reportChecks = await db.query.checks.findMany({

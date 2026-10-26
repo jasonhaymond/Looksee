@@ -1,5 +1,5 @@
 # Copy to looksee-agent.yaml (gitignored, holds a real credential) and fill
-# in the values from the engine's Hosts page (create the host, then use its
+# in the values from the engine's Endpoints page (create the endpoint, then use its
 # Agent tab — the key is shown once and can't be retrieved again).
 engine_url: "https://looksee.example.com"
 agent_key: "REPLACE_WITH_HOST_AGENT_KEY"
@@ -15,3 +15,9 @@ interval_seconds: 30
 # Optional. Docker Engine API socket (default /var/run/docker.sock, or
 # npipe:////./pipe/docker_engine on Windows).
 # docker_socket: /var/run/docker.sock
+
+# Optional. HTTP(S) proxy for the agent's own traffic to the engine (reports,
+# config polls, updates, watchdog webhooks) on networks where web traffic must
+# go through one. The agent runs as a system account, which doesn't use the
+# proxy set up for signed-in users. Checks still connect directly.
+# proxy_url: http://proxy.example.com:8080

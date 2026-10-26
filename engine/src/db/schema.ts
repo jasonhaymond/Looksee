@@ -297,7 +297,21 @@ export const endpoints = pgTable("endpoints", {
   // agent is actually provisioned for this endpoint (agentless endpoints
   // never get one). Secret: never returned by the API.
   agentApiKey: text("agent_api_key").unique(),
+  // When the agent's last report was stored — what "online" means. Written
+  // first and on its own by POST /api/agent/report, so a report whose
+  // inventory/software part fails to store still counts as a check-in.
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  // Agent diagnostics (5.1), shown on the endpoint page so "the agent
+  // connects but its reports are rejected" can be told apart from "the agent
+  // never connects" without SQL: when it last fetched its config, why its
+  // last report (or part of one) couldn't be stored and when — cleared by
+  // the next fully stored report — and the address its last authenticated
+  // request came from (also used to avoid blocking a site's shared address
+  // because of one agent with an old key; services/security.ts).
+  lastConfigAt: timestamp("last_config_at", { withTimezone: true }),
+  lastReportError: text("last_report_error"),
+  lastReportErrorAt: timestamp("last_report_error_at", { withTimezone: true }),
+  lastAgentIp: text("last_agent_ip"),
   // Snapshot of what the agent actually found on its last report cycle —
   // string arrays, refreshed every report, null until the agent has
   // reported at least once. Feeds the check form's name suggestions

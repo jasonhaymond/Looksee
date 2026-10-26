@@ -181,13 +181,19 @@ the old server. Before taking the backup in §2, note the same counts on the old
 endpoints):
 
 ```bash
-docker compose exec -T postgres psql -U looksee -d looksee -c "SELECT (SELECT count(*) FROM sites) sites, (SELECT count(*) FROM endpoints) endpoints, (SELECT count(*) FROM checks) checks, (SELECT count(*) FROM users) users, (SELECT count(*) FROM check_results) results, (SELECT count(*) FROM events) events; SELECT pg_size_pretty(pg_database_size('looksee'));"
+docker compose exec -T postgres psql -U looksee -d looksee -c "SELECT (SELECT count(*) FROM sites) sites, (SELECT count(*) FROM endpoints) endpoints, (SELECT count(*) FROM checks) checks, (SELECT count(*) FROM users) users, (SELECT count(*) FROM check_results) results, (SELECT count(*) FROM events) events, (SELECT count(*) FROM flow_records) flows, (SELECT count(*) FROM logs) logs; SELECT pg_size_pretty(pg_database_size('looksee'));"
 ```
 
 The small tables (sites, endpoints, checks, users) must match exactly; the big ones
-(results, events) match the old server's counts at the moment of its backup. A database
-that restored without errors but has far fewer rows than expected points to the wrong
-dump file.
+(results, events, flows, logs) match the old server's counts at the moment of its
+backup. A database that restored without errors but has far fewer rows than expected
+points to the wrong dump file. The database size should be close to the old server's
+too — a freshly restored database is often somewhat *smaller* (no bloat from deleted
+rows), never dramatically so.
+
+For scale: a real migration of a 4.2 GB database restored about 5.57 million events,
+4.81 million flow records, 4.46 million check results and 828,000 log lines. Yours will
+differ — what matters is that old and new agree.
 
 ## 6. Build, run, and verify — before cutting over
 
@@ -209,7 +215,15 @@ hostname (needed for cookies/CORS to line up correctly in a real browser check):
 curl -s http://localhost:4100/api/health
 ```
 
-Expect `{"status":"ok","db":"connected",...}` with the version you expect. If you want
+Expect something like:
+
+```json
+{"status":"ok","db":"connected","version":"5.0.0","agentVersion":"5.0.0"}
+```
+
+`db` must be `connected` (the engine reached the restored database), and `version` must
+be the release you checked out. `agentVersion` is the version of the agent binaries
+built in §8 — it may be missing or stale until you've done that step. If you want
 a real browser check of the dashboard itself before DNS is pointed here, add a
 temporary `/etc/hosts` entry on your own machine mapping the domain to the new server's
 IP, browse to it, sign in with your real (restored) account, and confirm your real
@@ -275,7 +289,17 @@ With the new server fully verified (§6) and the reverse proxy live (§7):
    the new IP.
 4. **Do a final real check** against the now-live domain: load the dashboard, sign in,
    confirm an agent report comes in from an endpoint you still control, confirm a check
-   still runs.
+   still runs, and open the heaviest pages again (Checks, a busy check's history) now
+   that traffic goes through the real reverse proxy.
+5. **Read the engine's log** for database errors in the first minutes of real traffic:
+
+   ```bash
+   pm2 logs looksee-engine --lines 200 --nostream | grep -iE "error|ECONNREFUSED|relation .* does not exist"
+   ```
+
+   No output is what you want. `relation … does not exist` means a migration didn't run
+   (re-run `npm run db:migrate`, §5); `ECONNREFUSED` means the engine can't reach
+   Postgres (check `docker compose ps` and `DATABASE_URL`).
 
 Keep the old server running and reachable for at least a day or two after cutover —
 see [§12](#12-decommission-the-old-server).
@@ -363,7 +387,14 @@ pm2 list                                   # looksee-engine, looksee-dashboard
 cd ~/Looksee && docker compose ps          # the Looksee Postgres container
 docker volume ls | grep -i looksee         # its data volume
 systemctl list-unit-files | grep -i looksee   # a looksee-agent unit, if an agent ran here
+ls -d ~/Looksee ~/looksee-backups ~/looksee-migration 2>/dev/null   # code, backups, migration dumps
 ```
+
+Also check two things that don't live on the old machine itself: **the reverse proxy**
+(no site block or route still points at the old server's address — if the proxy runs on
+a separate host, look there) and **DNS** (no record, including an internal one, still
+resolves to the old server). Anything still pointing at it breaks the moment it's shut
+down.
 
 Then, in this order:
 
@@ -383,8 +414,11 @@ Then, in this order:
    session can drop) that look like a broken server but aren't. Then
    `rm -rf ~/Looksee ~/looksee-migration`.
 
-**Check:** the four inventory commands above show nothing of Looksee's, and the other
-services on that machine are still running (`pm2 list`, `docker ps`).
+**Check:** the inventory commands above show nothing of Looksee's, nothing is still
+listening on its ports (`ss -ltnp | grep -E ':(4100|3100)\b'` prints nothing — 4100 is the
+engine, 3100 the dashboard), and the other services on that machine are still running
+(`pm2 list`, `docker ps`). These commands are an inventory, not proof on their own — read
+the output rather than just glancing at it, especially `docker volume ls`.
 
 ## 13. If something goes wrong
 
@@ -411,27 +445,58 @@ Network, reload, and click the slowest request (usually `checks`):
 - Long *Waiting for server response* → the engine or database is slow; check
   `pm2 logs looksee-engine` for errors and see *Postgres memory* in §14.
 
+Compression only fixes transfer time; it won't speed up a slow query. Look at both
+numbers before deciding what to change.
+
+**Postgres settings don't match what you set.** Query `pg_settings` (the command in
+§14, item 4). If `pending_restart` is `t`, Postgres hasn't been restarted since the
+change — `docker compose up -d postgres` (or `docker compose restart postgres`). If the
+values are still the defaults, the change never reached the container: confirm
+`docker-compose.override.yml` sits next to `docker-compose.yml` in `~/Looksee` and that
+`docker compose config` shows the `command:` line. Settings passed this way survive
+container replacement; an edit made *inside* the container to `postgresql.conf` does
+not reliably, which is why this guide doesn't use one.
+
+**Commands fail with `uv_cwd` or the SSH session drops during cleanup.** The shell is
+sitting in a directory that was just deleted (§12, step 5). `cd ~` (or reconnect), then
+check the real state — `pm2 list`, `docker ps -a`, `systemctl list-unit-files | grep -i
+looksee` — before repeating any destructive command. It isn't a sign the server broke.
+
+**The new server is short on memory.** `free -h` shows what's used and whether it's
+swapping. `shared_buffers` is memory Postgres really takes; `effective_cache_size`
+takes nothing; `work_mem` can be used several times per query and per connection. If
+the machine swaps after raising `shared_buffers`, lower it again before touching
+anything else (§14, item 4).
+
 ## 14. Lessons from a real migration
 
-From moving a production deployment with a 4 GB database (about 5.5 million events,
-4.8 million flow records, 4.5 million check results and 800,000 log lines) to a new
-virtual machine with about 8 GB of RAM. Your numbers will differ; the lessons don't.
+From moving a production deployment with a 4.2 GB database (about 5.6 million events,
+4.8 million flow records, 4.5 million check results and 830,000 log lines) to a new
+virtual machine with about 7.6 GB of RAM, behind Caddy on a separate reverse-proxy host.
+Your numbers will differ; the lessons don't.
 
 1. **A healthy API isn't a finished migration.** Compare database size and row counts
-   (§5), then use the real dashboard through the real reverse proxy (§6, §9).
-2. **Measure before tuning.** DevTools showed the `checks` response was about 340 KB and
-   took almost three seconds to *download* — the server had answered in under one. The
-   fix was compression at the proxy, not a faster database.
+   (§5), then use the real dashboard through the real reverse proxy (§6, §9) — including
+   its heaviest pages, not just the home page.
+2. **Measure before tuning.** DevTools showed the `checks` response was about 340 KB,
+   uncompressed: about 0.9 seconds waiting for the server, then 2.75 seconds to
+   *download*. Transfer, not the database, was most of the delay, so the fix was
+   compression at the proxy.
 3. **Enable compression** (`encode zstd gzip` in Caddy) — large JSON responses shrink to
    a fraction of their size.
 4. **Postgres memory.** The Postgres container starts with conservative defaults
-   (`shared_buffers = 128MB`). On that 8 GB machine, two settings were raised and
+   (`shared_buffers = 128MB`, `effective_cache_size = 4GB`, `work_mem = 4MB`,
+   `maintenance_work_mem = 64MB`). On that 7.6 GB machine, two settings were raised and
    nothing else: `shared_buffers = 1GB` (memory Postgres reserves for its own cache) and
-   `effective_cache_size = 5GB` (only a planner estimate of the cache available — it
-   reserves nothing). `work_mem` stayed at 4 MB: it applies per sort or hash *in every
-   query*, so raising it multiplies memory use under load. To change them in the
-   Compose setup, add a `command:` to the `postgres` service in a
-   `docker-compose.override.yml` (not tracked by git, so updates don't conflict):
+   `effective_cache_size = 5GB` (only a planner estimate of the cache Postgres and the
+   operating system together have — it reserves nothing). `work_mem` stayed at 4 MB: it
+   applies per sort or hash *in every query*, so raising it multiplies memory use under
+   load. `maintenance_work_mem` (used by vacuum and index builds) stayed at 64 MB too.
+
+   **Record the current values first** (run the `pg_settings` query below before
+   changing anything) so you can compare, and go back. Then, in the Compose setup, add
+   a `command:` to the `postgres` service in a `docker-compose.override.yml` (gitignored,
+   so updates don't conflict, and it survives the container being recreated):
 
    ```yaml
    # docker-compose.override.yml — this server only
@@ -448,9 +513,12 @@ virtual machine with about 8 GB of RAM. Your numbers will differ; the lessons do
    ```
 
    `shared_buffers` reads `131072` with unit `8kB` (= 1 GB), `effective_cache_size`
-   `655360` (= 5 GB), and `pending_restart` is `f`. Leave room for the engine, the
-   dashboard, the operating system's own file cache and anything else on the machine;
-   scale the values to its RAM rather than copying these.
+   `655360` (= 5 GB), and `pending_restart` is `f`. Afterwards, watch `free -h` (no
+   growing swap use), the engine log, and how fast the heavy dashboard pages load,
+   compared with before the change — more cache isn't automatically faster. Leave room
+   for the engine, the dashboard, the operating system's own file cache and anything
+   else on the machine; scale the values to its RAM rather than copying these.
 5. **Keep the old server untouched until the new one is proven,** and clean it up
-   narrowly afterwards (§12).
+   narrowly afterwards (§12) — only the pieces that are Looksee's, never a blanket
+   `docker volume prune` or `pm2 delete all` on a machine that runs other things.
 6. **Leave a directory before deleting it** (§12, step 5).

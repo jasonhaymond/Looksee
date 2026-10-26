@@ -596,6 +596,15 @@ Agent 4.0+ keeps a full inventory of each endpoint, refreshed about every 5 minu
 The same lists feed **Browse** in the check form, so any of them is one click from being
 a check. Older agents report names only; update them from the Agent tab.
 
+The **Agent** tab also shows the agent's connection at a glance: when it last fetched its
+settings (*last config poll*), when its last report was stored, and the address it
+connects from. If part of a report couldn't be saved, a **Warning** line there (and under
+the endpoint's name) gives the reason — the endpoint still counts as online. An agent
+that never shows a config poll has never reached Looksee with its key; the agent guide's
+[troubleshooting section](../agent/README.md#troubleshooting-an-endpoint-never-checks-in)
+goes through the rest. On the **Logs** page, entries about an endpoint link to it, and
+*only this endpoint* narrows the log to that one.
+
 ### MAC addresses and IP changes
 
 Looksee records which IP address each MAC address was seen with, from three sources: the

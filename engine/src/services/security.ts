@@ -8,7 +8,7 @@
 import type { Request } from "express";
 import { and, eq, gt, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { ipBlocks, notificationChannels, securityEvents, securityRules, securitySettings, trustedIps, users } from "../db/schema.js";
+import { endpoints, ipBlocks, notificationChannels, securityEvents, securityRules, securitySettings, trustedIps, users } from "../db/schema.js";
 import { buildList, clientIp, ipInList, listHas } from "../lib/ipMatch.js";
 import { logger } from "../lib/logger.js";
 import { sendEmail } from "./notifications/email.js";
@@ -35,6 +35,9 @@ export const SECURITY_EVENT_KINDS: Record<string, { label: string; severity: "in
   session_revoked: { label: "Session signed out remotely", severity: "info" },
   allowlist_denied: { label: "Request from an IP not on the allowlist", severity: "warn" },
   ip_blocked: { label: "IP blocked (by a rule or by hand)", severity: "warn" },
+  // Recorded at most once a minute per address (middleware/securityGate.ts),
+  // so a blocked agent polling every 15 seconds can't flood the log.
+  blocked_request: { label: "Request refused because its IP is blocked", severity: "info" },
   scan_probe: { label: "Scanner/exploit probe (e.g. /.env, /wp-login.php)", severity: "warn" },
   bad_agent_key: { label: "Agent/collector request with an invalid key", severity: "warn" },
   bad_push_token: { label: "Heartbeat URL with an unknown token", severity: "info" },
@@ -142,6 +145,10 @@ async function evaluateRules(kind: string, ip: string | null, detail?: string) {
       // typos at home shouldn't lock you out for an hour. You still get the
       // notification.
       if (await isOwnAddress(ip)) action = ` ${ip} wasn't blocked because it's on your allowlist or one you've signed in from before.`;
+      // Agents behind one shared (NAT) address: one agent with an old or
+      // revoked key would otherwise get the address blocked and take every
+      // working agent at that site — and the installer — offline with it.
+      else if (kind === "bad_agent_key" && (await isAgentAddress(ip))) action = ` ${ip} wasn't blocked because working agents check in from it — an agent there is probably still using an old or revoked key (reinstall it with the endpoint's current key, or uninstall it).`;
       else {
         await blockIp(ip, rule.blockMinutes, `Rule "${rule.name}"`);
         action = ` ${ip} has been blocked for ${rule.blockMinutes} minutes.`;
@@ -176,6 +183,17 @@ export async function isOwnAddress(ip: string): Promise<boolean> {
   const s = await getSecuritySettings();
   if (s.allowlist.length && ipInList(ip, s.allowlist)) return true;
   return Boolean(await db.query.trustedIps.findFirst({ where: eq(trustedIps.ip, ip) }));
+}
+
+/**
+ * Whether a working agent has checked in from this address in the last 24
+ * hours (endpoints.last_agent_ip, written by requireAgentAuth). Used only to
+ * decide against auto-blocking for bad agent keys; the event is still
+ * recorded and the notification still sent.
+ */
+export async function isAgentAddress(ip: string): Promise<boolean> {
+  const since = new Date(Date.now() - 24 * 60 * 60_000);
+  return Boolean(await db.query.endpoints.findFirst({ where: and(eq(endpoints.lastAgentIp, ip), gte(endpoints.lastSeenAt, since)), columns: { id: true } }));
 }
 
 // ---- lockout -----------------------------------------------------------

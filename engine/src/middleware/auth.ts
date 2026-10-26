@@ -13,13 +13,16 @@ import { sessions, users, endpoints } from "../db/schema.js";
 import { SESSION_COOKIE_NAME } from "../lib/session.js";
 import { getSecuritySettings, recordSecurityEvent } from "../services/security.js";
 import { own } from "../lib/own.js";
+import { clientIp } from "../lib/ipMatch.js";
 
 // Adds the signed-in user / authenticated agent to Express's request type
 // (TypeScript "module augmentation": extends a library's own type).
 declare module "express-serve-static-core" {
   interface Request {
     user?: { id: string; email: string };
-    agentEndpoint?: { id: string; siteId: string };
+    // name/hostname ride along so log lines can say which machine they're
+    // about, not just its ID.
+    agentEndpoint?: { id: string; siteId: string; name: string; hostname: string | null };
   }
 }
 
@@ -58,7 +61,18 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
 // Auth for the agent-ingest endpoint: a bearer token that must match a
 // host's own agentApiKey, scoping the request to exactly that host.
+//
+// app.ts runs this once for /api/agent and /api/collector *before* the
+// request body is read, so a body-parser failure (a report over the size
+// limit) can still be logged against the right endpoint; the routers run it
+// again as their own guard, and the second run returns straight away.
+//
+// Side effect: remembers the address the endpoint's agent last connected
+// from (endpoints.last_agent_ip), written only when it changes. The security
+// rules use it to tell a site's shared address, where good agents are
+// checking in, from a stranger guessing keys (services/security.ts).
 export async function requireAgentAuth(req: Request, res: Response, next: NextFunction) {
+  if (req.agentEndpoint) return next();
   const header = req.headers.authorization;
   const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
   if (!token) {
@@ -72,6 +86,8 @@ export async function requireAgentAuth(req: Request, res: Response, next: NextFu
     res.status(401).json({ error: "Invalid agent token" });
     return;
   }
-  req.agentEndpoint = { id: host.id, siteId: host.siteId };
+  req.agentEndpoint = { id: host.id, siteId: host.siteId, name: host.name, hostname: host.hostname };
+  const ip = clientIp(req);
+  if (ip && ip !== host.lastAgentIp) await db.update(endpoints).set({ lastAgentIp: ip }).where(eq(endpoints.id, host.id));
   next();
 }

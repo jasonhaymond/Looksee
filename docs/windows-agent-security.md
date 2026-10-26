@@ -49,10 +49,13 @@ it — true of anything self-built), or an **unsigned process that starts PowerS
    ```
 
    `LastTaskResult` other than `0` or `267009` (running) means it failed to start.
-2. Try running it in the foreground to see the error:
+2. Read the agent's log, `C:\ProgramData\LookseeAgent\looksee-agent.log` (agent 5.1+;
+   Task Scheduler discards console output, so older agents left no trace). If the file
+   doesn't exist, the agent never got as far as starting. Then try running it in the
+   foreground to see the error:
 
    ```powershell
-   & "C:\ProgramData\LookseeAgent\looksee-agent.exe" -config "C:\ProgramData\LookseeAgent\looksee-agent.yaml" -once
+   & "C:\ProgramData\LookseeAgent\looksee-agent.exe" -config "C:\ProgramData\LookseeAgent\looksee-agent.yaml" -once -log-file none
    ```
 
    "This app has been blocked for your protection", "Access is denied", or the file

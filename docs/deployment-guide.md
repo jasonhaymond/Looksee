@@ -812,6 +812,19 @@ to this table).
   `DATABASE_URL` in `engine/.env` matches.
 - **Agent reports "Invalid agent token"** — the host's agent key was reset (regenerating
   it invalidates the old one) or the wrong host's key is in `looksee-agent.yaml`.
+- **An endpoint never shows as checked in** — open its **Agent** tab: *last config poll*
+  says whether the agent reaches the engine at all, and a warning there gives the reason
+  if its reports can't be stored. The agent's own log (on Windows
+  `C:\ProgramData\LookseeAgent\looksee-agent.log`) says why from its side. The full
+  walk-through, including proxy-only networks and Windows versions the agent can't run
+  on, is in the agent guide:
+  [Troubleshooting: an endpoint never checks in](../agent/README.md#troubleshooting-an-endpoint-never-checks-in).
+- **Logs show `Database query failed: unsupported Unicode escape sequence`** (engines
+  before 5.1 logged it as `Unhandled error on POST /api/agent/report: Error: Failed
+  query: update "endpoints" …`) — a Windows program's name contains NUL characters (a
+  SHARP printer-driver uninstaller is a known one). Update the engine to 5.1 or later;
+  it cleans them out, and affected endpoints check in on their next cycle without an
+  agent update.
 
 ## 11. Security notes
 

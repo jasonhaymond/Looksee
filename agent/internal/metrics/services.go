@@ -1,13 +1,27 @@
+// Process and service lookups: "is this process running", "is this service
+// active", and the name lists the dashboard's check form suggests from.
+//
+// Every OS command here runs through execx with a timeout. A service
+// manager that hangs (a wedged systemd, a slow WMI on Windows) must not stall
+// the agent's report cycle — before 5.1 these calls had no timeout, and one
+// hang on the first cycle meant the endpoint never checked in at all.
 package metrics
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
+
+	"looksee-agent/internal/execx"
+)
+
+// How long a single service-manager query may take before it's abandoned.
+const (
+	serviceQueryTimeout = 20 * time.Second
+	serviceListTimeout  = 60 * time.Second
 )
 
 // IsProcessRunning matches by process name substring rather than requiring
@@ -60,39 +74,39 @@ func ListProcessNames() ([]string, error) {
 // IsServiceActive queries the real OS service manager — unlike
 // IsProcessRunning, this checks whether `name` is a *registered service*
 // that's active, not just whether some process happens to be running with
-// a matching name. On Linux, `name` is a separate exec.Command argv
-// element, never concatenated into a shell string. On Windows, PowerShell's
-// -Command treats everything after it as script text to parse — trailing
-// argv elements do NOT bind to $args the way they do with -File, so `name`
-// is passed via an environment variable instead ($env:LOOKSEE_SVC_NAME),
-// which PowerShell reads as a plain string value, never as code. (Verified
-// for real against powershell.exe: the $args[0] form fails to parse
-// entirely — "Unexpected token" — while $env: works correctly for both a
-// running and a nonexistent service.)
+// a matching name. On Linux, `name` is a separate argv element, never
+// concatenated into a shell string. On Windows, PowerShell's -Command
+// treats everything after it as script text to parse — trailing argv
+// elements do NOT bind to $args the way they do with -File, so `name` is
+// passed via an environment variable instead ($env:LOOKSEE_SVC_NAME), which
+// PowerShell reads as a plain string value, never as code.
 func IsServiceActive(name string) (bool, error) {
 	if name == "" {
 		return false, nil
 	}
 	switch runtime.GOOS {
 	case "linux":
-		out, err := exec.Command("systemctl", "is-active", name).Output()
+		res, err := execx.Run(serviceQueryTimeout, nil, "systemctl", "is-active", name)
 		// systemctl exits non-zero for "inactive"/"failed"/unknown units —
-		// that's a real result (service isn't active), not a failure to run
-		// the check itself, so only bail out if there's no output at all.
-		status := strings.TrimSpace(string(out))
-		if status == "" && err != nil {
+		// that's a real result (service isn't active), returned as data by
+		// execx, so only a failure to run it at all is an error.
+		status := strings.TrimSpace(res.Stdout)
+		if err != nil {
 			return false, fmt.Errorf("running systemctl: %w", err)
+		}
+		// No answer at all (systemd unreachable) is a failure to check,
+		// not "inactive".
+		if status == "" && res.ExitCode != 0 {
+			return false, fmt.Errorf("running systemctl: %s", strings.TrimSpace(res.Stderr))
 		}
 		return status == "active", nil
 	case "windows":
-		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+		res, err := execx.PowerShell(serviceQueryTimeout, map[string]string{"LOOKSEE_SVC_NAME": name},
 			"(Get-Service -Name $env:LOOKSEE_SVC_NAME -ErrorAction SilentlyContinue).Status")
-		cmd.Env = append(os.Environ(), "LOOKSEE_SVC_NAME="+name)
-		out, err := cmd.Output()
 		if err != nil {
 			return false, fmt.Errorf("running Get-Service: %w", err)
 		}
-		return strings.TrimSpace(string(out)) == "Running", nil
+		return strings.TrimSpace(res.Stdout) == "Running", nil
 	default:
 		return false, fmt.Errorf("service checks aren't supported on %s yet", runtime.GOOS)
 	}
@@ -105,12 +119,12 @@ func IsServiceActive(name string) (bool, error) {
 func ListServiceNames() ([]string, error) {
 	switch runtime.GOOS {
 	case "linux":
-		out, err := exec.Command("systemctl", "list-units", "--type=service", "--all", "--no-legend", "--plain", "--no-pager").Output()
+		res, err := execx.Run(serviceListTimeout, nil, "systemctl", "list-units", "--type=service", "--all", "--no-legend", "--plain", "--no-pager")
 		if err != nil {
 			return nil, fmt.Errorf("running systemctl: %w", err)
 		}
 		var names []string
-		for _, line := range strings.Split(string(out), "\n") {
+		for _, line := range strings.Split(res.Stdout, "\n") {
 			fields := strings.Fields(line)
 			if len(fields) == 0 {
 				continue
@@ -119,19 +133,14 @@ func ListServiceNames() ([]string, error) {
 		}
 		return names, nil
 	case "windows":
-		out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-			"Get-Service | Select-Object -ExpandProperty Name").Output()
+		// -ErrorAction SilentlyContinue: one service this account can't
+		// query mustn't fail the whole list (execx.PowerShell otherwise
+		// stops at the first error).
+		res, err := execx.PowerShell(serviceListTimeout, nil, "Get-Service -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name")
 		if err != nil {
 			return nil, fmt.Errorf("running Get-Service: %w", err)
 		}
-		var names []string
-		for _, line := range strings.Split(string(out), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				names = append(names, line)
-			}
-		}
-		return names, nil
+		return lines(res.Stdout), nil
 	default:
 		return nil, nil
 	}

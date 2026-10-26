@@ -52,11 +52,25 @@ installRouter.get("/agent.sh", (_req, res) => {
 # On Linux the agent gets the access its checks need by default (journal,
 # logs, SMART, read-only /home, Docker); --minimal leaves all of that out,
 # --no-docker only the Docker access (see install.sh).
+# Proxy-only network: put LOOKSEE_PROXY=http://proxy.example.com:8080 after
+# sudo (… | sudo LOOKSEE_PROXY=http://proxy.example.com:8080 bash -s -- <key>);
+# it's used for these downloads and written into the agent's config.
 set -euo pipefail
 
 AGENT_KEY="\${1:?Usage: curl -fsSL ${url}/install/agent.sh | sudo bash -s -- <agent-key> [--minimal] [--no-docker]}"
 shift
 ENGINE_URL="${url}"
+PROXY="\${LOOKSEE_PROXY:-}"
+if [ -n "$PROXY" ]; then
+  # http:// or https://, then host[:port] only — no spaces, quotes or path,
+  # so the value can't break the config file it's written into.
+  if ! printf '%s' "$PROXY" | grep -Eq '^https?://[^[:space:]"/]+/?$'; then
+    echo "LOOKSEE_PROXY must look like http://proxy.example.com:8080 (got '$PROXY')" >&2
+    exit 1
+  fi
+  # curl reads these for every download below.
+  export https_proxy="$PROXY" http_proxy="$PROXY"
+fi
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -83,6 +97,7 @@ engine_url: "$ENGINE_URL"
 agent_key: "$AGENT_KEY"
 interval_seconds: 30
 CFG
+if [ -n "$PROXY" ]; then echo "proxy_url: \\"$PROXY\\"" >> "$WORK_DIR/looksee-agent.yaml"; fi
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Binary + config ready in $WORK_DIR."

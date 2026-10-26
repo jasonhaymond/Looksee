@@ -4,7 +4,8 @@
 //
 // Security: authenticated with the collector endpoint's agent key; a collector
 // only receives checks of the sites it collects for, and results for anything
-// else are ignored.
+// else are ignored. Posted bodies are cleaned of characters PostgreSQL can't
+// store before they reach these routes (app.ts).
 
 import { Router } from "express";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
@@ -20,6 +21,7 @@ import type { ScannedDevice } from "../services/discoveryCore.js";
 import { logger } from "../lib/logger.js";
 import { prepareConfig } from "../services/checkConfig.js";
 import { own } from "../lib/own.js";
+import { truncate } from "../lib/stripNul.js";
 
 // The API a site collector calls, authenticated with its host's agent key.
 // Everything is a request the collector makes outbound over HTTPS, so a
@@ -62,8 +64,10 @@ const siteIds = (res: { locals: Record<string, unknown> }) => (res.locals.sites 
 collectorRouter.get("/config", async (req, res) => {
   const endpointId = req.agentEndpoint!.id;
   const ids = siteIds(res);
-  const version = typeof req.query.version === "string" ? req.query.version.slice(0, 40) : null;
-  const error = typeof req.query.error === "string" && req.query.error ? req.query.error.slice(0, 1000) : null;
+  // Query-string values aren't covered by the body cleaning in app.ts, so
+  // they're cleaned here (NUL characters can't be stored — lib/stripNul.ts).
+  const version = typeof req.query.version === "string" ? truncate(req.query.version, 40) : null;
+  const error = typeof req.query.error === "string" && req.query.error ? truncate(req.query.error, 1000) || null : null;
   await db.update(endpoints).set({ collectorLastSeenAt: new Date(), collectorVersion: version, collectorError: error }).where(eq(endpoints.id, endpointId));
 
   const rows = await db.query.checks.findMany({

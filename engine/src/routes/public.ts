@@ -22,6 +22,7 @@ import { recordCheckResult, resolveCheck } from "../services/alerting.js";
 import { recordSecurityEvent } from "../services/security.js";
 import { applyThresholds, type Status } from "../services/thresholds.js";
 import { isValidTimeZone, localMidnight, recentDates } from "../lib/timeZone.js";
+import { stripNul } from "../lib/stripNul.js";
 
 export const publicRouter = Router();
 
@@ -52,7 +53,7 @@ publicRouter.all("/hb/:token", pushLimiter, async (req, res) => {
   // recovered. It can't report a failure or a value — the check's own probe
   // does that.
   if (check.type !== "heartbeat" && check.type !== "push_value") {
-    const input = { ...(req.body && typeof req.body === "object" ? req.body : {}), ...req.query } as Record<string, unknown>;
+    const input = stripNul({ ...(req.body && typeof req.body === "object" ? req.body : {}), ...req.query }) as Record<string, unknown>;
     if (STATUS_WORDS[String(input.status ?? "up").toLowerCase()] !== "up") {
       res.status(400).type("text/plain").send("This is a recovery URL: it only accepts status=up");
       return;
@@ -66,8 +67,10 @@ publicRouter.all("/hb/:token", pushLimiter, async (req, res) => {
     res.status(200).type("text/plain").send("OK (check is disabled)");
     return;
   }
-  // Query-string values win over body values when both are sent.
-  const input = { ...(req.body && typeof req.body === "object" ? req.body : {}), ...req.query } as Record<string, unknown>;
+  // Query-string values win over body values when both are sent. Both are
+  // cleaned of NUL characters, which the database can't store
+  // (lib/stripNul.ts; app.ts only cleans the body).
+  const input = stripNul({ ...(req.body && typeof req.body === "object" ? req.body : {}), ...req.query }) as Record<string, unknown>;
   const status = STATUS_WORDS[String(input.status ?? "up").toLowerCase()] ?? "up";
   const message = input.msg ?? input.message;
   const rawValue = input.value;

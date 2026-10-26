@@ -145,10 +145,21 @@ push). **Send a test** confirms the path.
 |---|---|---|
 | Password guessing | 5 failed sign-ins or wrong codes from one IP in 10 min | Notify + block the IP for 60 min |
 | Vulnerability scanner | 3 scanner probes from one IP in 10 min | Notify + block for 24 h |
-| Agent key guessing | 10 invalid agent keys from one IP in 10 min | Notify + block for 60 min |
+| Agent key guessing | 10 invalid agent keys from one IP in 10 min | Notify + block for 60 min — except an address working agents have reported from in the last 24 hours (see below) |
 | Heartbeat token guessing | 30 unknown heartbeat tokens from one IP in 10 min | Notify + block for 60 min |
 | Sign-in from a new IP | Any successful sign-in from an IP not used before | Notify |
 | Lockout or password change | An account lockout, a password change, or a recovery code used | Notify |
+
+**Agent key guessing at a site with a shared address.** Several agents behind one
+router (NAT) reach Looksee from the same public address. If one of them still has an old
+or revoked key, its refused polls used to trip *Agent key guessing* and block that
+address — taking every working agent at the site (and the installer) offline with it.
+Since 5.1 a rule doesn't block an address that working agents have reported from in the
+last 24 hours; the events are still recorded and the notification still says what
+happened and which address. Fix the stale agent by reinstalling it with its endpoint's
+current key, or uninstalling it. Agents from 5.1 also poll less often after three
+refusals in a row. (Agent keys are 48 random hex characters, so skipping the block for
+those addresses doesn't make guessing a key practical.)
 
 **Your own rules:** **+ Add rule**, tick the event types, set *at least N times within M
 minutes*, choose per-IP or overall counting, and whether to notify and/or block (and for
@@ -162,8 +173,10 @@ an ongoing attack. Examples:
 
 **Blocked IPs** (on **IP access**) lists current blocks, whether from a rule or added by
 hand (IP or CIDR, for a time or until removed), with **Unblock**. A blocked IP gets
-`403` for everything except `/api/health`. Looksee won't let you block your own current
-IP by hand.
+`403` for everything except `/api/health`, and the security log shows *Request refused
+because its IP is blocked* for it (at most once a minute per address), so a blocked
+agent or site is visible rather than silently offline. Looksee won't let you block your
+own current IP by hand.
 
 **Event types:**
 
@@ -177,6 +190,7 @@ IP by hand.
 | Password changed / Session signed out remotely | From the Security page |
 | Request from an IP not on the allowlist | Each denied request |
 | IP blocked | A rule or a person blocked an IP |
+| Request refused because its IP is blocked | A blocked address keeps sending requests (recorded at most once a minute per address) |
 | Scanner/exploit probe | A request for a path that only exists on other software (`/.env`, `/wp-login.php`, `/phpmyadmin`, `/.git`, `.php` files, path traversal, …) |
 | Invalid agent key / Unknown heartbeat token | A bad credential on the machine endpoints |
 | Rate limit hit | Sign-in rate limit exceeded |

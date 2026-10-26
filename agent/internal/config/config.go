@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -26,6 +27,16 @@ type Config struct {
 	// Docker Engine socket; defaults to /var/run/docker.sock or the
 	// Windows named pipe.
 	DockerSocket string `yaml:"docker_socket"`
+	// Optional HTTP(S) proxy for reaching the engine, e.g.
+	// "http://proxy.example.com:8080". Needed where the network only allows
+	// web traffic through a proxy: the agent runs as a system account
+	// (SYSTEM on Windows), which doesn't use the proxy configured for signed-in
+	// users. Used for reports, config polls, agent updates, the site
+	// collector's download and engine traffic, and watchdog webhook alerts —
+	// not for checks, which probe the local network directly. Empty: the
+	// standard HTTPS_PROXY / HTTP_PROXY / NO_PROXY environment variables
+	// apply, as before.
+	ProxyURL string `yaml:"proxy_url"`
 }
 
 func defaults() Config {
@@ -49,6 +60,15 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.IntervalSeconds <= 0 {
 		cfg.IntervalSeconds = 30
+	}
+	if cfg.ProxyURL != "" {
+		// Only a full http:// or https:// URL with a host is accepted, so a
+		// typo stops the agent with a clear message instead of every request
+		// failing later with a confusing one.
+		u, err := url.Parse(cfg.ProxyURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return cfg, fmt.Errorf("config: proxy_url must look like http://proxy.example.com:8080 (got %q)", cfg.ProxyURL)
+		}
 	}
 	return cfg, nil
 }

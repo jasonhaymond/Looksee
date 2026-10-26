@@ -290,6 +290,11 @@ function SuggestionsTab({ host, channels, onApplied }: { host: Endpoint; channel
   );
 }
 
+/**
+ * The Agent tab: the agent's version (with "Update agent" when a newer one
+ * is available), its connection diagnostics, and generating a key plus the
+ * one-line install command (shown once, never again).
+ */
 function AgentTab({ host, latestAgentVersion, onChanged }: { host: Endpoint; latestAgentVersion: string | null; onChanged: () => void }) {
   const [revealed, setRevealed] = useState<{ agentApiKey: string; installCommands: { unix: string; windows: string } } | null>(null);
   const [platform, setPlatform] = useState<"unix" | "windows">(/windows/i.test(host.os ?? "") ? "windows" : "unix");
@@ -300,6 +305,7 @@ function AgentTab({ host, latestAgentVersion, onChanged }: { host: Endpoint; lat
         Agent: {host.agentVersion ? `v${host.agentVersion}` : "not reporting yet"}
         {outdated && <span className="text-[var(--warn)]"> — v{latestAgentVersion} available</span>} · last report {relativeTime(host.lastSeenAt)}
       </p>
+      <AgentDiagnostics host={host} />
       <div className="flex flex-wrap gap-2">
         {host.agentVersion && (
           <Button disabled={host.updateRequested} onClick={async () => (await api.requestEndpointUpdate(host.id), onChanged())}>
@@ -333,6 +339,38 @@ function AgentTab({ host, latestAgentVersion, onChanged }: { host: Endpoint; lat
             <CopyButton text={own(revealed.installCommands, platform) ?? ""} />
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Connection diagnostics for an endpoint's agent: when it last fetched its
+ * config, when its last report was stored, the address it connects from,
+ * and why its last report couldn't be fully stored, if it couldn't. This is
+ * what tells "the agent never reaches Looksee" (no config poll at all) from
+ * "it connects but its reports are rejected" (recent polls, old or failing
+ * reports) without looking in the database.
+ */
+function AgentDiagnostics({ host }: { host: Endpoint }) {
+  if (!host.hasAgentKey) return null;
+  // The engine started recording polls in 5.1; older data has none yet.
+  const polled = host.lastConfigAt ? relativeTime(host.lastConfigAt) : "never (or before Looksee 5.1)";
+  return (
+    <div className="space-y-1 rounded-md border border-[var(--border)] p-2 text-xs">
+      <p className="text-[var(--muted)]">
+        Last config poll: <span className="text-[var(--text)]">{polled}</span>
+        {" · "}last report stored: <span className="text-[var(--text)]">{host.lastSeenAt ? relativeTime(host.lastSeenAt) : "never"}</span>
+        {host.lastAgentIp && (
+          <>
+            {" · "}connects from <span className="text-[var(--text)]">{host.lastAgentIp}</span>
+          </>
+        )}
+      </p>
+      {host.lastReportError && (
+        <p className="text-[var(--warn)]">
+          Warning: the last report{host.lastReportErrorAt ? ` (${relativeTime(host.lastReportErrorAt)})` : ""} couldn&apos;t be fully stored — the endpoint still counts as online, but some inventory, software or check data may be missing: <span className="break-words">{host.lastReportError}</span>
+        </p>
       )}
     </div>
   );

@@ -104,3 +104,23 @@ func TestLockfiles(t *testing.T) {
 		t.Fatal("a file that isn't a lock file was read")
 	}
 }
+
+// Proves the Windows installed-programs list is cleaned of NUL characters.
+// A SHARP printer-driver uninstaller pads its registry DisplayName with
+// them; PowerShell's ConvertTo-Json writes each as the escape \u0000, which
+// decoding turns back into a real NUL — and one of those in the software
+// list used to make the engine reject the whole report. Blank names
+// (nothing left after cleaning) are dropped.
+func TestParseWindowsUninstallStripsNul(t *testing.T) {
+	out := `[{"n":"SHARP Driver Uninstall Tool\u0000\u0000\u0000","v":"1.2.1.11\u0000"},{"n":"7-Zip 24.08 (x64)","v":"24.08"},{"n":"\u0000\u0000","v":"1"}]`
+	pkgs := ParseWindowsUninstall(out)
+	if len(pkgs) != 2 {
+		t.Fatalf("got %+v", pkgs)
+	}
+	if pkgs[0].Name != "SHARP Driver Uninstall Tool" || pkgs[0].Version != "1.2.1.11" || pkgs[0].Source != "windows" {
+		t.Fatalf("got %+v", pkgs[0])
+	}
+	if ParseWindowsUninstall("not json") != nil {
+		t.Fatal("bad output should give no packages")
+	}
+}

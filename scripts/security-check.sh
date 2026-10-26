@@ -332,7 +332,10 @@ if [ "$DOCKER_OK" = 1 ]; then
     mkdir -p /src && cd /src && tar -xf - && cd agent
     go vet ./... > /tmp/vet.txt 2>&1; echo "VET_EXIT=$?"
     go test ./... > /tmp/test.txt 2>&1; echo "TEST_EXIT=$?"
-    go run golang.org/x/vuln/cmd/govulncheck@latest ./... > /tmp/vuln.txt 2>&1; echo "VULN_EXIT=$?"
+    # Installed, then run directly: "go run" turns any non-zero exit of the
+    # program into its own exit 1, which hid govulncheck'"'"'s 3 ("found
+    # vulnerabilities") and made a real finding look like "couldn'"'"'t run".
+    { go install golang.org/x/vuln/cmd/govulncheck@latest && "$(go env GOPATH)/bin/govulncheck" ./...; } > /tmp/vuln.txt 2>&1; echo "VULN_EXIT=$?"
     for f in vet test vuln; do echo "==== $f"; cat /tmp/$f.txt; done' > "$TMP/go.txt" 2>&1
   vexit="$(grep -o 'VET_EXIT=[0-9]*' "$TMP/go.txt" | cut -d= -f2)"
   texit="$(grep -o 'TEST_EXIT=[0-9]*' "$TMP/go.txt" | cut -d= -f2)"

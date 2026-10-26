@@ -105,6 +105,13 @@ export type Endpoint = {
   collectorVersion: string | null;
   collectorLastSeenAt: string | null;
   collectorError: string | null;
+  // Agent diagnostics (engine 5.1+): when the agent last fetched its config,
+  // why its last report couldn't be fully stored (cleared by the next good
+  // one) and when, and the address its last request came from.
+  lastConfigAt?: string | null;
+  lastReportError?: string | null;
+  lastReportErrorAt?: string | null;
+  lastAgentIp?: string | null;
   processCount?: number | null;
   serviceCount?: number | null;
   inventoryUpdatedAt?: string | null;
@@ -672,7 +679,7 @@ export const api = {
   backupArchives: () => request<{ archives: Archive[] }>("/api/backups/archives"),
   runBackup: () => request<{ started: true }>("/api/backups/run", { method: "POST" }),
   restoreBackup: (input: { archiveName: string; confirmArchiveName: string; restoreDb: boolean; restoreConfig: boolean }) => request<{ started: true }>("/api/backups/restore", json(input)),
-  logs: (params?: { level?: LogLevel; limit?: number }) => request<LogEntry[]>(`/api/logs${qs(params ?? {})}`),
+  logs: (params?: { level?: LogLevel; limit?: number; endpointId?: string }) => request<LogEntry[]>(`/api/logs${qs(params ?? {})}`),
 
   // Dashboards and their widgets (routes/dashboards.ts).
   dashboards: () => request<Dashboard[]>("/api/dashboards"),

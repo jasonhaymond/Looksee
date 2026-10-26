@@ -34,6 +34,7 @@ import { applyThresholds, hasThresholds, type MeasuredResult, type Status } from
 import { excludeItems, nameExcluded } from "./probes/exclude.js";
 import type { ProbeContext, ProbeOutcome } from "./probes/types.js";
 import { own } from "../lib/own.js";
+import { cleanString, truncate } from "../lib/stripNul.js";
 
 /** One installed package (short keys, as the agent sends them). */
 export type SwPackage = { n: string; v: string; s: string; p?: string; o?: string };
@@ -46,7 +47,11 @@ export type SoftwareReport = { collectedAt: number; os?: Record<string, string>;
 // database: package counts and string lengths.
 const MAX_PACKAGES = 30_000;
 const MAX_UPGRADABLE = 5_000;
-const str = (v: unknown, max = 200) => (typeof v === "string" ? v.slice(0, max) : "");
+// A string field, cleaned and capped: NUL characters and half-characters are
+// removed (PostgreSQL rejects both — lib/stripNul.ts), surrounding spaces
+// trimmed, and the cut at `max` never splits an emoji in two. Anything that
+// isn't a string becomes "".
+const str = (v: unknown, max = 200) => (typeof v === "string" ? truncate(cleanString(v).trim(), max) : "");
 
 /**
  * Validates and trims the software report an agent sent. Unknown fields are

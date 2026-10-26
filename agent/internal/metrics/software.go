@@ -119,6 +119,30 @@ func lines(s string) []string {
 	return out
 }
 
+// ParseWindowsUninstall reads the JSON list of installed programs the
+// Windows branch of collectPackages prints ([{"n": name, "v": version}]).
+// Names and versions are cleaned of NUL characters before trimming: some
+// installers (a SHARP printer-driver uninstaller, for one) write their
+// registry DisplayName padded with hundreds of them, ConvertTo-Json writes
+// those as "\u0000" escapes, and decoding the JSON turns them back into real
+// NULs that the engine's database can't store. Rows without a name are
+// dropped.
+func ParseWindowsUninstall(out string) []Package {
+	var rows []Package
+	if json.Unmarshal([]byte(out), &rows) != nil {
+		return nil
+	}
+	pkgs := make([]Package, 0, len(rows))
+	for _, r := range rows {
+		name := strings.TrimSpace(execx.StripNul(r.Name))
+		if name == "" {
+			continue
+		}
+		pkgs = append(pkgs, Package{Name: name, Version: strings.TrimSpace(execx.StripNul(r.Version)), Source: "windows"})
+	}
+	return pkgs
+}
+
 // ParseDpkg reads `dpkg-query -W -f '${Package}\t${Version}\t${db:Status-Abbrev}\t${source:Package}\n'`,
 // keeping installed packages only (status "ii"). The source package
 // ("openssl" for "libssl3") is what Debian/Ubuntu security data names.
@@ -382,12 +406,7 @@ func collectPackages(lockfiles []string) ([]Package, []string) {
 		out, ok := ps(`$keys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
 ConvertTo-Json -Compress -InputObject @(Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and -not $_.SystemComponent } | ForEach-Object { [pscustomobject]@{ n = [string]$_.DisplayName; v = [string]$_.DisplayVersion } })`, nil, 2*time.Minute)
 		if ok {
-			var rows []Package
-			if json.Unmarshal([]byte(out), &rows) == nil {
-				for _, r := range rows {
-					pkgs = append(pkgs, Package{Name: strings.TrimSpace(r.Name), Version: strings.TrimSpace(r.Version), Source: "windows"})
-				}
-			}
+			pkgs = append(pkgs, ParseWindowsUninstall(out)...)
 		}
 	case "darwin":
 		if res, err := execx.Run(3*time.Minute, nil, "system_profiler", "SPApplicationsDataType", "-json", "-detailLevel", "mini"); err == nil {

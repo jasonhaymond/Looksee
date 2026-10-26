@@ -90,6 +90,9 @@ export default function EndpointPage() {
           {" · agent "}
           {state === "no agent" ? "not installed" : `${state}${endpoint.agentVersion ? ` (v${endpoint.agentVersion})` : ""}, last report ${relativeTime(endpoint.lastSeenAt)}`}
         </p>
+        {endpoint.lastReportError && (
+          <p className="mt-1 text-xs text-[var(--warn)]">Warning: part of this agent&apos;s last report couldn&apos;t be stored — details on the Agent tab.</p>
+        )}
         <div className="mt-2">
           <GroupChips type="endpoint" id={endpoint.id} />
         </div>

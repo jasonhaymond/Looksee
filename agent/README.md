@@ -2,7 +2,7 @@
 
 A single static binary that reports a machine's metrics and runs the on-machine checks a
 Looksee engine assigns to it. No runtime dependency — Go compiles to one self-contained
-executable per platform. Version 4.1.0 (versioned in lockstep with the engine and
+executable per platform. Version 5.1.0 (versioned in lockstep with the engine and
 dashboard; see [CHANGELOG.md](../CHANGELOG.md)). Running it on Windows alongside Smart
 App Control, Defender, ASR, WDAC/AppLocker or an EDR, and signing it, are covered in
 [windows-agent-security.md](../docs/windows-agent-security.md).
@@ -19,6 +19,7 @@ App Control, Defender, ASR, WDAC/AppLocker or an EDR, and signing it, are covere
 8. [Running as a service](#running-as-a-service)
 9. [Updating](#updating)
 10. [Site collector](#site-collector)
+11. [Troubleshooting: an endpoint never checks in](#troubleshooting-an-endpoint-never-checks-in)
 
 Related: [user guide](../docs/user-guide.md) · [check reference](../docs/check-reference.md) · [Windows agent & security software](../docs/windows-agent-security.md) · [deployment guide](../docs/deployment-guide.md) · [README](../README.md)
 
@@ -50,6 +51,21 @@ Related: [user guide](../docs/user-guide.md) · [check reference](../docs/check-
    curl -fsSL https://your-looksee-domain/install/agent.sh | sudo bash -s -- <key> --no-docker
    ```
 
+   **Networks where web traffic must go through a proxy:** the agent runs as a system
+   account, which doesn't use the proxy set up for signed-in users, so give it the proxy
+   explicitly. It's used for the installer's downloads and written into the agent's
+   config as `proxy_url`:
+
+   ```sh
+   curl -fsSL https://your-looksee-domain/install/agent.sh | sudo LOOKSEE_PROXY=http://proxy.example.com:8080 bash -s -- <key>
+   ```
+   ```powershell
+   $env:LOOKSEE_PROXY='http://proxy.example.com:8080'; $env:LOOKSEE_ENGINE_URL='https://your-looksee-domain'; $env:LOOKSEE_AGENT_KEY='<key>'; iex (irm https://your-looksee-domain/install/agent.ps1)
+   ```
+
+   On Windows, if your own account reaches Looksee through a proxy and you didn't set
+   `LOOKSEE_PROXY`, the installer warns you and prints the value to use.
+
 This only works once binaries actually exist on the engine to serve — see "Build" below.
 If you'd rather not run a one-liner from the dashboard site, or want to inspect the script
 first: it's the exact content served at `/install/agent.sh` (Linux/macOS bootstrap),
@@ -70,6 +86,11 @@ engine, or just follow the manual steps below.
    | `script_dir` | *(empty — scripts disabled)* | Folder whose scripts "Custom script" checks may run (see [Custom scripts](#custom-scripts)) |
    | `ntp_server` | `pool.ntp.org` | Server the clock-offset metric compares against |
    | `docker_socket` | `/var/run/docker.sock` or `\\.\pipe\docker_engine` | Docker Engine API socket for container checks |
+   | `proxy_url` | *(empty — the `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` environment variables apply)* | HTTP(S) proxy for the agent's own traffic to the engine: reports, config polls, updates, the site collector's download, watchdog webhook alerts. Checks still go direct. Must look like `http://proxy.example.com:8080`; the agent refuses to start with anything else |
+
+   Not yet covered by `proxy_url`: a **site collector's** own connection to the engine
+   (it's a separate Node.js program, and its LAN checks must not go through the proxy).
+   A machine chosen as site collector needs direct HTTPS access to the engine.
 
 3. Add checks for the endpoint in the dashboard. The agent picks them up on its next
    `/api/agent/config` poll — no restart needed — and runs each no more often than its
@@ -323,10 +344,27 @@ $env:LOOKSEE_AGENT_KEY = "<key>"
 .\install-windows.ps1   # run elevated
 ```
 
-Downloads the binary to `C:\ProgramData\LookseeAgent\looksee-agent.exe`, writes the
-config next to it, and registers a Scheduled Task ("LookseeAgent") — startup trigger,
-runs as `SYSTEM`, restart-on-failure. Idempotent — re-run to update (unregisters and
-re-registers the task).
+Step by step, it:
+
+1. stops with a clear message on Windows older than **Windows 10 / Windows Server 2016
+   (build 14393)** or on 32-bit Windows — the agent's Go runtime doesn't run there, so
+   the program would never start;
+2. downloads the binary to `C:\ProgramData\LookseeAgent\looksee-agent.exe` (through
+   `LOOKSEE_PROXY` when set) and writes the config next to it;
+3. restricts `C:\ProgramData\LookseeAgent` to SYSTEM and Administrators — the config
+   holds the agent key, and folders under ProgramData are otherwise readable by every
+   local user;
+4. registers a Scheduled Task ("LookseeAgent") — startup trigger, runs as `SYSTEM`,
+   restart-on-failure — with the agent logging to
+   `C:\ProgramData\LookseeAgent\looksee-agent.log` (rotated at 5 MB, one older copy
+   kept as `looksee-agent.log.1`; Task Scheduler itself discards a program's output);
+5. starts it and waits up to a minute for the agent to log *first report accepted by
+   the engine*. It ends with one of: **"The agent is running and has checked in"**
+   (done), **"The agent isn't running"** (with the task result and the last errors from
+   the log), or **"running but hasn't checked in yet"** (with any errors so far — see
+   [Troubleshooting](#troubleshooting-an-endpoint-never-checks-in)).
+
+Idempotent — re-run to update (unregisters and re-registers the task).
 
 Verified for real on a real Windows host during development: the exact served
 `/install/agent.ps1` content run via the real `$env:...; iex (irm ...)` one-liner
@@ -410,3 +448,79 @@ The collector runs with the agent's privileges: SYSTEM on Windows, root on macOS
 unprivileged `looksee-agent` user on Linux — where binding ports below 1024 or running
 DHCP checks needs the drop-in shown in the user guide.
 
+## Troubleshooting: an endpoint never checks in
+
+An endpoint counts as checked in (online) when the engine has stored a report from its
+agent. Work through these in order; each step says what you should see.
+
+1. **Open the endpoint's Agent tab in the dashboard.** The grey box shows:
+   - *Last config poll* — when the agent last fetched its settings. **"never"** means
+     the agent has never reached the engine with this key: go to step 2.
+   - *Last report stored* — a recent config poll but an old or missing report means the
+     agent connects but its reports are refused or fail: read the warning below it, and
+     the engine's Logs page (each agent entry has an *only this endpoint* link).
+   - *Connects from* — the address the engine sees the agent at.
+   - A **Warning: the last report couldn't be fully stored** line gives the database's
+     reason. The endpoint still counts as online in that case (since 5.1 the check-in is
+     stored separately), but some inventory or software data is missing.
+2. **Read the agent's own log** on the machine:
+
+   | OS | Where |
+   |---|---|
+   | Windows | `Get-Content C:\ProgramData\LookseeAgent\looksee-agent.log -Tail 30` (elevated) |
+   | Linux | `journalctl -u looksee-agent -n 50` |
+   | macOS | `tail -n 50 /var/log/looksee-agent.log` |
+
+   What the lines mean:
+
+   | Log line | Meaning and fix |
+   |---|---|
+   | `first report accepted by the engine` | Working — the endpoint is checked in. |
+   | `the engine didn't accept this agent's key (401)` | The key was regenerated or the endpoint deleted. Re-run the install command from the endpoint's Agent tab. The agent polls less often after three refusals in a row, so it doesn't count as key guessing. |
+   | `the engine refused this machine's address (403)` | The address is blocked (Security page → blocked IPs; refused requests are logged there as *Request refused because its IP is blocked*) or isn't on the IP allowlist while that applies to agents. |
+   | `sending report: unexpected status 500` | The engine failed to store the report — its Logs page has the reason, naming this endpoint. |
+   | `report too large for the engine (413)` | The agent resends without the process/service/software lists, so the endpoint still checks in. |
+   | `dial tcp …`, `i/o timeout`, `no such host`, `proxyconnect …` | The machine can't reach the engine: DNS, firewall, or a proxy-only network (`proxy_url`, above). |
+   | `looksee-agent: config: …` | The config file is missing or invalid (the agent exits). |
+
+   No log file at all on Windows means the agent never started: check
+   `Get-ScheduledTask -TaskName LookseeAgent | Get-ScheduledTaskInfo` (`LastTaskResult`
+   other than `0` or `267009` = failed to start), the Windows version (step 1 of
+   [the Windows install](#windows-scheduled-task--scripted-and-actually-tested)), and
+   security software ([windows-agent-security.md](../docs/windows-agent-security.md)).
+3. **Run one cycle by hand**, which prints every step to the console. Elevated
+   PowerShell:
+
+   ```powershell
+   & "C:\ProgramData\LookseeAgent\looksee-agent.exe" -config "C:\ProgramData\LookseeAgent\looksee-agent.yaml" -once -log-file none
+   ```
+
+   Linux: `sudo -u looksee-agent /var/lib/looksee-agent/looksee-agent -config /etc/looksee-agent/looksee-agent.yaml -once`.
+
+   This runs as *you*, not as the service account. If it works by hand but not as the
+   service, the difference is usually the proxy (your account has one, SYSTEM doesn't —
+   set `proxy_url`). To run exactly as SYSTEM on Windows, use Sysinternals PsExec:
+   `psexec -s -i powershell`, then the command above in that window.
+
+**Windows programs with NUL characters in their names (agents before 5.1).** Some
+installers — a SHARP printer-driver uninstaller is a known one — write their entry in
+*Apps & features* padded with invisible NUL characters, which the database can't store.
+Before 5.1 that made every report from such a machine fail, so the endpoint never
+showed as checked in. Updating the **engine** to 5.1 fixes it for every agent version,
+with no change on the machines. Until then, the entries can be cleaned by hand in an
+elevated PowerShell. List affected entries:
+
+```powershell
+$keys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { "$($_.DisplayName)$($_.DisplayVersion)".Contains([char]0) } | Select-Object PSPath, DisplayName
+```
+
+Then, for each one, write the name back without the padding (the `PSPath` from the list
+above; the name as it should read):
+
+```powershell
+Set-ItemProperty -Path '<PSPath>' -Name DisplayName -Value 'SHARP Driver Uninstall Tool'
+```
+
+The next software scan (within 6 hours, or at the agent's next start) sends the cleaned
+list.

@@ -5,6 +5,7 @@ package metrics
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"runtime"
 	"strconv"
@@ -284,7 +285,9 @@ func (c *Collector) Collect() Snapshot {
 		}
 	}
 	if snap.DiskPercent == 0 {
-		if du, err := disk.Usage(c.DiskPath); err == nil {
+		// Same timeout as every other usage query: the legacy disk path
+		// could itself be a dead network mount.
+		if du, stale := c.usageWithTimeout(c.DiskPath, 3*time.Second); !stale && du != nil {
 			snap.DiskPercent = round2(du.UsedPercent)
 		}
 	}
@@ -431,7 +434,7 @@ var networkFS = map[string]bool{"nfs": true, "nfs4": true, "cifs": true, "smb3":
 // can be noticed). Usage is fetched with a timeout because statfs on a dead
 // NFS server blocks indefinitely.
 func (c *Collector) collectDisks() []Disk {
-	parts, err := disk.Partitions(true)
+	parts, err := partitionsWithTimeout(10 * time.Second)
 	if err != nil {
 		return nil
 	}
@@ -468,6 +471,36 @@ func (c *Collector) collectDisks() []Disk {
 	return out
 }
 
+// partitionsWithTimeout lists mounted filesystems (gopsutil's
+// disk.Partitions), giving up after `timeout`. Listing can block: on Windows
+// it queries every drive letter, including disconnected network drives and
+// empty card readers; on Linux it can stall behind a hung mount. The listing
+// keeps running in the background if it times out (Go can't cancel it), but
+// this cycle's report goes out without the disk list instead of waiting —
+// a hang here before 5.1 could stop the agent's first report entirely.
+func partitionsWithTimeout(timeout time.Duration) ([]disk.PartitionStat, error) {
+	type result struct {
+		parts []disk.PartitionStat
+		err   error
+	}
+	// Buffered so the background lookup can always finish and exit, even
+	// after this function has given up waiting for it.
+	ch := make(chan result, 1)
+	go func() {
+		p, err := disk.Partitions(true)
+		ch <- result{p, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.parts, r.err
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("listing filesystems timed out after %s", timeout)
+	}
+}
+
+// usageWithTimeout returns a mount's size and usage, or stale=true when the
+// query didn't answer within `timeout` (or an earlier one for the same mount
+// is still stuck).
 func (c *Collector) usageWithTimeout(mount string, timeout time.Duration) (*disk.UsageStat, bool) {
 	c.hungMu.Lock()
 	if c.hung[mount] {

@@ -2,6 +2,11 @@
 // of extra environment variables. User-supplied values (service names,
 // counter paths, passphrases) are always passed as separate argv elements
 // or environment variables — never spliced into a shell string.
+//
+// Output is cleaned of NUL characters (byte 0) before anyone reads it:
+// Windows tools sometimes print registry values padded with them, and the
+// engine's database can't store them (one such value used to make a whole
+// agent report fail). Nothing the agent runs uses NUL as real data.
 package execx
 
 import (
@@ -15,6 +20,7 @@ import (
 	"time"
 )
 
+// Result is what a command printed and how it exited.
 type Result struct {
 	Stdout   string
 	Stderr   string
@@ -25,6 +31,13 @@ type Result struct {
 // callers can report "install X" instead of a generic failure.
 var ErrNotFound = errors.New("command not found")
 
+// Run starts `name` with `args` (each a separate argument — no shell is
+// involved, so nothing in them is interpreted as a command) and waits up to
+// `timeout`, killing it if it takes longer. `env` adds environment
+// variables on top of the agent's own. Stdout and stderr come back without
+// NUL characters. A non-zero exit code is returned in Result, not as an
+// error; errors mean the command couldn't run, timed out, or isn't installed
+// (ErrNotFound).
 func Run(timeout time.Duration, env map[string]string, name string, args ...string) (Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -39,7 +52,7 @@ func Run(timeout time.Duration, env map[string]string, name string, args ...stri
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	res := Result{Stdout: stdout.String(), Stderr: stderr.String()}
+	res := Result{Stdout: StripNul(stdout.String()), Stderr: StripNul(stderr.String())}
 	if cmd.ProcessState != nil {
 		res.ExitCode = cmd.ProcessState.ExitCode()
 	}
@@ -71,6 +84,14 @@ func PowerShell(timeout time.Duration, env map[string]string, script string) (Re
 		"$ProgressPreference='SilentlyContinue'; $ErrorActionPreference='Stop'; "+script)
 }
 
+// StripNul removes every NUL character (byte 0) from s. Used on command
+// output here and on values decoded from JSON elsewhere, since JSON can carry
+// a NUL as the escape "\u0000" that only becomes a real NUL once decoded.
+func StripNul(s string) string {
+	return strings.ReplaceAll(s, "\x00", "")
+}
+
+// Exists reports whether a command is installed (found on the PATH).
 func Exists(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil

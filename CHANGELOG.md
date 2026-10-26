@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-10-23
+
+Fixes Windows agents that install and run but never show as checked in, and makes every
+way an agent can fail to check in visible.
+
+### Fixed
+
+- **Endpoints whose installed software has NUL characters in a name never checked in.**
+  Some Windows installers (a SHARP printer-driver uninstaller is a known one) pad their
+  *Apps & features* name with invisible NUL characters. PostgreSQL can't store those, so
+  the agent report's single database update failed as a whole — including the "last
+  seen" time — and the agent resent the same data every cycle, failing forever. The
+  engine now removes NUL characters (and half-characters left by cutting a string in the
+  wrong place) from every request body and from heartbeat/collector query strings, so
+  **agents already in the field check in again on their next cycle after the engine
+  update, with no agent update**. The agent also cleans them at the source: from command
+  output, from the Windows installed-programs list, and from the outgoing report.
+- **A report that can't be fully stored no longer makes a running agent look offline.**
+  The check-in (last seen time and agent version) is stored first, on its own; if the
+  rest of the report (inventory, snapshot, software, results) fails, the reason is logged
+  with the endpoint's name and shown on its page, and cleared by the next good report.
+- **The first report could stall before it was ever sent.** Service-name lookups had no
+  timeout, listing filesystems and the legacy disk-usage figure weren't time-limited,
+  and process-owner lookups could take seconds each on a domain-joined machine that
+  can't reach a domain controller. All are now time-limited, and process/service
+  discovery runs in the background so it can never delay a report.
+- **One agent with an old key could take a whole site offline.** Its refused polls
+  tripped *Agent key guessing* and blocked the site's shared (NAT) address for every
+  agent there, including the installer. A rule no longer blocks an address working
+  agents have reported from in the last 24 hours (the event and notification still
+  happen), and agents poll less often after three 401/403 refusals in a row (doubling up
+  to every 10 minutes), saying in their log what the refusal means.
+- An agent report over the 4 MB limit (or with malformed JSON) got a generic 500; it now
+  gets 413 (or 400), logged with the endpoint that sent it, and the agent resends
+  without its process/service/software lists so it still checks in.
+
+### Added
+
+- **Agent log file on Windows**: `C:\ProgramData\LookseeAgent\looksee-agent.log`,
+  rotated at 5 MB with one older copy. Task Scheduler discards console output, so
+  Windows agent errors were invisible before. New `-log-file` flag (`auto` by default:
+  next to the config on Windows, none elsewhere; `none` to turn off).
+- **`proxy_url` agent setting** for networks where web traffic must go through a proxy
+  (the agent runs as a system account, which doesn't use the signed-in user's proxy).
+  The installers take `LOOKSEE_PROXY`; the Windows installer warns when your own account
+  uses a proxy the agent won't. The site collector's own engine connection doesn't use
+  it yet (documented).
+- **Agent diagnostics on the endpoint's Agent tab**: last config poll, last report
+  stored, the address the agent connects from, and why its last report couldn't be fully
+  stored. "Connects but its reports are rejected" is now distinguishable from "never
+  connects" without SQL. Database: migration `0026` adds four nullable columns to
+  `endpoints` (additive).
+- **Logs page**: entries about an endpoint link to it, and *only this endpoint* narrows
+  the log to it (`GET /api/logs?endpointId=`). Agent log lines name the endpoint and
+  hostname, not just its ID.
+- **Security log**: requests refused because the address is blocked are recorded
+  (*Request refused because its IP is blocked*, at most once a minute per address)
+  instead of leaving no trace.
+- **Windows installer checks**: stops with a clear message on Windows older than 10 /
+  Server 2016 (build 14393) or 32-bit Windows, where the agent can't run; after starting
+  the task it waits up to a minute for the first check-in and reports whether it
+  happened, with the last errors from the log if not.
+- Agent guide: *Troubleshooting: an endpoint never checks in* (what each log line means,
+  running one cycle by hand, the manual registry clean-up for engines before this
+  release).
+
+### Security
+
+- Database errors are no longer logged with Drizzle's full parameter dump: for an agent
+  report that was the machine's whole inventory (serial numbers, IP/MAC addresses,
+  signed-in users, installed software). Logs now carry PostgreSQL's actual reason and
+  the SQL text (placeholders only).
+- The Windows installer restricts `C:\ProgramData\LookseeAgent` to SYSTEM and
+  Administrators. The config there holds the agent key, and folders under ProgramData
+  are otherwise readable by every local user.
+- Agent and collector requests are now authenticated before their body is read, so a
+  request without a valid key can't make the engine parse a 4 MB body.
+- **Next.js 16.4.0 → 16.4.3** (dashboard): fixes two critical unauthenticated
+  remote-code-execution advisories (GHSA-2464-fhr4-w9xw in image optimization with SVG
+  files, GHSA-673q-mjm6-r5xr in `use cache` functions) and a denial of service
+  (GHSA-p3m5-59mp-jv5r). These also affect 5.0.0 — update.
+- Agents are built with Go 1.27.3, which distrusts compromised intermediate certificates
+  (GO-2026-6809, used by SSL certificate checks).
+- vitest 4.1.11 → 4.1.12 (pulls vite 8.3.5; development only — the test runner's
+  `launch-editor` advisory GHSA-587h-7wmj-h5pm).
+- body-parser 2.3.0 → 2.4.0 (engine; denial of service via trailing bytes after a
+  compressed request body, GHSA-27r3-jxmh-p828), nodemailer 10.1.0 → 10.2.1, qs 6.16.0 →
+  6.16.1, and zod 4.6.4 → 4.6.7 (dashboard tooling; GHSA-mrhx-c7xc-m3w5).
+- Security gate: govulncheck findings were reported as "couldn't run" (`go run` hid its
+  exit code); they're now reported as failures.
+- Windows installer: PSScriptAnalyzer-clean (`Write-Output` instead of `Write-Host`,
+  plain ASCII).
+
+### Changed
+
+- Migration guide: more from the real migration — row-count check now covers flow
+  records and logs, the expected health response is shown, cutover reads the engine log
+  for database errors, decommissioning also checks the reverse proxy, DNS and listening
+  ports, and new troubleshooting entries cover Postgres settings not taking effect,
+  `uv_cwd` errors during cleanup, and memory pressure after tuning.
+
 ## [5.0.0] - 2026-10-20
 
 A major release: Looksee's building blocks are renamed and reorganized, and alerting,

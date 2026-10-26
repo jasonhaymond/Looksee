@@ -1,3 +1,11 @@
+// Process and service inventory: every running process (with owner,
+// resource use and a credential-masked command line) and every registered
+// OS service, for the endpoint page's Processes/Services tabs and the check
+// form's pickers. Collected every few cycles in the background (main.go's
+// discovery), so a slow listing never holds up a report.
+//
+// Security: command lines often carry passwords or tokens; RedactCommand
+// masks them before they leave the machine.
 package metrics
 
 import (
@@ -56,22 +64,33 @@ func RedactCommand(cmd string) string {
 	return cmd
 }
 
+// How long ListProcesses keeps looking up process owners. Looking up the
+// account name of a process owner on Windows can take many seconds per
+// lookup on a domain-joined machine that can't reach a domain controller
+// (each lookup waits on the network). Once this budget is spent, the rest of
+// the list goes out without user names rather than delaying the report.
+const processUserBudget = 15 * time.Second
+
 // ListProcesses returns every process with its resource use. CPU % is
 // gopsutil's lifetime average for the process, which is what's cheaply
-// available without sampling twice.
+// available without sampling twice. Owner names are looked up only until
+// processUserBudget is spent (see above).
 func ListProcesses() ([]ProcessInfo, error) {
 	procs, err := process.Processes()
 	if err != nil {
 		return nil, err
 	}
 	out := make([]ProcessInfo, 0, len(procs))
+	userDeadline := time.Now().Add(processUserBudget)
 	for _, p := range procs {
 		name, err := p.Name()
 		if err != nil || name == "" {
 			continue
 		}
 		info := ProcessInfo{PID: p.Pid, Name: name}
-		info.User, _ = p.Username()
+		if time.Now().Before(userDeadline) {
+			info.User, _ = p.Username()
+		}
 		if cpu, err := p.CPUPercent(); err == nil {
 			info.CPUPercent = round2(cpu)
 		}

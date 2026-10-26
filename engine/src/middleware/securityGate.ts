@@ -26,10 +26,34 @@ const ALWAYS_OPEN = "/api/health";
 
 let allowCache: { key: string; list: ReturnType<typeof buildList> } | null = null;
 
+// When each blocked address last had a refusal recorded. A blocked agent
+// keeps polling every 15–30 seconds; one event a minute per address is
+// enough to show on the Security page that (and what) it's still trying,
+// without writing a row for every refused request.
+const blockedNoted = new Map<string, number>();
+const BLOCKED_NOTE_EVERY_MS = 60_000;
+
+/**
+ * Records a "blocked_request" security event for this refused request,
+ * unless one was already recorded for the same address in the last minute.
+ * Without this a block was silent: agents behind a blocked address simply
+ * stopped checking in, with nothing in the logs saying why.
+ */
+async function noteBlocked(req: Request, ip: string) {
+  const now = Date.now();
+  if (now - (blockedNoted.get(ip) ?? 0) < BLOCKED_NOTE_EVERY_MS) return;
+  blockedNoted.set(ip, now);
+  // Forget old entries so the map can't grow without limit under a flood
+  // of different addresses.
+  if (blockedNoted.size > 10_000) for (const [k, t] of blockedNoted) if (now - t > BLOCKED_NOTE_EVERY_MS) blockedNoted.delete(k);
+  await recordSecurityEvent("blocked_request", { req, detail: isMachineRoute(req.path) ? "agent/collector/install request" : "dashboard/API request" });
+}
+
 export async function securityGate(req: Request, res: Response, next: NextFunction) {
   if (req.path === ALWAYS_OPEN) return next();
   const ip = clientIp(req);
   if (await isBlocked(ip)) {
+    await noteBlocked(req, ip);
     res.status(403).json({ error: "Access from your IP address is blocked." });
     return;
   }

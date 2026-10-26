@@ -23,7 +23,7 @@ and both an outbound watchdog and watchdog agents for Looksee's own outages). Bu
 verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md) for exactly what was
 tested how).
 
-**Current version: v5.0.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#500---2026-10-20).
+**Current version: v5.1.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#510---2026-10-23).
 5.0 renames what 4.x called endpoints to **sites** and hosts to **endpoints** (in the
 database too), adds the sidebar tree, groups, exclusions, recovery options, watchdog
 agents, software and vulnerability checks, SNMP templates and calculations, and role
