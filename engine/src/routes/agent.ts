@@ -17,10 +17,10 @@
 // its page (endpoints.last_report_error).
 
 import { Router, type Request } from "express";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { sites, endpoints, endpointMetrics, checks, AGENT_CHECK_TYPES, REPORT_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/schema.js";
-import { minAgentVersionFor, versionAtLeast } from "../db/checkTypes.js";
+import { sites, endpoints, endpointMetrics, checks, AGENT_CHECK_TYPES, REPORT_CHECK_TYPES } from "../db/schema.js";
+import { minAgentVersionFor, PINNABLE_CHECK_TYPES, versionAtLeast } from "../db/checkTypes.js";
 import { requireAgentAuth } from "../middleware/auth.js";
 import { recordCheckResult } from "../services/alerting.js";
 import { applyThresholds, type Status } from "../services/thresholds.js";
@@ -29,6 +29,7 @@ import { logger } from "../lib/logger.js";
 import { collectorManifest } from "../services/sites.js";
 import { recordFromSnapshot } from "../services/addresses.js";
 import { evaluateScriptOutput } from "../services/scriptOutput.js";
+import { evaluateUserAccounts } from "../services/userAccounts.js";
 import { withExclusions } from "../services/exclusions.js";
 import { cleanWatchdogStatus, watchdogSpecFor } from "../services/watchdogAgents.js";
 import { cleanSoftware, evaluatePackages, evaluateSoftwareChange, lockfilesFrom, type SoftwareReport } from "../services/software.js";
@@ -59,8 +60,10 @@ function who(agent: AgentEndpoint): string {
 }
 
 // GET /api/agent/config
-// The checks this host's agent should run: its own agent_* checks plus any
-// engine-type checks pinned to it as a remote probe (probeEndpointId). Polled
+// The checks this host's agent should run: its own agent_* checks (except
+// those assigned to another endpoint's agent) plus any checks pinned to it
+// (probeEndpointId): engine-type remote probes, and custom scripts that
+// belong to another endpoint but run here. Polled
 // every cycle, so dashboard edits take effect without an agent restart.
 // Types newer than the running agent understands are withheld and recorded
 // as a warn instead, so an old agent never reports them as "down".
@@ -71,12 +74,20 @@ agentRouter.get("/config", async (req, res) => {
   // problem from one that never connects at all.
   await db.update(endpoints).set({ lastConfigAt: new Date() }).where(eq(endpoints.id, endpointId));
   const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, endpointId) });
+  // This endpoint's own agent checks — a custom script assigned to another
+  // endpoint's agent (probeEndpointId set to someone else) is that agent's
+  // job, not this one's.
   const owned = await db.query.checks.findMany({
-    where: and(eq(checks.endpointId, endpointId), inArray(checks.type, AGENT_CHECK_TYPES), eq(checks.enabled, true)),
+    where: and(eq(checks.endpointId, endpointId), inArray(checks.type, AGENT_CHECK_TYPES), eq(checks.enabled, true), or(isNull(checks.probeEndpointId), eq(checks.probeEndpointId, endpointId))),
   });
-  const probes = await db.query.checks.findMany({
-    where: and(eq(checks.probeEndpointId, endpointId), inArray(checks.type, REMOTE_PROBE_CHECK_TYPES), eq(checks.enabled, true)),
-  });
+  // Checks pinned to this agent from elsewhere. Skips ones already in
+  // `owned` (a script pinned to its own endpoint) so none is sent twice.
+  const ownedIds = new Set(owned.map((c) => c.id));
+  const probes = (
+    await db.query.checks.findMany({
+      where: and(eq(checks.probeEndpointId, endpointId), inArray(checks.type, PINNABLE_CHECK_TYPES), eq(checks.enabled, true)),
+    })
+  ).filter((c) => !ownedIds.has(c.id));
   const agentVersion = host?.agentVersion ?? null;
   const sendable: typeof owned = [];
   for (const c of [...owned, ...probes]) {
@@ -245,9 +256,13 @@ async function storeReport(agent: AgentEndpoint, host: typeof endpoints.$inferSe
     const checkId = String(r?.checkId ?? "");
     if (!checkId) continue;
     const check = await db.query.checks.findFirst({ where: eq(checks.id, checkId) });
-    // Only results for checks this host actually owns (or probes for) are
-    // accepted — one agent's token can't write another host's results.
-    const owns = check && ((check.endpointId === endpointId && (AGENT_CHECK_TYPES as readonly string[]).includes(check.type)) || (check.probeEndpointId === endpointId && (REMOTE_PROBE_CHECK_TYPES as readonly string[]).includes(check.type)));
+    // Only results for checks this agent was actually given are accepted —
+    // one agent's key can't write another endpoint's results. That's its own
+    // endpoint's agent checks (unless assigned to another agent), or checks
+    // pinned to it (remote probes, scripts run on behalf of another endpoint).
+    const ownAgentCheck = check?.endpointId === endpointId && (AGENT_CHECK_TYPES as readonly string[]).includes(check.type) && (!check.probeEndpointId || check.probeEndpointId === endpointId);
+    const pinnedHere = check?.probeEndpointId === endpointId && (PINNABLE_CHECK_TYPES as readonly string[]).includes(check.type);
+    const owns = check && (ownAgentCheck || pinnedHere);
     if (!check || !owns) continue;
     const status: Status = typeof r.status === "string" && STATUSES.has(r.status) ? (r.status as Status) : r.running ? "up" : "down";
     const measured = applyThresholds(
@@ -332,6 +347,35 @@ async function applyAgentState(check: typeof checks.$inferSelect, result: Measur
   if (check.type === "agent_script") {
     const judged = evaluateScriptOutput(config, result);
     if (judged) return judged;
+  }
+
+  // Local user accounts: compared with the previous list on the engine
+  // (services/userAccounts.ts), with reusable "User accounts" exclusion lists
+  // merged into the check's own.
+  if (check.type === "agent_users") {
+    const judged = evaluateUserAccounts(await withExclusions(check), state, result);
+    await db.update(checks).set({ state: judged.state }).where(eq(checks.id, check.id));
+    return judged.result;
+  }
+
+  // Largest folders and files: add how much each grew since the previous
+  // scan (state.sizes, by disk + path), so the table shows what's filling
+  // the disk, not just what's big.
+  if (check.type === "agent_disk_tree") {
+    const details = result.details as { rows?: { disk?: unknown; kind?: unknown; path?: unknown; sizeGb?: unknown }[] } | null;
+    if (!Array.isArray(details?.rows)) return result;
+    const prevSizes = (state.sizes ?? {}) as Record<string, number>;
+    const sizes = new Map<string, number>();
+    const rows = details.rows.slice(0, 2000).map((r) => {
+      const key = `${String(r.disk ?? "")}	${String(r.kind ?? "")}	${String(r.path ?? "")}`;
+      const size = typeof r.sizeGb === "number" && Number.isFinite(r.sizeGb) ? r.sizeGb : null;
+      if (size === null) return r;
+      sizes.set(key, size);
+      const before = own(prevSizes, key);
+      return { ...r, grewGb: before === undefined ? null : Math.round((size - before) * 100) / 100 };
+    });
+    await db.update(checks).set({ state: { sizes: Object.fromEntries(sizes) } }).where(eq(checks.id, check.id));
+    return { ...result, details: { ...details, rows } };
   }
 
   // D6: checksum drift. An explicit expected checksum wins; otherwise the

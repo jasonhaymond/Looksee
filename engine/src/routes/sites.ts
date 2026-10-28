@@ -1,8 +1,10 @@
 // API routes for sites (networks): list, create, edit (collector, public IPs,
-// location), delete, suggested checks for a site, and bulk actions.
+// address ranges, location), delete, suggested checks for a site, and bulk
+// actions.
 //
 // Security: every route requires a signed-in session; a site's collector must
-// be one of its endpoints with an agent, and public IPs must be real addresses.
+// be an endpoint with an agent, public IPs must be real addresses and address
+// ranges valid CIDR notation.
 
 import { Router } from "express";
 import net from "node:net";
@@ -15,6 +17,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { suggestSiteChecks } from "../services/siteSuggestions.js";
 import { createAlertRule, parseAlertRule } from "../services/alertRuleFactory.js";
 import { isUuid } from "../lib/ids.js";
+import { cleanRanges } from "../services/siteNetworks.js";
 
 export const sitesRouter = Router();
 sitesRouter.use(requireAuth);
@@ -41,7 +44,8 @@ sitesRouter.post("/", async (req, res) => {
 });
 
 
-// Shared by create and update: the site collector and the site's public IPs.
+// Shared by create and update: the site collector, location, public IPs and
+// address ranges.
 async function siteFields(body: Record<string, unknown> | undefined): Promise<{ error: string } | Partial<typeof sites.$inferInsert>> {
   const out: Partial<typeof sites.$inferInsert> = {};
   if (body?.collectorEndpointId !== undefined) {
@@ -64,6 +68,14 @@ async function siteFields(body: Record<string, unknown> | undefined): Promise<{ 
     const bad = ips.find((ip) => net.isIP(ip) === 0);
     if (bad) return { error: `"${bad}" isn't an IP address` };
     out.publicIps = ips;
+  }
+  // The site's own address ranges (CIDR), used to tell sites apart when one
+  // collector serves several. Validated strictly so a typo can't silently
+  // misfile events (services/siteNetworks.ts).
+  if (body?.networks !== undefined) {
+    const cleaned = cleanRanges(body.networks);
+    if ("error" in cleaned) return { error: cleaned.error };
+    out.networks = cleaned.ranges;
   }
   return out;
 }

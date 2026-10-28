@@ -19,7 +19,7 @@ adjust package manager commands for another distro.
 5. [Firewall](#5-firewall)
 6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
 7. [Backups](#7-backups)
-8. [Updating](#8-updating) — including [Upgrading to 5.0](#upgrading-to-50), [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
+8. [Updating](#8-updating) — including [Upgrading to 5.2](#upgrading-to-52), [Upgrading to 5.0](#upgrading-to-50), [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
 9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Security notes](#11-security-notes)
@@ -353,6 +353,28 @@ You can run the same checks by hand at any time:
 
 **Check:** every line reads `PASS` and the last line is `RESULT: PASS`; the full report
 is saved under `~/Looksee/security-reports/`.
+
+### Upgrading to 5.2
+
+5.2 adds three check types and site address ranges. Its one database migration
+(`0027`) is additive: three new check-type values and a `networks` column on `sites`
+that defaults to an empty list. Nothing existing changes.
+
+1. **Run the update as usual:** `~/Looksee/scripts/update.sh`. **Check:** `Update
+   complete — engine is healthy on v5.2.0.`, then `RESULT: PASS` from the post-deploy
+   checks. 5.2's check script no longer probes the `/api/hosts` route removed in 5.0,
+   which made 5.1's post-deploy run report `not 401: /api/hosts→404`.
+2. **Update agents** to 5.2.0 (**Endpoints → select → Actions → Update agents**) for the
+   *Local user accounts* and *Largest folders and files* checks; older agents show
+   "Needs agent 5.2.0+" on those checks and keep everything else.
+3. **If one collector serves several sites,** give each site its address ranges
+   (**Sites & locations → Edit → Address ranges**) so received syslog/traps/flows are
+   filed under the right site — see the user guide's
+   [One collector for several networks](user-guide.md#one-collector-for-several-networks).
+   Without ranges, events still go to the collector's first site, as in 5.1.
+
+**Rolling back to 5.1.0** is code-only safe: 5.1 ignores the new column, and checks of
+the three new types simply don't run (delete them first if you won't upgrade again).
 
 ### Upgrading to 5.0
 

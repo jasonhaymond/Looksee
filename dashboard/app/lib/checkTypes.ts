@@ -35,6 +35,12 @@ export type CheckTypeDef = {
   latency?: boolean;
   needsEndpoint?: boolean;
   remoteProbe?: boolean;
+  // An agent check another endpoint's agent may run on this endpoint's
+  // behalf (the form's "Run by" choice; engine: otherAgent in its registry).
+  otherAgent?: boolean;
+  // The form's starting "check every" value for types too heavy to run
+  // every minute (a zone transfer, a whole-disk walk). 60 s otherwise.
+  defaultInterval?: number;
   // Hidden from the "add" picker (kept for existing checks).
   legacy?: boolean;
 };
@@ -191,6 +197,31 @@ export const CHECK_TYPES: CheckTypeDef[] = [
       { key: "dnssec", label: "Require DNSSEC validation (AD flag)", kind: "checkbox", help: "Needs a validating resolver. Engine only — not available on remote agent probes." },
       { ...timeout(5), help: "How long to wait for each try." },
       { key: "tries", label: "Tries", kind: "number", default: 2, advanced: true, help: "How many times to ask before giving up (1–5)." },
+    ],
+  },
+  {
+    type: "dns_zone",
+    label: "DNS zone history",
+    category: "Reachability & web",
+    description: "Takes an inventory of every record in a zone and keeps a history of what was added, removed or changed — by zone transfer (AXFR) or by reading a list of names.",
+    latency: true,
+    defaultInterval: 3600,
+    value: { unit: "", hint: "records in the zone" },
+    fields: [
+      { key: "zone", label: "Zone", kind: "text", required: true, placeholder: "example.com" },
+      { key: "mode", label: "Read the zone by", kind: "select", options: opts(["axfr", "Zone transfer (AXFR) — every record"], ["names", "Reading a list of names"]), default: "axfr", help: "A zone transfer sees everything, but the server must allow transfers to Looksee's address (or the site collector's). Reading names works with any server but only sees the names you list." },
+      { key: "server", label: "DNS server", kind: "text", placeholder: "10.0.0.53 or ns1.example.com:53", help: "The zone's own (authoritative) server. Needed for a zone transfer; for a list of names, blank uses the system resolver." },
+      { key: "names", label: "Names to read", kind: "textarea", required: true, placeholder: "@\nwww\nmail\n_dmarc\n_sip._tcp", help: "One per line, relative to the zone (@ is the zone itself) or ending with a dot for a full name. Each is read as A, AAAA, CNAME, MX, TXT, NS, SRV and CAA.", showIf: is("mode", "names") },
+      { key: "tsigName", label: "TSIG key name", kind: "text", placeholder: "looksee-transfer", showIf: not("mode", "names"), advanced: true, help: "Optional: for servers that only allow signed transfers (BIND allow-transfer { key …; })." },
+      { key: "tsigSecret", label: "TSIG secret (base64)", kind: "secret", showIf: not("mode", "names"), advanced: true },
+      { key: "tsigAlgorithm", label: "TSIG algorithm", kind: "select", options: opts("hmac-sha256", "hmac-sha512", "hmac-sha1"), default: "hmac-sha256", showIf: not("mode", "names"), advanced: true },
+      { ...severity("warn"), label: "Status when records change" },
+      { ...holdMinutes, default: 60, help: "A change keeps the check failing this long, so an alert rule catches it." },
+      { key: "ignoreNames", label: "Ignore names", kind: "textarea", placeholder: "_acme-challenge*\ndhcp-*", advanced: true, help: "One per line, relative to the zone; * matches anything. For records that change on their own — certificate challenges, DHCP-registered hosts." },
+      { key: "watchTtl", label: "Also report TTL changes", kind: "checkbox", advanced: true },
+      { key: "watchSoa", label: "Also report SOA changes", kind: "checkbox", advanced: true, help: "Off by default: the SOA serial changes with every edit, so it would repeat every other change." },
+      { key: "maxRecords", label: "Most records", kind: "number", default: 5000, advanced: true, help: "A bigger zone fails with a clear message instead of being read." },
+      { ...timeout(30), help: "How long the whole transfer (or each name) may take." },
     ],
   },
   {
@@ -501,6 +532,11 @@ export const CHECK_TYPES: CheckTypeDef[] = [
       { key: "countCanceled", label: "Count canceled jobs as failures too", kind: "checkbox", showIf: is("preset", "printer_jobs") },
       { ...severity("warn"), showIf: is("preset", "printer_jobs") },
       { ...holdMinutes, showIf: is("preset", "uptime_reboot", "printer_jobs") },
+      {
+        ...exclude("rows / values", "1.5\nVirtual Memory\n/run*\nWaste*"),
+        help: "One per line. A walked row, disk, printer supply or alert is left out when its index (1.5), name or value matches — whole text, case ignored, * matches anything. Reusable lists for many devices: the Exclusions page (SNMP rows and values).",
+        showIf: (c) => Boolean(c.preset) || String(c.mode ?? "get") !== "get",
+      },
     ],
   },
   {
@@ -687,8 +723,9 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     type: "agent_script",
     label: "Custom script",
     category: "Services & processes (agent)",
-    description: "Runs a script or command wrapper from the agent's script_dir and checks its output and exit code. Without an expected output, exit 0/1/2 = up/warn/down (Nagios convention); a number in the output becomes the value.",
+    description: "Runs a script or command wrapper from the agent's script_dir and checks its output and exit code. Without an expected output, exit 0/1/2 = up/warn/down (Nagios convention); a number in the output becomes the value. Can be run by another endpoint's agent.",
     needsEndpoint: true,
+    otherAgent: true,
     value: { unit: "", hint: "perfdata or first number in the output" },
     fields: [
       { key: "script", label: "Script file name", kind: "text", required: true, placeholder: "check_queue.sh", suggest: "scripts", help: "Must sit directly in script_dir on that endpoint — the list shows what the agent found there. Looksee never sends commands to run; see the agent README → Custom scripts." },
@@ -698,8 +735,30 @@ export const CHECK_TYPES: CheckTypeDef[] = [
       { key: "expectIgnoreCase", label: "Ignore case", kind: "checkbox", showIf: (c) => Boolean(c.expectMode) },
       { key: "expectExitCode", label: "Expected exit code", kind: "number", placeholder: "any", help: "Blank = any exit code is fine when an expected output is set." },
       { key: "expectSeverity", label: "Status when it doesn't match", kind: "select", options: opts(["down", "Down (critical)"], ["warn", "Warn"]), default: "down", showIf: (c) => Boolean(c.expectMode) || (c.expectExitCode !== undefined && c.expectExitCode !== "") },
+      { key: "warnIfMatches", label: "Warn if the output contains", kind: "text", placeholder: "DEGRADED", help: "Optional. For scripts that print a problem rather than confirm success. Works with or without an expected output; the worse status wins.", wide: true },
+      { key: "downIfMatches", label: "Down if the output contains", kind: "text", placeholder: "ERROR", help: "Optional. Checked before the warn text — when both appear, the check is down.", wide: true },
+      { key: "alertMatchMode", label: "Warn/down text is", kind: "select", options: opts(["contains", "Plain text"], ["regex", "A regular expression"]), default: "contains", showIf: (c) => Boolean(c.warnIfMatches) || Boolean(c.downIfMatches) },
+      { key: "alertIgnoreCase", label: "Ignore case in warn/down text", kind: "checkbox", showIf: (c) => Boolean(c.warnIfMatches) || Boolean(c.downIfMatches) },
       timeout(30),
       { key: "parseValue", label: "Read a number from the output", kind: "checkbox", default: true, advanced: true },
+    ],
+  },
+
+  {
+    type: "agent_users",
+    label: "Local user accounts",
+    category: "Software & security (agent)",
+    description: "Lists the endpoint's local accounts and alerts on new, removed or changed ones — disabled/enabled, admin rights, password changed (Windows, Linux, macOS).",
+    needsEndpoint: true,
+    defaultInterval: 300,
+    value: { unit: "", hint: "accounts watched" },
+    fields: [
+      { key: "watch", label: "Alert on", kind: "multi", options: opts(["added", "new accounts"], ["removed", "removed accounts"], ["changed", "changed accounts"]), default: "added,removed,changed" },
+      { ...severity("warn"), label: "Status when an account changes" },
+      { key: "adminSeverity", label: "Status when someone gains admin rights", kind: "select", options: opts(["down", "Down (critical)"], ["warn", "Warn"]), default: "down", help: "A new admin account, or an existing account added to Administrators / sudo / wheel / admin." },
+      { ...holdMinutes, default: 60 },
+      { key: "includeSystem", label: "Include built-in and service accounts", kind: "checkbox", advanced: true, help: "Off by default: Linux/macOS system users (low user IDs) and Windows built-ins change with OS updates." },
+      exclude("accounts", "svc-backup\ntmp-*"),
     ],
   },
 
@@ -727,6 +786,22 @@ export const CHECK_TYPES: CheckTypeDef[] = [
       { key: "expectedChecksum", label: "Expected SHA-256", kind: "text", help: "Blank = the first value seen becomes the baseline.", showIf: is("mode", "checksum") },
       { ...severity("warn"), showIf: is("mode", "watchdog", "checksum", "not_exists") },
       { ...holdMinutes, showIf: is("mode", "watchdog", "checksum") },
+    ],
+  },
+  {
+    type: "agent_disk_tree",
+    label: "Largest folders and files",
+    category: "Files & logs (agent)",
+    description: "Walks each disk (or one folder) and lists the largest folders and files, with how much each grew since the last scan — finds what's filling a disk.",
+    needsEndpoint: true,
+    defaultInterval: 21600,
+    value: { unit: " GB", hint: "total size scanned" },
+    fields: [
+      { key: "path", label: "Folder", kind: "text", placeholder: "every local disk", suggest: "mounts", help: "Blank scans every local disk. A folder scans just that tree.", wide: true },
+      { key: "top", label: "How many to list", kind: "number", default: 25, help: "Largest folders and largest files, each (per disk)." },
+      { key: "depth", label: "Folder levels", kind: "number", default: 4, advanced: true, help: "Folders up to this many levels below the disk or folder are ranked (their sizes always include everything below them)." },
+      { key: "maxSeconds", label: "Stop scanning after (seconds)", kind: "number", default: 300, advanced: true, help: "A very large disk is reported as partially scanned rather than walked forever." },
+      { key: "skip", label: "Skip folders", kind: "textarea", placeholder: "/proc\nC:\\Windows\\WinSxS", advanced: true, help: "One path per line; their contents aren't scanned." },
     ],
   },
   {

@@ -276,6 +276,11 @@ export const sites = pgTable("sites", {
   // to the engine over the internet instead of via a collector: accepted by
   // the receivers and attributed to this site.
   publicIps: jsonb("public_ips").$type<string[]>().notNull().default([]),
+  // The site's own address ranges (CIDR, e.g. "10.20.0.0/24"). When one
+  // collector serves several sites, syslog/traps/flows it receives are filed
+  // under the site whose range holds the sender's address (services/
+  // siteNetworks.ts); discovery offers them as scan ranges. Empty = not set.
+  networks: jsonb("networks").$type<string[]>().notNull().default([]),
   locationId: uuid("location_id").references(() => locations.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

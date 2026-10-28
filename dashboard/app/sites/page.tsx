@@ -276,7 +276,7 @@ export default function SitesPage() {
 
 function SiteLine({ site, endpoints }: { site: Site; endpoints: Endpoint[] }) {
   const collector = endpoints.find((h) => h.id === site.collectorEndpointId);
-  if (!site.collectorEndpointId && !site.publicIps.length) return null;
+  if (!site.collectorEndpointId && !site.publicIps.length && !site.networks?.length) return null;
   const state = collector ? collectorState(collector) : null;
   return (
     <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs">
@@ -285,6 +285,7 @@ function SiteLine({ site, endpoints }: { site: Site; endpoints: Endpoint[] }) {
           Site collector: {collector?.name ?? "removed endpoint"} — {state?.label ?? "unknown"}
         </span>
       )}
+      {site.networks?.length > 0 && <span className="text-[var(--muted)]">Ranges {site.networks.join(", ")}</span>}
       {site.publicIps.length > 0 && <span className="text-[var(--muted)]">Direct push from {site.publicIps.join(", ")}</span>}
     </div>
   );
@@ -346,6 +347,7 @@ function SiteDialog({ site, locations, endpoints, onClose, onSaved }: { site: Si
   const [description, setDescription] = useState(site?.description ?? "");
   const [collectorEndpointId, setCollectorEndpointId] = useState(site?.collectorEndpointId ?? "");
   const [publicIps, setPublicIps] = useState((site?.publicIps ?? []).join(", "));
+  const [networks, setNetworks] = useState((site?.networks ?? []).join(", "));
   const [error, setError] = useState<string | null>(null);
   // Agent endpoints only — the collector runs under the agent. Endpoints already in
   // this site first, since the collector has to be at the site.
@@ -359,7 +361,7 @@ function SiteDialog({ site, locations, endpoints, onClose, onSaved }: { site: Si
         onSubmit={async (e) => {
           e.preventDefault();
           setError(null);
-          const siteFields = { collectorEndpointId: collectorEndpointId || null, publicIps: publicIps.split(/[\s,]+/).filter(Boolean), locationId: locationId || null };
+          const siteFields = { collectorEndpointId: collectorEndpointId || null, publicIps: publicIps.split(/[\s,]+/).filter(Boolean), networks: networks.split(/[\s,]+/).filter(Boolean), locationId: locationId || null };
           try {
             if (site) await api.updateSite(site.id, { name, description: description || null, ...siteFields });
             else await api.createSite({ name, description: description || null, ...siteFields });
@@ -405,6 +407,12 @@ function SiteDialog({ site, locations, endpoints, onClose, onSaved }: { site: Si
             {chosen!.name} runs agent {chosen!.agentVersion ? `v${chosen!.agentVersion}` : "(not reporting yet)"}. Site collectors need agent 3.2.0 or newer — use “Update agent” on the Endpoints page first, or this site&apos;s checks will show “waiting for the site collector”.
           </p>
         )}
+        <Label
+          label="Address ranges"
+          help="This network's own ranges in CIDR form (10.20.0.0/24). Needed when one collector serves several sites: syslog, traps and flows it receives are filed under the site whose range holds the sender (otherwise under the collector's first site). Also used for sites the Looksee server receives from directly."
+        >
+          <input value={networks} onChange={(e) => setNetworks(e.target.value)} placeholder="10.20.0.0/24, 10.20.10.0/24" className={inputClass} />
+        </Label>
         <Label
           label="Public IPs (direct push)"
           help="This site's public/WAN addresses. Devices there can send syslog, SNMP traps and NetFlow straight to the Looksee server's public address instead of to a collector; events from these IPs are accepted and filed under this site. Needs those ports forwarded to the Looksee server at its own site (see the user guide)."

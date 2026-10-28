@@ -25,6 +25,7 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/sensors"
 
+	"looksee-agent/internal/android"
 	"looksee-agent/internal/execx"
 )
 
@@ -336,6 +337,17 @@ func linuxFans() []Fan {
 
 func linuxBattery() *Battery {
 	bats, _ := filepath.Glob("/sys/class/power_supply/BAT*")
+	// Android phones name it "battery"; apps may not be allowed to read it,
+	// in which case Termux:API is asked instead.
+	if android.IsAndroid() {
+		bats, _ = filepath.Glob("/sys/class/power_supply/battery")
+		if len(bats) == 0 || readTrim(filepath.Join(bats[0], "capacity")) == "" {
+			if p, charging, ok := android.Battery(); ok {
+				return &Battery{Percent: p, Charging: charging, Present: true}
+			}
+			return nil
+		}
+	}
 	if len(bats) == 0 {
 		return nil
 	}
@@ -993,14 +1005,21 @@ func (s *SlowCollector) collectInventory() {
 	if vm, err := mem.VirtualMemory(); err == nil {
 		inv["memoryGb"] = round2(float64(vm.Total) / 1e9)
 	}
-	switch runtime.GOOS {
-	case "linux":
+	switch {
+	case android.IsAndroid():
+		// Android: the OS by its Android version (the Linux distribution
+		// name is blank there) and the device's maker and model.
+		inv["os"] = android.OSName()
+		if m := android.Model(); m != "" {
+			inv["model"] = m
+		}
+	case runtime.GOOS == "linux":
 		for key, file := range map[string]string{"vendor": "sys_vendor", "model": "product_name", "serial": "product_serial", "bios": "bios_version"} {
 			if v := readTrim("/sys/class/dmi/id/" + file); v != "" {
 				inv[key] = v
 			}
 		}
-	case "windows":
+	case runtime.GOOS == "windows":
 		if out, ok := ps(`$c = Get-CimInstance Win32_ComputerSystem; $b = Get-CimInstance Win32_BIOS; [pscustomobject]@{vendor=$c.Manufacturer; model=$c.Model; serial=$b.SerialNumber; bios=$b.SMBIOSBIOSVersion} | ConvertTo-Json -Compress`, nil, 30*time.Second); ok {
 			var extra map[string]string
 			if json.Unmarshal([]byte(out), &extra) == nil {
@@ -1011,7 +1030,7 @@ func (s *SlowCollector) collectInventory() {
 				}
 			}
 		}
-	case "darwin":
+	case runtime.GOOS == "darwin":
 		if res, err := execx.Run(30*time.Second, nil, "sysctl", "-n", "hw.model"); err == nil {
 			inv["model"] = strings.TrimSpace(res.Stdout)
 		}

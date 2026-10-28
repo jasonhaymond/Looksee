@@ -21,3 +21,8 @@ interval_seconds: 30
 # go through one. The agent runs as a system account, which doesn't use the
 # proxy set up for signed-in users. Checks still connect directly.
 # proxy_url: http://proxy.example.com:8080
+
+# Optional. DNS server (an IP address, optionally :port) for every lookup the
+# agent makes. Only needed on Android (Termux) when the agent can't find one
+# by itself, or on a machine with no /etc/resolv.conf. See README → Android.
+# dns_server: 192.168.1.1

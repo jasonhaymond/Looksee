@@ -2,7 +2,7 @@
 
 A single static binary that reports a machine's metrics and runs the on-machine checks a
 Looksee engine assigns to it. No runtime dependency — Go compiles to one self-contained
-executable per platform. Version 5.1.0 (versioned in lockstep with the engine and
+executable per platform. Version 5.2.0 (versioned in lockstep with the engine and
 dashboard; see [CHANGELOG.md](../CHANGELOG.md)). Running it on Windows alongside Smart
 App Control, Defender, ASR, WDAC/AppLocker or an EDR, and signing it, are covered in
 [windows-agent-security.md](../docs/windows-agent-security.md).
@@ -19,7 +19,8 @@ App Control, Defender, ASR, WDAC/AppLocker or an EDR, and signing it, are covere
 8. [Running as a service](#running-as-a-service)
 9. [Updating](#updating)
 10. [Site collector](#site-collector)
-11. [Troubleshooting: an endpoint never checks in](#troubleshooting-an-endpoint-never-checks-in)
+11. [Android (Termux)](#android-termux)
+12. [Troubleshooting: an endpoint never checks in](#troubleshooting-an-endpoint-never-checks-in)
 
 Related: [user guide](../docs/user-guide.md) · [check reference](../docs/check-reference.md) · [Windows agent & security software](../docs/windows-agent-security.md) · [deployment guide](../docs/deployment-guide.md) · [README](../README.md)
 
@@ -27,9 +28,9 @@ Related: [user guide](../docs/user-guide.md) · [check reference](../docs/check-
 
 1. In the Looksee dashboard, add an Endpoint (Monitoring → Endpoints → **+ Add
    endpoint**) in the right Site.
-2. On its **Agent** tab click **Generate install command** — it shows two ready-to-run
-   commands, one for Linux/macOS and one for Windows (a small toggle switches between
-   them):
+2. On its **Agent** tab click **Generate install command** — it shows ready-to-run
+   commands for Linux/macOS, Windows and Android (a small toggle switches between them;
+   Android has its own steps — see [Android (Termux)](#android-termux)):
    ```sh
    curl -fsSL https://your-looksee-domain/install/agent.sh | sudo bash -s -- <key>
    ```
@@ -87,6 +88,7 @@ engine, or just follow the manual steps below.
    | `ntp_server` | `pool.ntp.org` | Server the clock-offset metric compares against |
    | `docker_socket` | `/var/run/docker.sock` or `\\.\pipe\docker_engine` | Docker Engine API socket for container checks |
    | `proxy_url` | *(empty — the `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` environment variables apply)* | HTTP(S) proxy for the agent's own traffic to the engine: reports, config polls, updates, the site collector's download, watchdog webhook alerts. Checks still go direct. Must look like `http://proxy.example.com:8080`; the agent refuses to start with anything else |
+   | `dns_server` | *(empty — the system's DNS settings)* | DNS server for every lookup the agent makes, as an IP address (optionally `:port`). Only needed on Android when Termux's own DNS setting isn't found (see [Android](#android-termux)), or on a machine without `/etc/resolv.conf`; ignored otherwise |
 
    Not yet covered by `proxy_url`: a **site collector's** own connection to the engine
    (it's a separate Node.js program, and its LAN checks must not go through the proxy).
@@ -139,8 +141,11 @@ CPU, memory), failed systemd units / stopped automatic Windows services, schedul
 or systemd timer result, custom scripts, files and folders (exists, age, size, count,
 folder size, checksum, folder watchdog), log file patterns (rotation-aware), the systemd
 journal, the Windows Event Log, Windows performance counters, Docker containers, Hyper-V
-VMs, WireGuard/tunnel interfaces, UPS via NUT or apcupsd, Borg/restic/Veeam backup age —
-plus ping/TCP/HTTP/DNS/TLS probes when a check is set to **Run from** this agent.
+VMs, WireGuard/tunnel interfaces, UPS via NUT or apcupsd, Borg/restic/Veeam backup age,
+local user accounts and the largest folders and files on each disk (5.2+) — plus
+ping/TCP/HTTP/DNS/TLS probes when a check is set to **Run from** this agent, and custom
+scripts another endpoint's check is set to **Run by** this agent (from this agent's own
+`script_dir`, like any script).
 Exclusions set in Looksee (services, containers, VMs, event IDs, message texts) are
 applied on the agent, so excluded items never count.
 
@@ -174,6 +179,7 @@ doesn't have on its own. **By default (5.0+) the installer grants it:**
 | files, folders and lock files under `/home` | see `/home`, read-only | the drop-in below (`ProtectHome=read-only`) | `--minimal` |
 | Docker containers | the Docker socket | `docker` group, **only if Docker is installed** | `--no-docker` or `--minimal` |
 | backups (Borg/restic) | read the repository + its key | *not granted* — run with the same user/permissions as the backup, or grant read access to the repo | — |
+| local user accounts: locked/expired state and password changes | read `/etc/shadow` | *not granted* — see below | — |
 
 **Know what you're granting.** Membership of the `docker` group is effectively root
 access on that machine (anyone who can talk to the Docker socket can start a container
@@ -183,6 +189,25 @@ install with `--no-docker`. `CAP_SYS_ADMIN` (for NVMe SMART) is a broad capabili
 agent only uses it through `smartctl`. `--minimal` grants none of the above — most
 checks still work, and those that can't report "permission denied — see agent README →
 Privileges" rather than failing silently.
+
+**Local user accounts and `/etc/shadow`.** The *Local user accounts* check reads
+`/etc/passwd` and `/etc/group`, which every user can read: new, removed and renamed
+accounts and admin rights (sudo/wheel/admin groups) work out of the box. Whether an
+account is locked or expired, and when its password last changed, live in
+`/etc/shadow`, which only root (and on Debian/Ubuntu the `shadow` group) can read. It
+also holds every account's password hash, so it isn't granted by default: an attacker
+who took over the agent's account could copy the hashes and try to crack them offline.
+The agent only uses the lock marker and dates and never sends or keeps the hashes. If
+you want those details anyway, on Debian/Ubuntu:
+
+```sh
+sudo usermod -aG shadow looksee-agent
+sudo systemctl restart looksee-agent
+```
+
+**Check:** within one check interval the check's details show *locked* and *password
+set* for each account. On Red Hat-family systems `/etc/shadow` has no group access at
+all; leave these details out there. Undo with `sudo gpasswd -d looksee-agent shadow`.
 
 To change your mind later, re-run the installer with different options (re-running with
 `--minimal` removes the drop-in), or remove a group by hand:
@@ -447,6 +472,109 @@ agent (3.2.0+):
 The collector runs with the agent's privileges: SYSTEM on Windows, root on macOS, the
 unprivileged `looksee-agent` user on Linux — where binding ports below 1024 or running
 DHCP checks needs the drop-in shown in the user guide.
+
+## Android (Termux)
+
+The agent runs on Android phones and tablets inside **Termux**, a Linux terminal app.
+It's the same static Linux binary servers use (Android's kernel is Linux), with
+Android-specific handling for DNS, the OS name and the battery. It needs no root.
+
+**Honestly:** the installer and the Android handling are written and their logic is
+tested on Linux, but they haven't yet been run on a real phone in this project — treat
+the first install as a trial and check each step below.
+
+**What works:** check-ins and the *Agent online* check (the main use: is this phone/tablet
+up and on the network), memory, storage, network interfaces, battery (with Termux:API),
+ping/TCP/HTTP/DNS/TLS probes run from the phone (**Run from**), custom scripts from
+`~/.looksee/scripts` if you set `script_dir`, file/folder checks inside Termux's storage,
+and *Largest folders and files* on Termux's own folders. **What doesn't:** Android hides
+total CPU usage and other apps' processes from apps (since Android 8), and has no
+systemd, journal, local user accounts, SMART or package manager the agent knows —
+those checks report *unknown* with the reason.
+
+### Install
+
+1. **Install the apps from F-Droid** (<https://f-droid.org>): **Termux** and
+   **Termux:Boot** (and optionally **Termux:API** for battery readings). Don't use the
+   Play Store versions — they're outdated and can't install packages. **Check:** opening
+   Termux gives a `$` prompt.
+2. **Open Termux:Boot once** (it registers itself to run at boot), then in Android's
+   **Settings → Apps → Termux → Battery**, choose **Unrestricted** — otherwise Android
+   pauses Termux in the background and the endpoint goes offline.
+3. In Termux, update packages and install curl (answer **Y** to prompts):
+
+   ```sh
+   pkg update && pkg install -y curl procps
+   ```
+
+   Optional, for battery readings: `pkg install -y termux-api`.
+4. In Looksee, add an endpoint for the phone (Monitoring → Endpoints → **+ Add
+   endpoint**), open its **Agent** tab, click **Generate install command**, choose
+   **Android**, and copy the command. It looks like this:
+
+   ```sh
+   curl -fsSL https://your-looksee-domain/install/agent-android.sh | bash -s -- https://your-looksee-domain <key>
+   ```
+
+5. **Paste it into Termux** and run it (no `sudo` — there is none on Android). It
+   downloads the agent for the phone's processor, writes `~/.looksee/looksee-agent.yaml`
+   (readable only by Termux), sets up `~/.looksee/run-agent.sh` (keeps the agent
+   running and holds a wake lock) and `~/.termux/boot/looksee-agent` (starts it at
+   boot), starts it, and waits up to a minute for the first check-in. **Check:** it
+   prints *The agent checked in*, and the endpoint shows **online** in Looksee with
+   OS *Android NN*.
+
+### Install by hand (the same end state as the script)
+
+```sh
+mkdir -p ~/.looksee ~/.termux/boot && chmod 700 ~/.looksee
+uname -m                                   # aarch64 → linux-arm64, x86_64 → linux-amd64
+curl -fsSL https://your-looksee-domain/install/agent/linux-arm64 -o ~/.looksee/looksee-agent
+chmod 700 ~/.looksee/looksee-agent && ~/.looksee/looksee-agent -version   # prints e.g. 5.2.0
+umask 077
+cat > ~/.looksee/looksee-agent.yaml <<'CFG'
+engine_url: "https://your-looksee-domain"
+agent_key: "<key>"
+interval_seconds: 60
+CFG
+cat > ~/.looksee/run-agent.sh <<'RUN'
+#!/data/data/com.termux/files/usr/bin/bash
+DIR="$HOME/.looksee"
+command -v termux-wake-lock >/dev/null && termux-wake-lock
+export LOOKSEE_SUPERVISED=1
+while true; do
+  "$DIR/looksee-agent" -config "$DIR/looksee-agent.yaml" -log-file "$DIR/looksee-agent.log"
+  sleep 10
+done
+RUN
+chmod 700 ~/.looksee/run-agent.sh
+printf '#!/data/data/com.termux/files/usr/bin/bash\nnohup "$HOME/.looksee/run-agent.sh" >/dev/null 2>&1 &\n' > ~/.termux/boot/looksee-agent
+chmod 700 ~/.termux/boot/looksee-agent
+nohup ~/.looksee/run-agent.sh >/dev/null 2>&1 &
+```
+
+**Check:** `tail ~/.looksee/looksee-agent.log` shows *first report accepted by the engine
+— this endpoint is checked in* within a minute.
+
+### Updating, uninstalling, troubleshooting
+
+- **Updates** work like any agent's (**Update agent** in Looksee): the agent swaps in the
+  new binary and exits, and `run-agent.sh` starts it again (`LOOKSEE_SUPERVISED=1` tells
+  it something will restart it).
+- **Uninstall:** `curl -fsSL https://your-looksee-domain/install/agent-android.sh | bash -s -- --uninstall`
+  (stops the agent, removes `~/.looksee` and the boot script), then delete the endpoint
+  in Looksee.
+- **"lookup … no such host" in the log:** the agent couldn't find a DNS server (Android
+  has no `/etc/resolv.conf`; the agent uses Termux's, or Android's own setting on older
+  versions). Add `dns_server: 192.168.1.1` (your router or DNS server) to
+  `~/.looksee/looksee-agent.yaml` and restart: `pkill -f looksee-agent` (the runner
+  starts it again within 10 s).
+- **Goes offline when the screen is off:** Termux's battery setting isn't
+  *Unrestricted* (step 2), or the phone maker's own battery saver closes it — Samsung:
+  *Settings → Battery → Background usage limits → Never sleeping apps → add Termux*;
+  see <https://dontkillmyapp.com> for other makers.
+- **Doesn't start after a reboot:** open Termux:Boot once more, and check
+  `~/.termux/boot/looksee-agent` exists and is executable (`ls -l ~/.termux/boot`).
 
 ## Troubleshooting: an endpoint never checks in
 

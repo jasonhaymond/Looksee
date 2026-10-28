@@ -1,5 +1,5 @@
-// Agent installation: /install/agent.sh and agent.ps1 (the one-line installers
-// shown in the dashboard), the files they fetch (install scripts, service
+// Agent installation: /install/agent.sh, agent.ps1 and agent-android.sh (the
+// one-line installers shown in the dashboard), the files they fetch (install scripts, service
 // units, the privileged drop-in), agent binaries and the site collector
 // bundle.
 //
@@ -172,6 +172,20 @@ installRouter.get("/com.looksee.agent.plist", (_req, res) => {
     return;
   }
   res.type("application/xml").sendFile(filePath);
+});
+
+// GET /install/agent-android.sh
+// The Android (Termux) installer, served verbatim: the one command shown in
+// the dashboard passes the engine URL and the agent key as arguments
+// (`curl … | bash -s -- <engine-url> <key>`). It downloads the same
+// linux-arm64 / linux-amd64 binary as a Linux server.
+installRouter.get("/agent-android.sh", (_req, res) => {
+  const filePath = path.join(agentDir, "install-android.sh");
+  if (!fs.existsSync(filePath)) {
+    res.status(404).send("install-android.sh not found on this engine.");
+    return;
+  }
+  res.type("text/x-shellscript").sendFile(filePath);
 });
 
 // GET /install/agent.ps1

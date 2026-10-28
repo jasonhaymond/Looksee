@@ -10,11 +10,13 @@ describe("dashboard and engine check-type registries", () => {
     expect(new Set(DASHBOARD_TYPES.map((t) => t.type))).toEqual(new Set(Object.keys(CHECK_TYPE_META)));
   });
 
-  it("agree on which types need a host and which can run on an agent", () => {
+  it("agree on which types need a host and which can run on an agent (or another agent)", () => {
     for (const def of DASHBOARD_TYPES) {
-      const meta = CHECK_TYPE_META[def.type as keyof typeof CHECK_TYPE_META] as { endpointRequired?: boolean; remoteProbe?: boolean };
+      const meta = CHECK_TYPE_META[def.type as keyof typeof CHECK_TYPE_META] as { endpointRequired?: boolean; remoteProbe?: boolean; otherAgent?: boolean };
       expect(Boolean(def.needsEndpoint), `${def.type} needsEndpoint`).toBe(Boolean(meta.endpointRequired));
       expect(Boolean(def.remoteProbe), `${def.type} remoteProbe`).toBe(Boolean(meta.remoteProbe));
+      // Which agent checks another endpoint's agent may run ("Run by").
+      expect(Boolean(def.otherAgent), `${def.type} otherAgent`).toBe(Boolean(meta.otherAgent));
     }
   });
 });

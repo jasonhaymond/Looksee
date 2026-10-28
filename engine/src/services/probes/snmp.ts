@@ -168,11 +168,27 @@ const PRINTER_ERROR_BITS: [string, "warn" | "down"][] = [
 
 type PresetResult = { value: number | null; message: string; details?: unknown; status?: "up" | "warn" | "down" };
 
+/**
+ * Whether an SNMP row is excluded by the check's exclusions (config.exclude:
+ * its own list merged with any reusable "SNMP rows and values" lists — see
+ * services/exclusions.ts). A row is left out when any of the given texts —
+ * its index, its name, its value — matches an item as a whole name, with *
+ * and ? wildcards and case ignored (probes/exclude.ts).
+ *
+ * @param c the check's settings
+ * @param texts what identifies this row (empty ones are ignored)
+ */
+export function rowExcluded(c: Config, ...texts: (string | null | undefined)[]): boolean {
+  const items = excludeItems(c.exclude, true);
+  return items.length > 0 && texts.some((t) => nameExcluded(t, items));
+}
+
 // H2: common device templates. Each preset reads standard MIBs (no vendor
 // MIB files needed) and boils them down to one value + a readable message.
 export const SNMP_PRESETS: Record<string, (s: snmp.Session, c: Config, ctx: ProbeContext) => Promise<PresetResult & { state?: Record<string, unknown> }>> = {
-  async hr_cpu(s) {
-    const loads = [...(await snmpWalk(s, "1.3.6.1.2.1.25.3.3.1.2")).values()].map(toNum);
+  async hr_cpu(s, c) {
+    // Per-core load, keyed by row index; excluded indexes are left out.
+    const loads = [...(await snmpWalk(s, "1.3.6.1.2.1.25.3.3.1.2")).entries()].filter(([idx]) => !rowExcluded(c, idx)).map(([, v]) => toNum(v));
     if (!loads.length) return { value: null, message: "Device doesn't expose hrProcessorLoad" };
     const avg = loads.reduce((a, b) => a + b, 0) / loads.length;
     return { value: Math.round(avg * 10) / 10, message: `CPU ${avg.toFixed(1)}% across ${loads.length} core(s)` };
@@ -195,6 +211,7 @@ export const SNMP_PRESETS: Record<string, (s: snmp.Session, c: Config, ctx: Prob
       if (String(type) !== "1.3.6.1.2.1.25.2.1.4") continue;
       const name = toStr(cols.get("3")?.get(idx));
       if (filter && !name.toLowerCase().includes(filter)) continue;
+      if (rowExcluded(c, idx, name)) continue;
       const size = toNum(cols.get("5")?.get(idx));
       if (size > 0) disks.push({ name, percent: Math.round((toNum(cols.get("6")?.get(idx)) / size) * 1000) / 10 });
     }
@@ -202,10 +219,12 @@ export const SNMP_PRESETS: Record<string, (s: snmp.Session, c: Config, ctx: Prob
     const top = disks.reduce((a, b) => (b.percent > a.percent ? b : a));
     return { value: top.percent, message: `${top.name} ${top.percent}% used`, details: disks };
   },
-  async printer_supplies(s) {
+  async printer_supplies(s, c) {
     const cols = columns(await snmpWalk(s, "1.3.6.1.2.1.43.11.1.1"));
     const supplies: { name: string; percent: number | null }[] = [];
     for (const [idx, desc] of cols.get("6") ?? []) {
+      // e.g. exclude "Waste*" so a waste-toner box isn't read as a low supply.
+      if (rowExcluded(c, idx, toStr(desc))) continue;
       const max = toNum(cols.get("8")?.get(idx));
       const level = toNum(cols.get("9")?.get(idx));
       // -2 unknown, -3 "some remaining"; neither is a percentage.
@@ -219,7 +238,7 @@ export const SNMP_PRESETS: Record<string, (s: snmp.Session, c: Config, ctx: Prob
   // HOST-RESOURCES hrPrinterDetectedErrorState is a bitmask (bit 0 = the
   // first byte's high bit); the Printer-MIB alert table adds the printer's
   // own wording ("Paper jam in tray 2").
-  async printer_status(s) {
+  async printer_status(s, c) {
     const errorState = await snmpWalk(s, "1.3.6.1.2.1.25.3.5.1.2").catch(() => new Map<string, unknown>());
     const printerStatus = await snmpWalk(s, "1.3.6.1.2.1.25.3.5.1.1").catch(() => new Map<string, unknown>());
     const alerts = columns(await snmpWalk(s, "1.3.6.1.2.1.43.18.1.1").catch(() => new Map<string, unknown>()));
@@ -229,12 +248,13 @@ export const SNMP_PRESETS: Record<string, (s: snmp.Session, c: Config, ctx: Prob
       const bytes = Buffer.isBuffer(raw) ? raw : Buffer.alloc(0);
       PRINTER_ERROR_BITS.forEach(([name, severity], bit) => {
         const byte = bytes[Math.floor(bit / 8)] ?? 0;
-        if (byte & (0x80 >> bit % 8)) conditions.push({ name, severity });
+        if (byte & (0x80 >> bit % 8) && !rowExcluded(c, name)) conditions.push({ name, severity });
       });
     }
     const alertRows: { severity: string; description: string; code: number }[] = [];
     for (const [idx, sev] of alerts.get("2") ?? []) {
       const level = toNum(sev);
+      if (rowExcluded(c, idx, toStr(alerts.get("8")?.get(idx)))) continue;
       alertRows.push({ severity: level === 3 ? "critical" : level === 4 || level === 5 ? "warning" : "other", description: toStr(alerts.get("8")?.get(idx)), code: toNum(alerts.get("7")?.get(idx)) });
     }
     const state = toNum([...printerStatus.values()][0]);
@@ -301,11 +321,12 @@ export const SNMP_PRESETS: Record<string, (s: snmp.Session, c: Config, ctx: Prob
     if (rebootedAt && Date.now() - new Date(rebootedAt).getTime() < hold) return { value: hours, message: `Device rebooted (up ${hours.toFixed(2)}h)`, status: "warn", state };
     return { value: Math.round(hours * 10) / 10, message: `Up ${hours >= 48 ? `${(hours / 24).toFixed(1)} days` : `${hours.toFixed(1)} h`}`, state };
   },
-  async sensor_temp_max(s) {
+  async sensor_temp_max(s, c) {
     const cols = columns(await snmpWalk(s, "1.3.6.1.2.1.99.1.1.1"));
     const temps: number[] = [];
     for (const [idx, type] of cols.get("1") ?? []) {
       if (toNum(type) !== 8) continue; // celsius
+      if (rowExcluded(c, idx)) continue;
       const scale = toNum(cols.get("2")?.get(idx));
       const precision = toNum(cols.get("3")?.get(idx)) || 0;
       const raw = toNum(cols.get("4")?.get(idx));
@@ -344,7 +365,9 @@ async function walkCheck(session: snmp.Session, oid: string, mode: string, confi
   } catch {
     return warn(`Invalid row filter regex: ${filter}`);
   }
-  const picked = re ? rows.filter((r) => re!.test(r.suffix)) : rows;
+  // Rows kept: those the index filter (if any) matches, minus excluded rows —
+  // by index ("1.5") or by value ("Virtual Memory").
+  const picked = (re ? rows.filter((r) => re!.test(r.suffix)) : rows).filter((r) => !rowExcluded(config, r.suffix, displayValue(r.value)));
   const asRate = bool(config, "asRate");
   const now = Date.now();
   const prev = (ctx.state.rows ?? {}) as Record<string, number>;

@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"looksee-agent/internal/android"
 	"looksee-agent/internal/checks"
 	"looksee-agent/internal/collector"
 	"looksee-agent/internal/config"
@@ -93,6 +94,11 @@ func main() {
 	}
 	if cfg.ProxyURL != "" {
 		applyProxy(cfg.ProxyURL)
+	}
+	// Android (Termux) has no /etc/resolv.conf, so DNS is pointed at a real
+	// server before the first lookup (internal/android).
+	if server := android.ConfigureDNS(cfg.DNSServer); server != "" {
+		log.Printf("looksee-agent: using DNS server %s", server)
 	}
 
 	slow := metrics.NewSlowCollector(cfg.NTPServer)

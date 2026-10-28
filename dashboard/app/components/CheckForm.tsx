@@ -510,7 +510,7 @@ export function CheckForm({
   const [endpointIds, setEndpointIds] = useState<string[]>(defaultEndpointId ? [defaultEndpointId] : []);
   const [probeEndpointId, setProbeEndpointId] = useState(check?.probeEndpointId ?? "");
   const [config, setConfig] = useState<Record<string, unknown>>(check ? { ...check.config } : defaultConfigFor(type));
-  const [interval, setIntervalSecs] = useState(String(check?.intervalSeconds ?? (type === "heartbeat" || type === "push_value" ? 3600 : 60)));
+  const [interval, setIntervalSecs] = useState(String(check?.intervalSeconds ?? (type === "heartbeat" || type === "push_value" ? 3600 : (def.defaultInterval ?? 60))));
   const [retry, setRetry] = useState(check?.retryIntervalSeconds != null ? String(check.retryIntervalSeconds) : "");
   const [enabled, setEnabled] = useState(check?.enabled ?? true);
   const [tags, setTags] = useState((check?.tags ?? []).join(", "));
@@ -525,8 +525,10 @@ export function CheckForm({
 
   const siteName = useMemo(() => new Map(sites.map((e) => [e.id, e.name])), [sites]);
   const targetEndpointIds = editing ? (endpointId ? [endpointId] : []) : endpointIds;
-  // The host whose inventory feeds the pickers: the (first) chosen host.
-  const selectedEndpointId = targetEndpointIds[0] || probeEndpointId;
+  // The endpoint whose inventory feeds the pickers: the (first) chosen
+  // endpoint — or, for a script run by another endpoint's agent, that agent's
+  // endpoint, since the script has to be in *its* script_dir.
+  const selectedEndpointId = (def.otherAgent && probeEndpointId) || targetEndpointIds[0] || probeEndpointId;
   useEffect(() => {
     if (!selectedEndpointId) return;
     loadEndpoint(selectedEndpointId).then(setEndpoint).catch(() => setEndpoint(null));
@@ -568,7 +570,7 @@ export function CheckForm({
       return;
     }
     const common = {
-      probeEndpointId: def.remoteProbe && probeEndpointId ? probeEndpointId : null,
+      probeEndpointId: (def.remoteProbe || def.otherAgent) && probeEndpointId ? probeEndpointId : null,
       intervalSeconds: Number(interval) || 60,
       retryIntervalSeconds: retry ? Number(retry) : null,
       enabled,
@@ -680,6 +682,18 @@ export function CheckForm({
             <Label label="Run from" help="The engine itself, or an endpoint's agent — for targets only reachable from inside that endpoint's network.">
               <select value={probeEndpointId} onChange={(e) => setProbeEndpointId(e.target.value)} className={inputClass}>
                 <option value="">Looksee engine</option>
+                {agentEndpoints.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    Agent on {h.name}
+                  </option>
+                ))}
+              </select>
+            </Label>
+          )}
+          {def.otherAgent && (
+            <Label label="Run by" help="Normally the endpoint's own agent. Pick another endpoint's agent to run the script there instead — for a device that can't run the agent itself (a printer, a NAS, an appliance). The script must be in that agent's script_dir; the result still belongs to this check's endpoint.">
+              <select value={probeEndpointId} onChange={(e) => setProbeEndpointId(e.target.value)} className={inputClass}>
+                <option value="">The endpoint&apos;s own agent</option>
                 {agentEndpoints.map((h) => (
                   <option key={h.id} value={h.id}>
                     Agent on {h.name}

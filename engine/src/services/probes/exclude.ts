@@ -1,8 +1,8 @@
 // Exclusions: which items a check should ignore, and how an item is matched.
 //
 // Where this sits: used by the checks that look at many items at once —
-// trap/syslog messages (probes/internal.ts), SNMP interface tables
-// (probes/snmp.ts), the agent's extended metrics (services/endpointMetrics.ts)
+// trap/syslog messages (probes/internal.ts), SNMP interface tables, walks and
+// templates (probes/snmp.ts), the agent's extended metrics (services/endpointMetrics.ts)
 // — and by services/exclusions.ts, which merges a check's own `exclude`
 // setting with the reusable exclusion lists before the check runs. This file
 // has no database access, so the site collector (which bundles the network
@@ -41,6 +41,13 @@ export const EXCLUSION_KINDS: Record<string, { label: string; match: ExclusionMa
   containers: { label: "Docker containers", match: "name", types: ["agent_docker"], help: "Containers with these names are ignored, e.g. *-migrate." },
   vms: { label: "Hyper-V virtual machines", match: "name", types: ["agent_hyperv"], help: "VMs with these names are ignored." },
   packages: { label: "Software packages", match: "name", types: ["host_packages", "host_software", "host_vulnerable"], help: "Packages with these names are ignored, e.g. linux-image-*." },
+  users: { label: "User accounts", match: "name", types: ["agent_users"], help: "Accounts with these names are ignored by the user accounts check, e.g. a service account whose password rotates (svc-backup) or temporary accounts (tmp-*)." },
+  snmp_values: {
+    label: "SNMP rows and values",
+    match: "name",
+    types: ["snmp"],
+    help: "Rows of an SNMP walk or template whose index, name or value matches are left out — e.g. a disk name (/run*), a printer supply (Waste*), a row index (1.5) or a value (Virtual Memory).",
+  },
 };
 
 /**

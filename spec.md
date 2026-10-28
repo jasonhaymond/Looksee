@@ -180,6 +180,46 @@ if a real use case shows up.
 - Engine-side command checks (rejected — see CLAUDE.md: scripts run only from
   `script_dir`).
 
+### Backlog (requested 2026-10-26)
+
+Built for 5.2 (not yet released):
+
+- [x] **DNS zone history** (`dns_zone`) — whole-zone inventory by AXFR (optional TSIG)
+  or a list of names, with a change history.
+- [x] **Local user accounts** (`agent_users`) — new/removed/changed accounts, admin
+  rights gained at a higher status.
+- [x] **Largest folders and files** (`agent_disk_tree`) — top N per disk with growth
+  since the last scan.
+- [x] **One collector for several sites** — `PUT /api/endpoints/:id/collector-sites` and
+  the endpoint's *Site collector for* picker; each site's address ranges
+  (`sites.networks`) decide where a received event is filed.
+- [x] **SNMP exclusions** — per check and as reusable *SNMP rows and values* lists, for
+  walks and templates.
+- [x] **Script output → warn or down** — separate warn/down text or regex.
+- [x] **Script check run by another agent** — *Run by* (`probeEndpointId` on
+  `agent_script`), still only from that agent's own `script_dir`.
+- [x] **Android agent** — the static Linux build under Termux, with Android DNS/OS/
+  battery handling and a Termux installer. Not yet run on a real phone.
+
+Bug, still open:
+
+- [ ] **Windows agents not reporting in.** Several Windows agents didn't connect even
+  after a restart or reinstall. 5.1.0 (deployed 2026-10-26) fixes the known causes
+  (NUL characters in installed-program names failing the whole report — fixed on the
+  engine, no agent update needed; a first report that could stall; key-guessing blocks
+  of a shared address). Agents that never checked in can't receive a pushed update, so
+  any still silent need a **reinstall with the 5.1.0 installer**; their endpoint's Agent
+  tab and `C:\ProgramData\LookseeAgent\looksee-agent.log` now say why.
+
+Potential future add-on (not planned; conflicts with a locked decision):
+
+- [ ] **Remote scripts and an embedded terminal/PowerShell console** sent from the
+  engine. This reverses the "engine never sends code to run" decision (CLAUDE.md, and
+  "Engine-side command checks" above), which exists so a stolen Looksee login can't run
+  code on monitored machines. If ever pursued, any remote-command feature beyond stored
+  scripts must re-prompt for the signed-in user's password (plus 2FA) before opening
+  the console, and needs its own security design and tests before anything is built.
+
 ## v3.0 scope (built)
 
 Chosen from a survey of Zabbix, Nagios/Icinga, PRTG, Checkmk, LibreNMS, Netdata,

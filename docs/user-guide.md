@@ -35,6 +35,7 @@ two-factor, IP restriction, attack alerts), [windows-agent-security.md](windows-
    - [Resolving and recovery](#resolving-and-recovery)
    - [When a check fails: things to check](#when-a-check-fails-things-to-check)
    - [Custom scripts with expected output](#custom-scripts-with-expected-output)
+   - [DNS zone history](#dns-zone-history)
    - [SNMP: walks, counters and the walk browser](#snmp-walks-counters-and-the-walk-browser)
    - [SNMP: calculating a value](#snmp-calculating-a-value)
    - [Printers](#printers)
@@ -360,9 +361,47 @@ the check form's **Browse** lists the ones the agent found there.
   *Equals* or *Matches regex*, enter the text, and optionally an **expected exit code**.
   A mismatch is down (or warn, if you choose) and the message shows what it got.
 
+- **Warn / down if the output contains** — for scripts that *print* a problem rather
+  than confirm success: enter text (or, with *Warn/down text is → A regular expression*,
+  a pattern) under **Warn if the output contains** and/or **Down if the output contains**.
+  The down text is checked first. These work with or without an expected output; when
+  both are set, the worse result wins.
+
 To check the output of an existing command, put a one-line wrapper in `script_dir`,
 e.g. `zpool-health.sh` containing `zpool status -x`, then expect it to *contain*
-`all pools are healthy`. Expected-output matching needs agent 4.0.0 or newer.
+`all pools are healthy`. Output matching needs agent 4.0.0 or newer.
+
+**Running the script from another endpoint.** For a device that can't run the agent
+(a printer, a NAS, a UPS card), add the check to *that device's* endpoint and choose
+another endpoint under **Run by** — a machine nearby whose agent has the script in its
+`script_dir`. **Browse** then lists *that* agent's scripts. The result belongs to the
+device's endpoint (its page, its alerts), and only the chosen agent can report it.
+
+### DNS zone history
+
+The **DNS zone history** check keeps an inventory of every record in a zone and a
+history of what changed, so an unexpected edit — a hijacked MX record, a stray A record,
+a deleted SPF record — raises an alert and stays on record.
+
+1. **Allow zone transfers to Looksee** on the zone's DNS server (only the server Looksee
+   asks from — the Looksee server's address, or the site collector's for a remote site):
+   - BIND: in the zone's block, `allow-transfer { 10.0.0.10; };` (or `{ key
+     looksee-transfer; };` with a TSIG key), then `sudo rndc reload`.
+   - Windows DNS: **DNS Manager →** the zone **→ Properties → Zone Transfers →** tick
+     *Allow zone transfers*, choose *Only to the following servers*, add the address.
+   - **Check** from that machine: `dig @<dns-server> example.com AXFR` lists the zone
+     instead of "Transfer failed".
+   Can't allow transfers (a public DNS host)? Choose *Reading a list of names* in step 2
+   instead and list the names to watch.
+2. **Add the check:** **+ Add check → DNS zone history**, enter the zone and the DNS
+   server, and **Save**. It runs hourly by default.
+3. **Check:** the first result reads *Baseline recorded: N record(s), serial …*. From
+   then on, an edit shows as e.g. *changed www A 192.0.2.1 → 192.0.2.66* with the
+   chosen status (warn), held for an hour. The check's page lists the changes, the
+   history (last 500 changes) and the current records.
+
+Records that change on their own (certificate-renewal `_acme-challenge` records,
+DHCP-registered hosts) go under **Ignore names** (Advanced).
 
 ### SNMP: walks, counters and the walk browser
 
@@ -484,6 +523,20 @@ types use it:
   addresses) from the Looksee server to OSV.dev and endoflife.date. Untick both lookups
   under Advanced to keep everything local. Results are cached (vulnerabilities for 7
   days, end-of-life dates for 1 day), so the lookups are light.
+
+Two more checks (agent 5.2) round this out:
+
+- **Local user accounts** — alerts on new, removed and changed local accounts (enabled
+  or disabled, locked, password changed, full name, shell) and, at a higher status
+  (down by default), on anyone **gaining admin rights** — a new admin account, or an
+  existing one added to Administrators / sudo / wheel / admin. The first report records
+  a baseline; built-in and service accounts are left out unless you include them, and
+  **Exclude accounts** skips ones whose changes are expected (a service account whose
+  password rotates). Windows, Linux and macOS; details of how each is read are in the
+  [check reference](check-reference.md#agent_users).
+- **Largest folders and files** (under *Files & logs*) — walks each disk, or one folder,
+  and lists the largest folders and files, with how much each grew since the last scan.
+  It runs every 6 hours by default and never slows the agent's reports.
 
 **Check:** on an endpoint running agent 5.0, add **Upgradable packages**; the result
 names the waiting packages within a few minutes. On Ubuntu, compare with
@@ -740,7 +793,8 @@ purpose. Exclusions make checks ignore them.
 
 **Inside one check:** most checks that look at several items have an **Exclude …**
 field under Advanced (mounts, interfaces, disk devices, sensors, services, containers,
-VMs, packages, event IDs, message texts), one item per line.
+VMs, packages, user accounts, SNMP rows/values, event IDs, message texts), one item per
+line.
 
 **Reusable lists:** **Alerting → Exclusions** holds lists you write once and apply to
 many checks.
@@ -748,8 +802,10 @@ many checks.
 1. Click **+ New exclusion list** and name it.
 2. Choose **What the items are**: message texts, Windows event IDs, mount points /
    drives, network interfaces, disk devices, sensors and fans, services, Docker
-   containers, Hyper-V virtual machines, or packages. The kind decides which check types
-   the list affects.
+   containers, Hyper-V virtual machines, packages, user accounts, or SNMP rows and
+   values. The kind decides which check types the list affects — e.g. *SNMP rows and
+   values* applies to every SNMP check: `Virtual Memory` leaves that storage row out of
+   every device's disk template, `Waste*` every printer's waste-toner box.
 3. Enter the **Items (one per line)**. Names are whole names with case ignored; `*`
    matches anything and `?` one character (`veth*`, `loop?`). Message texts match
    anywhere in the message.
@@ -862,8 +918,32 @@ client site, a relative's house — you have two options, and you can use both:
 
 To stop using a collector, set **Site collector** back to **Looksee server**; the agent
 stops the collector within about 15 seconds and the site's checks run from the server
-again. A collector endpoint can serve several sites (networks) at the same physical
-place.
+again.
+
+### One collector for several networks
+
+One machine can be the collector for several sites — e.g. a box on a trunk port that
+reaches several VLANs, or a firewall-adjacent server that can route to each network.
+
+1. Open the collector machine's endpoint → **Agent** tab. Under **Site collector for**,
+   tick every site (network) it should collect for and click **Save collector sites**.
+   (Choosing the same endpoint as **Site collector** on each site's Edit form does the
+   same thing.) A site that had another collector moves to this one; sites you untick go
+   back to the Looksee server. **Check:** each site's row on **Sites & locations** reads
+   `Site collector: <endpoint> — online`.
+2. **Give each site its address ranges** (**Sites & locations → Edit → Address
+   ranges**, CIDR form: `10.20.0.0/24, 10.20.10.0/24`). A collector receives syslog,
+   traps and flows for all its sites on the same ports; Looksee files each message under
+   the site whose range holds the sender's address (the most specific range wins when
+   ranges overlap). A sender in none of the ranges is filed under the collector's oldest
+   site. **Check:** send a test message from a device in each network (`logger -n
+   <collector-ip> -P 1514 -d "looksee test"`) and confirm under **Insights → Traps &
+   syslog** that each shows its own site's name.
+3. Checks, discovery scans, SNMP walks and Wake-on-LAN need nothing extra: each runs
+   from the collector for whichever of its sites it belongs to.
+
+Address ranges also work without a collector: for sites whose devices send straight to
+the Looksee server from its own networks, events are filed by range the same way.
 
 **Standard ports 514/162 on a Linux collector.** The Linux agent runs as an unprivileged
 user, so by default the collector listens on 1514/1162. Most devices let you set the

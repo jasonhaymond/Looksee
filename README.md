@@ -3,15 +3,17 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v5.0.0 — 61 check types across the engine and agent (reachability, web,
-real-browser, DNS/DNSSEC, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
+**Status**: v5.2.0 — 64 check types across the engine and agent (reachability, web,
+real-browser, DNS/DNSSEC, DNS zone history, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
 app integrations, SNMP with an OID dictionary, calculations and reusable templates,
 interface tables, printers, traps/syslog, Redfish/IPMI, Proxmox, VMware, Hyper-V,
 Docker, 60+ endpoint metrics, installed software with upgradable/changed/vulnerable
-checks, files and folder watchdog, logs, event log/journal, scripts with expected
-output, backups, heartbeats/pushed values, calculated values, IP change by MAC, anomaly
+checks, local user accounts, largest folders and files, files and folder watchdog,
+logs, event log/journal, scripts with expected output or warn/down patterns (run on
+their own endpoint or another's), backups, heartbeats/pushed values, calculated values, IP change by MAC, anomaly
 detection), organized as **Location → Site → Endpoint → Check** with a sidebar tree and
-groups, multi-site monitoring (site collectors and direct push), email/Slack/Teams/
+groups, multi-site monitoring (site collectors — one can serve several networks — and
+direct push), agents for Linux, Windows, macOS and Android, email/Slack/Teams/
 Telegram/webhook/push alerts with message templates and remediation hints, editable
 alert rules, manual and event-driven recovery, exclusions, per-check history pages and
 alert history, endpoint process/service inventory, suggested checks plus role, security
@@ -23,7 +25,7 @@ and both an outbound watchdog and watchdog agents for Looksee's own outages). Bu
 verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md) for exactly what was
 tested how).
 
-**Current version: v5.1.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#510---2026-10-23).
+**Current version: v5.2.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#520---2026-10-26).
 5.0 renames what 4.x called endpoints to **sites** and hosts to **endpoints** (in the
 database too), adds the sidebar tree, groups, exclusions, recovery options, watchdog
 agents, software and vulnerability checks, SNMP templates and calculations, and role

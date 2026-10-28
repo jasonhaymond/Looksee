@@ -183,6 +183,56 @@ Resolve-DnsName example.com -Type A -Server 10.0.0.53
 nslookup example.com 10.0.0.53
 ```
 
+<a id="dns_zone"></a>
+
+### DNS zone history
+
+**What it watches:** every record in a DNS zone, and what changes in it — records added,
+removed or changed — so an unexpected edit (a changed MX, a stray A record, a deleted
+SPF record) is noticed, and the zone's past is on record. **Engine** (or the site
+collector).
+
+**How it works:** two ways to read the zone:
+
+- **Zone transfer (AXFR)** — asks the zone's own DNS server for the whole zone over TCP
+  port 53 (RFC 5936). Sees every record, but the server must allow transfers to
+  Looksee's address (or the collector's): BIND `allow-transfer { 10.0.0.10; };`,
+  Windows DNS → zone → *Properties → Zone Transfers → Only to the following servers*.
+  For servers that only allow signed transfers, give a **TSIG key** (name, base64
+  secret, algorithm — Advanced); the secret is write-only like every password.
+- **Reading a list of names** — asks for each name you list (A, AAAA, CNAME, MX, TXT, NS,
+  SRV, CAA; plus SOA for `@`). Works with any server, including public ones that refuse
+  transfers, but only sees the names listed. TTLs aren't available this way.
+
+Each run is compared with the previous one. The first run records a **baseline**. A
+single value replaced by another (www A 192.0.2.1 → 192.0.2.66) is one *changed* entry;
+otherwise records are *added* or *removed*. The SOA record is left out by default (its
+serial changes with every edit); TTL-only changes are reported only if you tick *Also
+report TTL changes*. *Ignore names* skips names that change on their own
+(`_acme-challenge*` for certificate renewals, DHCP-registered hosts). A change sets the
+chosen status (warn by default) and holds it for *Hold* minutes (60). The result details
+show this run's changes, the change **history** (the last 500 changes are kept), and the
+current records.
+
+**Value:** the number of records watched.
+
+**Check it yourself** *(from Looksee)*:
+
+```bash
+dig @10.0.0.53 example.com AXFR                     # the whole zone; "Transfer failed" = not allowed
+dig @10.0.0.53 example.com AXFR -y hmac-sha256:looksee-transfer:BASE64SECRET
+dig @1.1.1.1 www.example.com A +noall +answer       # one name
+```
+
+```powershell
+Resolve-DnsName example.com -Type SOA -Server 10.0.0.53
+# Windows has no built-in AXFR client; nslookup can: nslookup, then "server 10.0.0.53", "ls -d example.com"
+```
+
+A zone transfer answered `REFUSED` means the server doesn't allow transfers to that
+address; `NOTAUTH` means the TSIG key was rejected (wrong name, secret or algorithm, or
+the two clocks are more than 5 minutes apart).
+
 <a id="ssl_cert"></a>
 
 ### TLS certificate
@@ -540,6 +590,13 @@ MIB, UPS-MIB, and vendor counters for HP, Brother, Canon, Ricoh, Xerox, Kyocera,
 and Konica Minolta), shows values readably, and says which vendor owns any other
 enterprise OID. Sets of SNMP checks for one kind of device are
 [SNMP templates](user-guide.md#snmp-templates).
+
+**Exclusions.** *Exclude rows / values* (Advanced, for walks and templates) leaves out
+rows whose index (`1.5`), name or value matches — whole text, case ignored, `*` and `?`
+wildcards: a disk (`/run*`), a printer supply (`Waste*`), a storage row (`Virtual
+Memory`), a printer error (`low paper`). Reusable lists for many devices are on the
+Exclusions page (kind *SNMP rows and values*). Applies to walks, the CPU, disk,
+printer supply, printer error and sensor templates.
 
 **Value:** the value read or computed (× *Multiply by*, then *Calculate*).
 
@@ -924,6 +981,17 @@ With an expected output (agent 4.0+): the engine compares the output (contains, 
 contain, equals, regex; optionally case-insensitive) and the exit code, and reports the
 mismatch.
 
+**Warn / down if the output contains** (agent 4.0+): for scripts that *print* a problem
+rather than confirm success. The engine checks the down text first, then the warn text
+(plain text or a regular expression, optionally ignoring case); the first one found sets
+the status. Works with or without an expected output — the worse result wins.
+
+**Run by another agent:** *Run by* lets a different endpoint's agent run the script on
+this endpoint's behalf — for a device that can't run the agent itself (a printer, a NAS,
+an appliance): a script on a nearby machine checks it, and the result belongs to the
+device's endpoint. The script must be in *that* agent's `script_dir` (the picker lists
+its scripts), and only that agent can report the result.
+
 **Value:** the first perfdata value, or the first number in the output.
 
 **Check it yourself:** run it exactly as the agent does, as the agent's user:
@@ -966,6 +1034,39 @@ sha256sum /etc/important.conf
 Get-ChildItem C:\Backups | Sort-Object LastWriteTime -Descending | Select-Object -First 5
 (Get-ChildItem C:\Backups -Recurse | Measure-Object Length -Sum).Sum / 1MB
 Get-FileHash C:\important.conf -Algorithm SHA256
+```
+
+<a id="agent_disk_tree"></a>
+
+### Largest folders and files
+
+**What it watches:** what's taking up space — the largest folders and the largest
+files on each local disk, or under one folder. **Agent** (agent 5.2+; Windows, Linux,
+macOS).
+
+**How it works:** walks the whole tree, adding each file's size to every folder above it
+(up to *Folder levels* below the disk, 4 by default), and keeps the *How many* (25)
+largest folders and largest files per disk. The walk stays on the starting filesystem
+(no other disks, network shares or `/proc`), never follows symbolic links or Windows
+junctions, skips folders it may not read (counted as *unreadable*), and stops after
+*Stop scanning after* seconds (300), reporting what it found as **partial**. *Skip
+folders* leaves trees out entirely. Blank *Folder* scans every local disk (network,
+optical and in-memory filesystems are left out). The engine adds **grewGb** to each row:
+how much it grew since the previous scan — what's filling the disk, not just what's
+big. A scan reads every folder on the disk, so the form defaults to every 6 hours; it
+runs in the background and never delays the agent's reports.
+
+**Value:** total GB scanned (thresholds on it work as "this folder is over X GB").
+
+**Check it yourself:**
+
+```bash
+sudo du -xh --max-depth=2 / 2>/dev/null | sort -rh | head -25      # largest folders
+sudo find / -xdev -type f -printf '%s %p\n' 2>/dev/null | sort -rn | head -25   # largest files
+```
+
+```powershell
+Get-ChildItem C:\ -Recurse -File -ErrorAction SilentlyContinue | Sort-Object Length -Descending | Select-Object -First 25 FullName, @{n='GB';e={[math]::Round($_.Length/1GB,2)}}
 ```
 
 <a id="agent_log"></a>
@@ -1079,10 +1180,63 @@ command line.
 
 ## Software & security (agent)
 
-These read the installed-software list agent 5.0 reports: Debian/Ubuntu (dpkg), RPM,
-Alpine (apk) and Arch (pacman) packages, Windows programs (the registry's Uninstall
+Most of these read the installed-software list agent 5.0 reports: Debian/Ubuntu (dpkg),
+RPM, Alpine (apk) and Arch (pacman) packages, Windows programs (the registry's Uninstall
 keys), macOS apps, global npm and pip packages, the Node.js/Python/PHP runtimes, and any
 lock files you list. The agent sends the list when it changes, and at least once a day.
+*Local user accounts* is its own check, below.
+
+<a id="agent_users"></a>
+
+### Local user accounts
+
+**What it watches:** the endpoint's local accounts — new ones, removed ones, and changes
+to existing ones: enabled/disabled, locked, gained or lost admin rights, password
+changed, full name, user ID, shell. A new account or a new admin is a classic sign of an
+intruder making themselves at home. **Agent** (agent 5.2+; Windows, Linux, macOS).
+
+**How it works:** the agent lists the accounts; the engine compares the list with the
+previous one (the first report records a baseline).
+
+- **Windows:** `Get-LocalUser` and the members of the built-in Administrators group (by
+  its fixed SID, `S-1-5-32-544`, the same in every Windows language). Domain accounts
+  aren't listed; a domain controller has no local accounts and reports *unknown*.
+- **Linux:** `/etc/passwd`, admin rights from the `sudo`, `wheel` and `admin` groups, and
+  — when readable — `/etc/shadow` for locked passwords, expired accounts and when each
+  password was last set. Only the status and dates are read; password hashes are never
+  kept or sent. The agent's own user can't read `/etc/shadow` unless you allow it (see
+  the agent README → Privileges — it exposes password hashes to that account); without
+  it, locked/expired state and password changes are left out rather than guessed, and
+  new, removed and admin accounts are still caught.
+- **macOS:** `dscl` (accounts, real names, shells and the `admin` group).
+
+A change sets the chosen status (warn); someone **gaining admin rights** — a new admin
+account, or an existing account added to Administrators/sudo/wheel/admin — sets *Status
+when someone gains admin rights* (down). The status is held for *Hold* minutes (60).
+Built-in and service accounts (Linux/macOS system user IDs, Windows Guest,
+DefaultAccount, WDAGUtilityAccount) are left out unless *Include built-in and service
+accounts* is ticked; *Exclude accounts* (and reusable *User accounts* exclusion lists)
+skips accounts by name, with wildcards. The details show this report's changes, the
+change history (last 500) and the current accounts.
+
+**Value:** the number of accounts watched.
+
+**Check it yourself:**
+
+```bash
+getent passwd | awk -F: '$3 >= 1000 || $3 == 0'      # ordinary accounts and root
+getent group sudo wheel admin                        # who can become root
+sudo chage -l alice                                  # password age, expiry
+```
+
+```powershell
+Get-LocalUser | Select-Object Name, Enabled, PasswordLastSet, LastLogon
+Get-LocalGroupMember -SID S-1-5-32-544                # Administrators
+```
+
+```bash
+dscl . -list /Users UniqueID; dscl . -read /Groups/admin GroupMembership   # macOS
+```
 
 <a id="host_packages"></a>
 

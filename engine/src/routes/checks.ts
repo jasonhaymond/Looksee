@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { checks, checkResults, checkDependencies, alertRules, maintenanceWindows, endpoints, sites } from "../db/schema.js";
-import { CHECK_TYPE_META, COLLECTOR_CHECK_TYPES, isCheckType, ENDPOINT_SCOPED_CHECK_TYPES, REMOTE_PROBE_CHECK_TYPES } from "../db/checkTypes.js";
+import { CHECK_TYPE_META, COLLECTOR_CHECK_TYPES, isCheckType, ENDPOINT_SCOPED_CHECK_TYPES, PINNABLE_CHECK_TYPES } from "../db/checkTypes.js";
 import { requireAuth } from "../middleware/auth.js";
 import { maskCheck, mergeSecrets } from "../lib/secrets.js";
 import { runOneCheck } from "../services/scheduler.js";
@@ -47,10 +47,13 @@ const asTags = (v: unknown): string[] =>
 const intOrNull = (v: unknown) => (v === null || v === "" || v === undefined ? null : Number.isFinite(Number(v)) ? Math.round(Number(v)) : null);
 
 // Shared rule for create and update: what the fields must look like
-// together, independent of how they arrived.
+// together, independent of how they arrived. probeEndpointId ("run on this
+// agent") is only allowed for types an agent elsewhere can run: the remote
+// probes (ping, TCP, HTTP, DNS, TLS) and custom scripts — a script still only
+// ever comes from that agent's own script_dir.
 function validate(type: string, endpointId: string | null, probeEndpointId: string | null, intervalSeconds: number): string | null {
   if ((ENDPOINT_SCOPED_CHECK_TYPES as readonly string[]).includes(type) && !endpointId) return `${type} checks require a endpointId`;
-  if (probeEndpointId && !(REMOTE_PROBE_CHECK_TYPES as readonly string[]).includes(type)) return `${type} checks can't run on an agent — only ${REMOTE_PROBE_CHECK_TYPES.join(", ")} can`;
+  if (probeEndpointId && !(PINNABLE_CHECK_TYPES as readonly string[]).includes(type)) return `${type} checks can't run on an agent — only ${PINNABLE_CHECK_TYPES.join(", ")} can`;
   if (!Number.isFinite(intervalSeconds) || intervalSeconds < 5) return "intervalSeconds must be at least 5";
   return null;
 }

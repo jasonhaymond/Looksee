@@ -9,6 +9,7 @@ import { probeHttp } from "./http.js";
 import { probeArp, probeDhcp, probeDockerRegistry, probeGrpc, probeMqtt, probeNtp, probeProtocol, probeUdp, probeWebsocket } from "./protocols.js";
 import { probeBrowser, probeDatabase, probeDomainExpiry, probeEmailRoundtrip, probePublicIp, probeTraceroute } from "./services.js";
 import { probeSnmp, probeSnmpInterfaces } from "./snmp.js";
+import { probeDnsZone } from "./dnsZone.js";
 import { probeBmc, probeProxmox, probeVmware } from "./infra.js";
 import { probeAppIntegration, probePrometheus, probeWebserverStatus } from "./apps.js";
 import { own } from "../../lib/own.js";
@@ -39,6 +40,7 @@ export const NETWORK_PROBES: Record<string, (config: Config, ctx: ProbeContext) 
   domain_expiry: probeDomainExpiry,
   public_ip: probePublicIp,
   snmp_interfaces: probeSnmpInterfaces,
+  dns_zone: probeDnsZone,
   bmc: probeBmc,
   proxmox: probeProxmox,
   vmware: probeVmware,

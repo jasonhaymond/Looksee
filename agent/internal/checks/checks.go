@@ -127,6 +127,10 @@ func (r *Runner) Run(c Check) (res Result) {
 		return runUPS(cfg)
 	case "agent_backup":
 		return runBackup(cfg)
+	case "agent_users":
+		return runUsers(cfg)
+	case "agent_disk_tree":
+		return runDiskTree(cfg)
 	case "ping":
 		return probePing(cfg)
 	case "tcp":

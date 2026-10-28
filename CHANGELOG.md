@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [5.2.0] - 2026-10-26
+
+Three new check types, one collector for several networks, an Android agent, SNMP
+exclusions, and more control over custom scripts. Engine, dashboard and agent move to
+5.2.0 together. Database: migration `0027`, additive (see the deployment guide's
+*Upgrading to 5.2*).
+
+### Added
+
+- **DNS zone history** check (`dns_zone`): an inventory of every record in a zone,
+  read by zone transfer (AXFR, optionally signed with a TSIG key) or by reading a list
+  of names, compared with the previous run. Added, removed and changed records are
+  reported with the chosen status and kept as a history (last 500 changes). The SOA
+  record and TTL-only changes are left out unless asked for; names that change on
+  their own can be ignored. Runs on the engine or a site collector.
+- **Local user accounts** check (`agent_users`, agent 5.2): alerts on new, removed and
+  changed local accounts on Windows, Linux and macOS — enabled/disabled, locked,
+  password changed, full name, ID, shell — and, at a higher status (down by default),
+  on anyone gaining admin rights. Built-in and service accounts are left out unless
+  included; accounts can be excluded by name or with reusable *User accounts* lists.
+- **Largest folders and files** check (`agent_disk_tree`, agent 5.2): the largest
+  folders and files on each local disk (or under one folder), with how much each grew
+  since the previous scan. Stays on one filesystem, never follows links or junctions,
+  and stops after a time limit, reporting a partial scan.
+- **One site collector for several sites.** An endpoint's Agent tab has a *Site
+  collector for* picker (`PUT /api/endpoints/:id/collector-sites`), and each site has
+  **address ranges** (CIDR, `sites.networks`). Syslog, traps and flows a collector
+  receives are filed under the site whose range holds the sender (most specific range
+  wins), instead of always under the collector's first site. Ranges also file events
+  the Looksee server receives directly for sites without a collector.
+- **Android agent**: the static Linux agent running in Termux, with a one-line
+  installer (`/install/agent-android.sh`, an *Android* tab next to the other install
+  commands) that keeps it running and starts it at boot. The agent detects Android,
+  points DNS at a real server (Android has no `/etc/resolv.conf`), reports the OS as
+  *Android NN* with the device model, and reads the battery through Termux:API. New
+  `dns_server` agent setting. Not yet run on a real phone — see the agent README.
+- **SNMP exclusions**: *Exclude rows / values* on SNMP checks, and reusable *SNMP rows
+  and values* lists on the Exclusions page. Rows whose index, name or value matches are
+  left out of walks and of the CPU, disk, printer supply, printer error and sensor
+  templates.
+- **Custom scripts: warn / down if the output contains** a text or regular expression,
+  judged by the engine, with or without an expected output (the worse result wins).
+- **Custom scripts run by another agent** (*Run by*): a check on a device that can't
+  run the agent (a printer, a NAS) can be run by a nearby endpoint's agent. The script
+  still comes only from *that* agent's own `script_dir`; only that agent can report
+  the result.
+
+### Fixed
+
+- The post-deploy security check probed `/api/hosts`, removed in 5.0, and reported its
+  404 as a failure (`not 401: /api/hosts→404`). It now probes the 12 admin routes that
+  exist, all of which answered 401 on the live server.
+
+### Security
+
+- The TSIG secret of a DNS zone check is write-only, like every other check secret.
+- The DNS message parser checks every length against the message, follows only
+  backward compression pointers (at most 64), and caps a transfer at 64 MB, so a
+  hostile DNS server can't hang or exhaust the engine.
+- Linux user-account details from `/etc/shadow` are *not* readable by the agent by
+  default, since the file holds password hashes; the check works without it, and the
+  agent README explains the opt-in and its cost. Password hashes are never kept or
+  sent.
+- Only the agent assigned to run a script (or the endpoint's own agent) can report its
+  result; another agent's key is ignored (tested).
+- Routine patch/minor dependency updates. Engine: mssql 12.7.4 → 12.7.13, imapflow
+  2.4.0 → 2.9.1, mysql2 3.24.5 → 3.24.6, puppeteer-core 25.13.0 → 25.16.0, re2js 2.8.8 →
+  2.9.0; dev tooling: eslint 10.13.0, typescript-eslint 8.72.1, @types/node 22.20.5.
+  Dashboard: React 19.3.0 → 19.3.1. Major upgrades (TypeScript 7, Vitest 5, bcryptjs 3,
+  dotenv 18, marked 18) are left for a deliberate change of their own.
+- GHSA-xcx6-jx8p-x3h5 (`@azure/msal-node`, via mssql → tedious → @azure/identity) is
+  still present: the fix is msal-node 7.1, and the newest @azure/identity (4.14.0) still
+  requires 6.x. The SQL Server check doesn't use the affected authorization-code
+  sign-in flow. Carried over as an accepted risk from 5.1.0 (review by 2026-11-26).
+
+### Changed
+
+- The check form starts heavy checks at a longer interval: DNS zone history hourly,
+  largest folders and files every 6 hours, user accounts every 5 minutes.
+
 ## [5.1.0] - 2026-10-23
 
 Fixes Windows agents that install and run but never show as checked in, and makes every

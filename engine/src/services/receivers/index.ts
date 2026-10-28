@@ -6,22 +6,35 @@ import { db } from "../../db/index.js";
 import { events, flowRecords } from "../../db/schema.js";
 import { logger } from "../../lib/logger.js";
 import type { Flow } from "./flows.js";
+import { siteForAddress, type SiteRanges } from "../siteNetworks.js";
 import { type EventInput, type FlowRow, FlowAggregator, portFromEnv, sourceAllowed, startListeners, stripMapped, syslogEvent, underRateLimit } from "./core.js";
 
 export { parseSyslog, sourceAllowed } from "./core.js";
 
-// Direct push: sites that send syslog/traps/flows straight to the engine's
-// public address are identified by their public IPs (sites.publicIps).
+// Which site sent what the engine's own receivers get: a site's public IPs
+// (sites.publicIps — devices that send straight to the engine's public
+// address over the internet), and, for sites without a collector, their
+// address ranges (sites.networks — devices on the engine's own networks).
 // Cached briefly — every received packet consults it.
-let siteIps: { at: number; map: Map<string, string> } | null = null;
-async function siteByIp(): Promise<Map<string, string>> {
+type SiteLookup = { map: Map<string, string>; ranges: SiteRanges[] };
+let siteIps: { at: number; lookup: SiteLookup } | null = null;
+async function siteLookup(): Promise<SiteLookup> {
   if (!siteIps || Date.now() - siteIps.at > 60_000) {
     const rows = await db.query.sites.findMany();
     const map = new Map<string, string>();
     for (const e of rows) for (const ip of e.publicIps ?? []) map.set(ip.trim(), e.id);
-    siteIps = { at: Date.now(), map };
+    // Sites with a collector get their events through it (routes/collector.ts).
+    const ranges = rows.filter((e) => !e.collectorEndpointId && e.networks?.length).map((e) => ({ id: e.id, networks: e.networks }));
+    siteIps = { at: Date.now(), lookup: { map, ranges } };
   }
-  return siteIps.map;
+  return siteIps.lookup;
+}
+async function siteByIp(): Promise<Map<string, string>> {
+  return (await siteLookup()).map;
+}
+/** The site an address sent from: an exact public IP first, then a range. */
+function siteFor(lookup: SiteLookup, ip: string): string | null {
+  return lookup.map.get(ip) ?? siteForAddress(ip, lookup.ranges);
 }
 export function invalidateSiteIpCache() {
   siteIps = null;
@@ -31,7 +44,7 @@ let siteIpSnapshot = new Map<string, string>();
 
 export async function storeEvents(list: EventInput[], siteId: string | null) {
   if (!list.length) return;
-  const map = siteId ? null : await siteByIp();
+  const lookup = siteId ? null : await siteLookup();
   const rows = list.map((e) => ({
     source: e.source,
     sourceIp: e.sourceIp,
@@ -40,15 +53,15 @@ export async function storeEvents(list: EventInput[], siteId: string | null) {
     message: e.message.slice(0, 4000),
     data: e.data,
     receivedAt: new Date(e.receivedAt),
-    siteId: siteId ?? map!.get(e.sourceIp) ?? null,
+    siteId: siteId ?? siteFor(lookup!, e.sourceIp),
   }));
   for (let i = 0; i < rows.length; i += 500) await db.insert(events).values(rows.slice(i, i + 500));
 }
 
 export async function storeFlows(rows: FlowRow[], siteId: string | null) {
   if (!rows.length) return 0;
-  const map = siteId ? null : await siteByIp();
-  const values = rows.map((r) => ({ ...r, bucket: new Date(r.bucket), siteId: siteId ?? map!.get(r.exporter) ?? null }));
+  const lookup = siteId ? null : await siteLookup();
+  const values = rows.map((r) => ({ ...r, bucket: new Date(r.bucket), siteId: siteId ?? siteFor(lookup!, r.exporter) }));
   for (let i = 0; i < values.length; i += 500) await db.insert(flowRecords).values(values.slice(i, i + 500));
   return values.length;
 }

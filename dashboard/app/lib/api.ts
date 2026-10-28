@@ -77,9 +77,12 @@ export type Site = {
   collectorEndpointId: string | null;
   // For devices pushing syslog/traps/flows straight to the server.
   publicIps: string[];
+  // The site's own address ranges (CIDR): how events from a collector that
+  // serves several sites are told apart.
+  networks: string[];
   locationId: string | null;
 };
-export type SiteInput = { name?: string; description?: string | null; collectorEndpointId?: string | null; publicIps?: string[]; locationId?: string | null };
+export type SiteInput = { name?: string; description?: string | null; collectorEndpointId?: string | null; publicIps?: string[]; networks?: string[]; locationId?: string | null };
 export type Location = { id: string; name: string; description: string | null; address: string | null; createdAt: string };
 export type Endpoint = {
   id: string;
@@ -593,6 +596,8 @@ export const api = {
   sites: () => request<Site[]>("/api/sites"),
   createSite: (input: SiteInput & { name: string }) => request<Site>("/api/sites", json(input)),
   updateSite: (id: string, input: SiteInput) => request<Site>(`/api/sites/${id}`, patch(input)),
+  // Makes an endpoint's agent the collector for exactly these sites.
+  setCollectorSites: (endpointId: string, siteIds: string[]) => request<Site[]>(`/api/endpoints/${endpointId}/collector-sites`, { ...json({ siteIds }), method: "PUT" }),
   deleteSite: (id: string) => request<void>(`/api/sites/${id}`, del),
   bulkSites: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/sites/bulk", json({ ids, action, ...params })),
 
@@ -604,7 +609,7 @@ export const api = {
   updateEndpoint: (id: string, input: { name?: string; hostname?: string | null; os?: string | null; macAddress?: string | null; siteId?: string; tags?: string[] }) =>
     request<Endpoint>(`/api/endpoints/${id}`, patch(input)),
   deleteEndpoint: (endpointId: string) => request<void>(`/api/endpoints/${endpointId}`, del),
-  issueAgentKey: (endpointId: string) => request<{ agentApiKey: string; installCommands: { unix: string; windows: string } }>(`/api/endpoints/${endpointId}/agent-key`, { method: "POST" }),
+  issueAgentKey: (endpointId: string) => request<{ agentApiKey: string; installCommands: { unix: string; windows: string; android?: string } }>(`/api/endpoints/${endpointId}/agent-key`, { method: "POST" }),
   setWatchdog: (endpointId: string, input: { enabled: boolean; afterMinutes: number; emailTo: string[] | string; channelIds: string[] }) => request<Endpoint>(`/api/endpoints/${endpointId}/watchdog`, { ...json(input), method: "PUT" }),
   testWatchdogAgent: (endpointId: string) => request<{ requested: boolean }>(`/api/endpoints/${endpointId}/watchdog/test`, { method: "POST" }),
   requestEndpointUpdate: (endpointId: string) => request<{ requested: boolean }>(`/api/endpoints/${endpointId}/request-update`, { method: "POST" }),

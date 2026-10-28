@@ -8,24 +8,25 @@ What each check does and how to check the same thing by hand is in the
 [user guide](user-guide.md).
 
 Every check also has the common settings — name, endpoint/site, **Run from** (for
-ping, TCP, HTTP, DNS and TLS), interval, retry interval, tags, **Depends on**,
-**Recovers together with**, thresholds and alert rules — described in the user guide.
+ping, TCP, HTTP, DNS and TLS), **Run by** (custom scripts), interval, retry interval,
+tags, **Depends on**, **Recovers together with**, thresholds and alert rules —
+described in the user guide.
 
 This file is generated: edit `dashboard/app/lib/checkTypes.ts`, then run
 `../engine/node_modules/.bin/tsx scripts/check-settings-doc.ts` in `dashboard/`.
 
 ## Contents
 
-1. Reachability & web: [Ping](#ping), [TCP port](#tcp), [UDP port](#udp), [HTTP(S)](#http), [Real browser (headless Chrome)](#browser), [DNS](#dns), [TLS certificate](#ssl-cert), [Domain registration expiry](#domain-expiry), [WebSocket](#websocket)
+1. Reachability & web: [Ping](#ping), [TCP port](#tcp), [UDP port](#udp), [HTTP(S)](#http), [Real browser (headless Chrome)](#browser), [DNS](#dns), [DNS zone history](#dns-zone), [TLS certificate](#ssl-cert), [Domain registration expiry](#domain-expiry), [WebSocket](#websocket)
 2. Network services: [Mail / SSH / FTP / LDAP / RDP](#protocol), [Email round-trip](#email-roundtrip), [NTP server](#ntp), [DHCP server](#dhcp), [gRPC health](#grpc), [MQTT broker](#mqtt), [Container registry](#docker-registry), [Traceroute / path change](#traceroute), [Public IP change](#public-ip), [Device present (ARP)](#arp-presence), [IP address change (by MAC)](#ip-change)
 3. Databases & apps: [Database](#database), [Prometheus metric](#prometheus), [Web server status page](#webserver-status), [App integration](#app-integration)
 4. Network devices & hardware: [SNMP value / template](#snmp), [SNMP interfaces (switch / router ports)](#snmp-interfaces), [SNMP trap received](#trap-match), [Syslog message received](#syslog-match), [Server hardware (iDRAC / iLO / IPMI)](#bmc)
 5. Virtualization & containers: [Proxmox VE](#proxmox), [VMware ESXi / vCenter](#vmware), [Hyper-V VMs](#agent-hyperv), [Docker containers](#agent-docker)
 6. Endpoint metrics (agent): [Endpoint metric](#host-metric), [Disk full forecast](#disk-forecast), [Reboot detection](#host-reboot), [Change detection](#host-change), [Agent online](#agent-heartbeat)
 7. Services & processes (agent): [OS service](#agent-service), [Process](#agent-process), [Failed / stopped services](#agent-services-overview), [Scheduled task / timer](#agent-scheduled-task), [Custom script](#agent-script)
-8. Files & logs (agent): [File / folder](#agent-file), [Log file pattern](#agent-log), [systemd journal](#agent-journal), [Windows Event Log](#agent-eventlog)
+8. Files & logs (agent): [File / folder](#agent-file), [Largest folders and files](#agent-disk-tree), [Log file pattern](#agent-log), [systemd journal](#agent-journal), [Windows Event Log](#agent-eventlog)
 9. OS & hardware (agent): [Windows performance counter](#agent-perfcounter), [VPN tunnel](#agent-vpn), [UPS (NUT / apcupsd)](#agent-ups), [Backup job (Borg / restic / Veeam)](#agent-backup)
-10. Software & security (agent): [Upgradable packages](#host-packages), [Installed software changed](#host-software), [Vulnerable or unsupported software](#host-vulnerable)
+10. Software & security (agent): [Local user accounts](#agent-users), [Upgradable packages](#host-packages), [Installed software changed](#host-software), [Vulnerable or unsupported software](#host-vulnerable)
 11. Push & smart: [Heartbeat (cron / job check-in)](#heartbeat), [Push a value](#push-value), [Calculated value](#calculated), [Anomaly (unusual value)](#anomaly)
 
 ## Reachability & web
@@ -133,6 +134,31 @@ Type ID `dns`. Resolves a name (any record type), optionally via a specific serv
 | Require DNSSEC validation (AD flag) | on/off | — | Needs a validating resolver. Engine only — not available on remote agent probes. |
 | Timeout (seconds) *(Advanced)* | number | 5 | How long to wait for each try. |
 | Tries *(Advanced)* | number | 2 | How many times to ask before giving up (1–5). |
+
+<a id="dns-zone"></a>
+
+### DNS zone history
+
+Type ID `dns_zone`. Takes an inventory of every record in a zone and keeps a history of what was added, removed or changed — by zone transfer (AXFR) or by reading a list of names.
+
+**Value:** records in the zone. Thresholds apply to it.
+
+| Setting | Kind | Default | Notes |
+|---|---|---|---|
+| Zone * | text | — | Example: `example.com`. |
+| Read the zone by | choice | Zone transfer (AXFR) — every record | A zone transfer sees everything, but the server must allow transfers to Looksee's address (or the site collector's). Reading names works with any server but only sees the names you list. Options: Zone transfer (AXFR) — every record (`axfr`); Reading a list of names (`names`). |
+| DNS server | text | — | The zone's own (authoritative) server. Needed for a zone transfer; for a list of names, blank uses the system resolver. Example: `10.0.0.53 or ns1.example.com:53`. |
+| Names to read * | text (several lines) | — | One per line, relative to the zone (@ is the zone itself) or ending with a dot for a full name. Each is read as A, AAAA, CNAME, MX, TXT, NS, SRV and CAA. Example: `@ ⏎ www ⏎ mail ⏎ _dmarc ⏎ _sip._tcp`. Shown only for some choices of the settings above. |
+| TSIG key name *(Advanced)* | text | — | Optional: for servers that only allow signed transfers (BIND allow-transfer { key …; }). Example: `looksee-transfer`. Shown only for some choices of the settings above. |
+| TSIG secret (base64) *(Advanced)* | secret (write-only) | — | Shown only for some choices of the settings above. |
+| TSIG algorithm *(Advanced)* | choice | hmac-sha256 | Options: hmac-sha256; hmac-sha512; hmac-sha1. Shown only for some choices of the settings above. |
+| Status when records change | choice | Warn | Options: Down (critical) (`down`); Warn (`warn`). |
+| Hold the alert status for (minutes) *(Advanced)* | number | 60 | A change keeps the check failing this long, so an alert rule catches it. |
+| Ignore names *(Advanced)* | text (several lines) | — | One per line, relative to the zone; * matches anything. For records that change on their own — certificate challenges, DHCP-registered hosts. Example: `_acme-challenge* ⏎ dhcp-*`. |
+| Also report TTL changes *(Advanced)* | on/off | — | — |
+| Also report SOA changes *(Advanced)* | on/off | — | Off by default: the SOA serial changes with every edit, so it would repeat every other change. |
+| Most records *(Advanced)* | number | 5000 | A bigger zone fails with a clear message instead of being read. |
+| Timeout (seconds) *(Advanced)* | number | 30 | How long the whole transfer (or each name) may take. |
 
 <a id="ssl-cert"></a>
 
@@ -474,6 +500,7 @@ Type ID `snmp`. Reads one OID, a walked subtree, or a ready-made template (print
 | Count canceled jobs as failures too | on/off | — | Shown only for some choices of the settings above. |
 | Status when triggered | choice | Warn | Options: Down (critical) (`down`); Warn (`warn`). Shown only for some choices of the settings above. |
 | Hold the alert status for (minutes) *(Advanced)* | number | 15 | One-time events stay failing this long so a normal 2-in-a-row alert rule still catches them. Shown only for some choices of the settings above. |
+| Exclude rows / values *(Advanced)* | text (several lines) | — | One per line. A walked row, disk, printer supply or alert is left out when its index (1.5), name or value matches — whole text, case ignored, * matches anything. Reusable lists for many devices: the Exclusions page (SNMP rows and values). Example: `1.5 ⏎ Virtual Memory ⏎ /run* ⏎ Waste*`. Shown only for some choices of the settings above. |
 
 <a id="snmp-interfaces"></a>
 
@@ -756,7 +783,7 @@ Type ID `agent_scheduled_task`. Last result and run time of a Windows scheduled 
 
 ### Custom script
 
-Type ID `agent_script`. Runs a script or command wrapper from the agent's script_dir and checks its output and exit code. Without an expected output, exit 0/1/2 = up/warn/down (Nagios convention); a number in the output becomes the value.
+Type ID `agent_script`. Runs a script or command wrapper from the agent's script_dir and checks its output and exit code. Without an expected output, exit 0/1/2 = up/warn/down (Nagios convention); a number in the output becomes the value. Can be run by another endpoint's agent.
 
 **Value:** perfdata or first number in the output. Thresholds apply to it.
 
@@ -769,6 +796,10 @@ Type ID `agent_script`. Runs a script or command wrapper from the agent's script
 | Ignore case | on/off | — | Shown only for some choices of the settings above. |
 | Expected exit code | number | — | Blank = any exit code is fine when an expected output is set. Example: `any`. |
 | Status when it doesn't match | choice | Down (critical) | Options: Down (critical) (`down`); Warn (`warn`). Shown only for some choices of the settings above. |
+| Warn if the output contains | text | — | Optional. For scripts that print a problem rather than confirm success. Works with or without an expected output; the worse status wins. Example: `DEGRADED`. |
+| Down if the output contains | text | — | Optional. Checked before the warn text — when both appear, the check is down. Example: `ERROR`. |
+| Warn/down text is | choice | Plain text | Options: Plain text (`contains`); A regular expression (`regex`). Shown only for some choices of the settings above. |
+| Ignore case in warn/down text | on/off | — | Shown only for some choices of the settings above. |
 | Timeout (seconds) *(Advanced)* | number | 30 | — |
 | Read a number from the output *(Advanced)* | on/off | on | — |
 
@@ -793,6 +824,22 @@ Type ID `agent_file`. Exists, age (did the backup land?), size, file count, fold
 | Expected SHA-256 | text | — | Blank = the first value seen becomes the baseline. Shown only for some choices of the settings above. |
 | Status when triggered | choice | Warn | Options: Down (critical) (`down`); Warn (`warn`). Shown only for some choices of the settings above. |
 | Hold the alert status for (minutes) *(Advanced)* | number | 15 | One-time events stay failing this long so a normal 2-in-a-row alert rule still catches them. Shown only for some choices of the settings above. |
+
+<a id="agent-disk-tree"></a>
+
+### Largest folders and files
+
+Type ID `agent_disk_tree`. Walks each disk (or one folder) and lists the largest folders and files, with how much each grew since the last scan — finds what's filling a disk.
+
+**Value:** total size scanned (GB). Thresholds apply to it.
+
+| Setting | Kind | Default | Notes |
+|---|---|---|---|
+| Folder | text | — | Blank scans every local disk. A folder scans just that tree. Example: `every local disk`. |
+| How many to list | number | 25 | Largest folders and largest files, each (per disk). |
+| Folder levels *(Advanced)* | number | 4 | Folders up to this many levels below the disk or folder are ranked (their sizes always include everything below them). |
+| Stop scanning after (seconds) *(Advanced)* | number | 300 | A very large disk is reported as partially scanned rather than walked forever. |
+| Skip folders *(Advanced)* | text (several lines) | — | One path per line; their contents aren't scanned. Example: `/proc ⏎ C:\Windows\WinSxS`. |
 
 <a id="agent-log"></a>
 
@@ -905,6 +952,23 @@ Type ID `agent_backup`. Age (and result, for Veeam) of the newest backup.
 | Extra environment *(Advanced)* | secret (write-only) | — | Example: `BORG_RSH=ssh -i /root/.ssh/backup`. Shown only for some choices of the settings above. |
 
 ## Software & security (agent)
+
+<a id="agent-users"></a>
+
+### Local user accounts
+
+Type ID `agent_users`. Lists the endpoint's local accounts and alerts on new, removed or changed ones — disabled/enabled, admin rights, password changed (Windows, Linux, macOS).
+
+**Value:** accounts watched. Thresholds apply to it.
+
+| Setting | Kind | Default | Notes |
+|---|---|---|---|
+| Alert on | several choices | added,removed,changed | Options: new accounts (`added`); removed accounts (`removed`); changed accounts (`changed`). |
+| Status when an account changes | choice | Warn | Options: Down (critical) (`down`); Warn (`warn`). |
+| Status when someone gains admin rights | choice | Down (critical) | A new admin account, or an existing account added to Administrators / sudo / wheel / admin. Options: Down (critical) (`down`); Warn (`warn`). |
+| Hold the alert status for (minutes) *(Advanced)* | number | 60 | One-time events stay failing this long so a normal 2-in-a-row alert rule still catches them. |
+| Include built-in and service accounts *(Advanced)* | on/off | — | Off by default: Linux/macOS system users (low user IDs) and Windows built-ins change with OS updates. |
+| Exclude accounts *(Advanced)* | text (several lines) | — | One per line; whole names, case ignored, * matches anything. Reusable lists for many checks: the Exclusions page. Example: `svc-backup ⏎ tmp-*`. |
 
 <a id="host-packages"></a>
 

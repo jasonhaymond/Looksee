@@ -22,6 +22,7 @@ import { logger } from "../lib/logger.js";
 import { prepareConfig } from "../services/checkConfig.js";
 import { own } from "../lib/own.js";
 import { truncate } from "../lib/stripNul.js";
+import { siteForAddress } from "../services/siteNetworks.js";
 
 // The API a site collector calls, authenticated with its host's agent key.
 // Everything is a request the collector makes outbound over HTTPS, so a
@@ -38,8 +39,9 @@ function portSetting(name: string, fallback: number): number | null {
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : fallback;
 }
 
-// The sites this host collects for; the first is where its received
-// events are filed (event matching treats all of them as one site).
+// The sites this host collects for — one agent can be the collector for
+// several sites (networks). Oldest first: received events whose sender isn't
+// in any of these sites' address ranges are filed under the first.
 async function sitesFor(endpointId: string) {
   return db.query.sites.findMany({ where: eq(sites.collectorEndpointId, endpointId), orderBy: asc(sites.createdAt) });
 }
@@ -141,10 +143,27 @@ collectorRouter.post("/results", async (req, res) => {
 
 const EVENT_SOURCES = new Set(["syslog", "snmp_trap"]);
 
+/** Splits a list into groups by a key (here: the site each item belongs to). */
+function groupBy<T>(items: T[], keyOf: (item: T) => string): Map<string, T[]> {
+  const out = new Map<string, T[]>();
+  for (const item of items) {
+    const key = keyOf(item);
+    const list = out.get(key);
+    if (list) list.push(item);
+    else out.set(key, [item]);
+  }
+  return out;
+}
+
 // POST /api/collector/events { events: [...], flows: [...] }
-// Traps/syslog/flows the collector received on its LAN, filed under its site.
+// Traps/syslog/flows the collector received, each filed under the site whose
+// address ranges (sites.networks) hold the sender — so a collector serving
+// several networks keeps their events apart. A sender in none of them goes
+// to the collector's first site, as before ranges existed.
 collectorRouter.post("/events", async (req, res) => {
-  const site = siteIds(res)[0];
+  const collected = res.locals.sites as (typeof sites.$inferSelect)[];
+  const fallback = collected[0].id;
+  const siteOf = (ip: string) => siteForAddress(ip, collected) ?? fallback;
   const evs: EventInput[] = (Array.isArray(req.body?.events) ? req.body.events.slice(0, 5000) : [])
     .filter((e: Partial<EventInput>) => e && EVENT_SOURCES.has(String(e.source)) && typeof e.sourceIp === "string" && typeof e.message === "string")
     .map((e: EventInput) => ({
@@ -159,8 +178,10 @@ collectorRouter.post("/events", async (req, res) => {
   const flows: FlowRow[] = (Array.isArray(req.body?.flows) ? req.body.flows.slice(0, 20000) : [])
     .filter((f: Partial<FlowRow>) => f && typeof f.exporter === "string" && typeof f.srcAddr === "string" && typeof f.dstAddr === "string" && typeof f.bucket === "string" && !Number.isNaN(Date.parse(f.bucket)))
     .map((f: FlowRow) => ({ bucket: f.bucket, exporter: f.exporter, srcAddr: f.srcAddr, dstAddr: f.dstAddr, protocol: num(f.protocol) ?? 0, dstPort: num(f.dstPort) ?? 0, bytes: num(f.bytes) ?? 0, packets: num(f.packets) ?? 0 }));
-  await storeEvents(evs, site);
-  await storeFlows(flows, site);
+  // Group by site, then store each group (storeEvents/storeFlows file a
+  // whole batch under one site).
+  for (const [siteId, list] of groupBy(evs, (e) => siteOf(e.sourceIp))) await storeEvents(list, siteId);
+  for (const [siteId, list] of groupBy(flows, (f) => siteOf(f.exporter))) await storeFlows(list, siteId);
   res.json({ events: evs.length, flows: flows.length });
 });
 

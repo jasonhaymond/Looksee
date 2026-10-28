@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 
@@ -37,6 +38,11 @@ type Config struct {
 	// standard HTTPS_PROXY / HTTP_PROXY / NO_PROXY environment variables
 	// apply, as before.
 	ProxyURL string `yaml:"proxy_url"`
+	// DNS server for every lookup the agent makes, e.g. "192.168.1.1".
+	// Only needed on Android (which has no /etc/resolv.conf for the agent to
+	// read) when Termux's own DNS setting isn't found; ignored elsewhere
+	// unless /etc/resolv.conf is missing. See internal/android.
+	DNSServer string `yaml:"dns_server"`
 }
 
 func defaults() Config {
@@ -60,6 +66,17 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.IntervalSeconds <= 0 {
 		cfg.IntervalSeconds = 30
+	}
+	if cfg.DNSServer != "" {
+		// An IP address, optionally with a port ("10.0.0.53" or
+		// "10.0.0.53:53"); a hostname can't be used to find the DNS server.
+		host := cfg.DNSServer
+		if h, _, err := net.SplitHostPort(cfg.DNSServer); err == nil {
+			host = h
+		}
+		if net.ParseIP(host) == nil {
+			return cfg, fmt.Errorf("config: dns_server must be an IP address, optionally with :port (got %q)", cfg.DNSServer)
+		}
 	}
 	if cfg.ProxyURL != "" {
 		// Only a full http:// or https:// URL with a host is accepted, so a

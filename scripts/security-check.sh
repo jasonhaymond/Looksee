@@ -200,13 +200,17 @@ live_checks() {
   grep -q '^x-powered-by:' <<<"$h" && missing+=" (X-Powered-By present)"
   if [ -z "$missing" ]; then record "Security headers (API)" "PASS" "nosniff, X-Frame-Options, no X-Powered-By"; else record "Security headers (API)" "FAIL" "missing:$missing"; fi
 
-  # Protected endpoints must refuse an anonymous request with 401.
-  local bad=""
-  for p in /api/checks /api/hosts /api/endpoints /api/channels /api/security/overview /api/backups/settings /api/logs /api/maintenance /api/watchdog; do
+  # Protected endpoints must refuse an anonymous request with 401. Only
+  # routes that exist in this version belong here: a route that's gone
+  # answers 404, which fails this check without meaning anything is exposed
+  # (5.0 renamed /api/hosts to /api/endpoints).
+  local bad="" probed=0
+  for p in /api/checks /api/endpoints /api/sites /api/locations /api/groups /api/channels /api/security/overview /api/backups/settings /api/logs /api/maintenance /api/watchdog /api/exclusion-lists; do
+    probed=$((probed + 1))
     code="$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' "$url$p")"
     [ "$code" = "401" ] || bad+=" $p→$code"
   done
-  if [ -z "$bad" ]; then record "Auth required on admin API" "PASS" "9 admin routes answer 401 without a session"; else record "Auth required on admin API" "FAIL" "not 401:$bad"; fi
+  if [ -z "$bad" ]; then record "Auth required on admin API" "PASS" "$probed admin routes answer 401 without a session"; else record "Auth required on admin API" "FAIL" "not 401:$bad"; fi
 
   # CORS: a foreign website's origin must not be granted access.
   h="$(curl -s --max-time 15 -D - -o /dev/null -H 'Origin: https://attacker.example' "$url/api/health" | tr -d '\r' | tr '[:upper:]' '[:lower:]')"

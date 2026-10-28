@@ -1,6 +1,7 @@
 // API routes for endpoints (devices: servers, PCs, switches, printers): list,
 // details, inventory, IP history, create, edit, delete, agent keys and install
-// commands, agent updates, watchdog settings, metrics, Wake-on-LAN,
+// commands, agent updates, watchdog settings, which sites it collects for,
+// metrics, Wake-on-LAN,
 // suggestions, role/security templates and bulk actions.
 //
 // Security: every route requires a signed-in session; an endpoint's agent key
@@ -22,6 +23,8 @@ import { createAlertRule, parseAlertRule, type AlertRuleParams } from "../servic
 import { parseWatchdog } from "../services/watchdogAgents.js";
 import { hostFacts, templatesFor } from "../services/roleTemplates.js";
 import { primaryAddress } from "../services/suggestions.js";
+import { invalidateSiteIpCache } from "../services/receivers/index.js";
+import { isUuid } from "../lib/ids.js";
 
 // The full process/service lists can be thousands of rows — they're served
 // by /:id/inventory only, never in list or detail responses.
@@ -153,6 +156,8 @@ endpointsRouter.post("/:id/agent-key", async (req, res) => {
   const installCommands = {
     unix: `curl -fsSL ${publicUrl}/install/agent.sh | sudo bash -s -- ${agentApiKey}`,
     windows: `$env:LOOKSEE_ENGINE_URL='${publicUrl}'; $env:LOOKSEE_AGENT_KEY='${agentApiKey}'; iex (irm ${publicUrl}/install/agent.ps1)`,
+    // Run inside the Termux app (agent/install-android.sh).
+    android: `curl -fsSL ${publicUrl}/install/agent-android.sh | bash -s -- ${publicUrl} ${agentApiKey}`,
   };
   res.json({ agentApiKey, installCommands });
 });
@@ -188,6 +193,45 @@ endpointsRouter.post("/:id/watchdog/test", async (req, res) => {
   }
   await db.update(endpoints).set({ watchdog: { ...host.watchdog, testRequestedAt: new Date().toISOString() } }).where(eq(endpoints.id, host.id));
   res.json({ requested: true });
+});
+
+// PUT /api/endpoints/:id/collector-sites { siteIds: [...] }
+// Makes this endpoint's agent the site collector for exactly these sites
+// (networks) — one agent can collect for several. Sites in the list get this
+// endpoint as their collector (replacing any other); sites that had it and
+// aren't in the list go back to the engine. Returns the sites it collects
+// for afterwards. The agent starts or stops the collector on its next config
+// poll (routes/agent.ts).
+//
+// Only an endpoint with an agent key can collect (the collector runs under
+// the agent and authenticates with its key); unknown site IDs are refused
+// rather than ignored so a stale form can't half-apply.
+endpointsRouter.put("/:id/collector-sites", async (req, res) => {
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
+  if (!host) {
+    res.status(404).json({ error: "Endpoint not found" });
+    return;
+  }
+  const raw: unknown[] = Array.isArray(req.body?.siteIds) ? req.body.siteIds : [];
+  const siteIds = [...new Set(raw.map(String))];
+  if (siteIds.length && !host.agentApiKey) {
+    res.status(400).json({ error: "The site collector must be an endpoint with an agent installed" });
+    return;
+  }
+  // Every ID must be a real site (isUuid first: a malformed ID would make
+  // PostgreSQL throw instead of simply not matching).
+  const found = siteIds.length && siteIds.every(isUuid) ? await db.query.sites.findMany({ where: inArray(sites.id, siteIds), columns: { id: true } }) : [];
+  if (found.length !== siteIds.length) {
+    res.status(400).json({ error: "siteIds must all be existing sites" });
+    return;
+  }
+  // Release the sites that are no longer wanted, then claim the chosen ones.
+  const current = await db.query.sites.findMany({ where: eq(sites.collectorEndpointId, host.id), columns: { id: true } });
+  const release = current.map((s) => s.id).filter((id) => !siteIds.includes(id));
+  if (release.length) await db.update(sites).set({ collectorEndpointId: null }).where(inArray(sites.id, release));
+  if (siteIds.length) await db.update(sites).set({ collectorEndpointId: host.id }).where(inArray(sites.id, siteIds));
+  invalidateSiteIpCache();
+  res.json(await db.query.sites.findMany({ where: eq(sites.collectorEndpointId, host.id) }));
 });
 
 // Push-to-update: flags this host so its agent updates itself on its next

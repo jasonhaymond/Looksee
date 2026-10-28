@@ -7,7 +7,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { api, type AddressRow, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type Suggestion } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
-import { AlertOptions, Button, FilterChip, Label, StatusBadge, alertRulePayload, emptyAlertOptions, formatBytes, inputClass, relativeTime, useToast } from "./ui";
+import { AlertOptions, Button, FilterChip, Label, MultiPicker, StatusBadge, alertRulePayload, emptyAlertOptions, formatBytes, inputClass, relativeTime, useToast } from "./ui";
 import { displayStatus } from "./CheckDetail";
 import { WatchdogSettings } from "./WatchdogSettings";
 import { RoleTemplates } from "./RoleTemplates";
@@ -295,9 +295,10 @@ function SuggestionsTab({ host, channels, onApplied }: { host: Endpoint; channel
  * is available), its connection diagnostics, and generating a key plus the
  * one-line install command (shown once, never again).
  */
-function AgentTab({ host, latestAgentVersion, onChanged }: { host: Endpoint; latestAgentVersion: string | null; onChanged: () => void }) {
-  const [revealed, setRevealed] = useState<{ agentApiKey: string; installCommands: { unix: string; windows: string } } | null>(null);
-  const [platform, setPlatform] = useState<"unix" | "windows">(/windows/i.test(host.os ?? "") ? "windows" : "unix");
+function AgentTab({ host, sites, latestAgentVersion, onChanged }: { host: Endpoint; sites: Site[]; latestAgentVersion: string | null; onChanged: () => void }) {
+  const [revealed, setRevealed] = useState<{ agentApiKey: string; installCommands: { unix: string; windows: string; android?: string } } | null>(null);
+  // Which install command to show first: guessed from the endpoint's OS.
+  const [platform, setPlatform] = useState<"unix" | "windows" | "android">(/windows/i.test(host.os ?? "") ? "windows" : /android/i.test(host.os ?? "") ? "android" : "unix");
   const outdated = Boolean(host.agentVersion && latestAgentVersion && host.agentVersion !== latestAgentVersion);
   return (
     <div className="space-y-3 text-sm">
@@ -306,6 +307,7 @@ function AgentTab({ host, latestAgentVersion, onChanged }: { host: Endpoint; lat
         {outdated && <span className="text-[var(--warn)]"> — v{latestAgentVersion} available</span>} · last report {relativeTime(host.lastSeenAt)}
       </p>
       <AgentDiagnostics host={host} />
+      {host.hasAgentKey && <CollectorSites host={host} sites={sites} onChanged={onChanged} />}
       <div className="flex flex-wrap gap-2">
         {host.agentVersion && (
           <Button disabled={host.updateRequested} onClick={async () => (await api.requestEndpointUpdate(host.id), onChanged())}>
@@ -325,12 +327,12 @@ function AgentTab({ host, latestAgentVersion, onChanged }: { host: Endpoint; lat
       {revealed && (
         <div className="space-y-2 rounded-md border border-[var(--warn)]/40 bg-[var(--warn)]/10 p-2 text-xs">
           <p className="text-[var(--warn)]">
-            Copy this now — the key won&apos;t be shown again. Run it on <strong>{host.name}</strong>, elevated (sudo on Linux/macOS, Administrator PowerShell on Windows):
+            Copy this now — the key won&apos;t be shown again. Run it on <strong>{host.name}</strong>, elevated (sudo on Linux/macOS, Administrator PowerShell on Windows; on Android, in the Termux app — see the agent guide → Android first):
           </p>
           <div className="flex gap-1">
-            {(["unix", "windows"] as const).map((p) => (
+            {(["unix", "windows", "android"] as const).map((p) => (
               <button key={p} type="button" onClick={() => setPlatform(p)} className={`rounded px-2 py-0.5 ${platform === p ? "bg-[var(--warn)]/30 text-[var(--text)]" : "text-[var(--muted)]"}`}>
-                {p === "unix" ? "Linux / macOS" : "Windows"}
+                {p === "unix" ? "Linux / macOS" : p === "windows" ? "Windows" : "Android"}
               </button>
             ))}
           </div>
@@ -340,6 +342,51 @@ function AgentTab({ host, latestAgentVersion, onChanged }: { host: Endpoint; lat
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Which sites (networks) this endpoint's agent is the site collector for.
+ * One agent can collect for several sites — e.g. a box on a trunk port that
+ * reaches several VLANs. Saving makes this agent the collector for exactly
+ * the chosen sites (replacing another collector a site had) and hands back
+ * the ones left out to the Looksee server; the agent starts or stops the
+ * collector on its next config poll.
+ */
+function CollectorSites({ host, sites, onChanged }: { host: Endpoint; sites: Site[]; onChanged: () => void }) {
+  const current = sites.filter((s) => s.collectorEndpointId === host.id).map((s) => s.id);
+  const [chosen, setChosen] = useState<string[]>(current);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const changed = chosen.length !== current.length || chosen.some((id) => !current.includes(id));
+  // Sites collected by another endpoint are marked, since choosing them here moves them.
+  const items = sites.map((s) => ({ id: s.id, label: s.name, sub: s.collectorEndpointId && s.collectorEndpointId !== host.id ? "has another collector — would move here" : s.networks?.length ? s.networks.join(", ") : undefined }));
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-[var(--muted)]">Site collector for — this agent runs the network checks, discovery and event receivers of these sites. Give each site its address ranges (Sites → edit) so received events are filed under the right one.</div>
+      <MultiPicker items={items} selected={chosen} onChange={setChosen} placeholder="Search sites…" height="max-h-32" />
+      <div className="flex items-center gap-2">
+        <Button
+          disabled={!changed || saving}
+          onClick={async () => {
+            setSaving(true);
+            setMessage(null);
+            try {
+              const now = await api.setCollectorSites(host.id, chosen);
+              setMessage(now.length ? `Collector for ${now.map((s) => s.name).join(", ")}.` : "No longer a site collector.");
+              onChanged();
+            } catch (err) {
+              setMessage(err instanceof Error ? err.message : "Couldn't save");
+            } finally {
+              setSaving(false);
+            }
+          }}
+        >
+          Save collector sites
+        </Button>
+        {message && <span className="text-xs text-[var(--muted)]">{message}</span>}
+      </div>
     </div>
   );
 }
@@ -644,7 +691,7 @@ export function EndpointPanel({ host, sites, checks, channels, latestAgentVersio
       {tab === "processes" && <InventoryTab host={host} kind="processes" />}
       {tab === "services" && <InventoryTab host={host} kind="services" />}
       {tab === "addresses" && <AddressesTab host={host} />}
-      {tab === "agent" && <AgentTab host={host} latestAgentVersion={latestAgentVersion} onChanged={onChanged} />}
+      {tab === "agent" && <AgentTab host={host} sites={sites} latestAgentVersion={latestAgentVersion} onChanged={onChanged} />}
       {tab === "watchdog" && <WatchdogSettings host={host} channels={channels} onChanged={onChanged} />}
       {tab === "edit" && <EditTab host={host} sites={sites} onSaved={onChanged} />}
       {toast.node}

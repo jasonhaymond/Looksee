@@ -39,13 +39,20 @@ global doc governs.
   choose which approved script runs, never send code to run. Don't add a "run this
   command" check type. Re-confirmed in 4.0 when "custom command with expected output"
   was requested: it was built as expected-output matching on approved scripts (judged by
-  the engine), not as remote commands.
+  the engine), not as remote commands. In 5.2 a script check may be **run by another
+  endpoint's agent** (`probeEndpointId`, "Run by") — still only from *that* agent's own
+  `script_dir`, and only that agent may report its result. Re-confirmed 2026-10-26:
+  engine-sent remote scripts and an in-browser terminal/PowerShell console stay a
+  *potential future add-on* (spec.md backlog), not to be built without Jason's go-ahead
+  and a dedicated security design (password + 2FA re-prompt at minimum).
 - **Two-factor sign-in is mandatory** (4.0, Jason's request). Never add a way to turn it
   off in the app; the only bypass is the shell-only `npm run security:reset -- --2fa`.
 - **Location → Site → Endpoint → Check** (5.0, Jason's decision 2026-10-19). A location
   (physical place) groups sites (networks — called "endpoints" before 5.0); a site holds
   endpoints (devices — called "hosts" before 5.0); an endpoint may run the agent and may
-  be its site's collector. Checks belong to an endpoint or, for network-level checks
+  be the collector for its own site *and others* (5.2: one agent can collect for several
+  sites; each site's `networks` CIDR ranges decide which site a received event belongs
+  to). Checks belong to an endpoint or, for network-level checks
   (URLs, DNS…), directly to a site. Endpoints and checks get their location only through
   their site — don't add a location column to them. Groups (manual, or saved filters) cut
   across locations, sites and endpoints without changing this hierarchy. The rename was

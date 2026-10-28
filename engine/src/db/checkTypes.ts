@@ -12,6 +12,10 @@
 // remoteProbe: an engine-executed type the Go agent can also run, so it can
 //   be pinned to a host's agent instead (checks.probeEndpointId) — for targets
 //   only reachable from inside another network.
+// otherAgent: an agent-executed type that may be run by a different
+//   endpoint's agent (checks.probeEndpointId) while still belonging to its
+//   own endpoint — a custom script that checks a device which can't run the
+//   agent itself, run from a nearby machine that can.
 // minAgentVersion: agents older than this never receive the check; the
 //   engine records a warn result explaining why instead of sending it.
 
@@ -20,7 +24,7 @@ export type CheckExecutor = "engine" | "agent" | "report";
 // local: an engine-run type that reads the engine's own database (event
 // matching, anomaly baselines, heartbeat staleness, forecasts) — always run by
 // the engine, never handed to a site collector.
-export type CheckTypeMeta = { executor: CheckExecutor; endpointRequired?: boolean; remoteProbe?: boolean; minAgentVersion?: string; local?: boolean };
+export type CheckTypeMeta = { executor: CheckExecutor; endpointRequired?: boolean; remoteProbe?: boolean; otherAgent?: boolean; minAgentVersion?: string; local?: boolean };
 
 export const CHECK_TYPE_META = {
   ping: { executor: "engine", remoteProbe: true },
@@ -45,6 +49,10 @@ export const CHECK_TYPE_META = {
   domain_expiry: { executor: "engine" },
   public_ip: { executor: "engine" },
   snmp_interfaces: { executor: "engine" },
+  // A whole DNS zone, copied by zone transfer (AXFR) or read name by name,
+  // compared with its previous copy to keep a history of record changes
+  // (services/probes/dnsZone.ts). Runs on the engine or the site collector.
+  dns_zone: { executor: "engine" },
   trap_match: { executor: "engine", local: true },
   syslog_match: { executor: "engine", local: true },
   bmc: { executor: "engine" },
@@ -71,7 +79,7 @@ export const CHECK_TYPE_META = {
   agent_log: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
   agent_eventlog: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
   agent_journal: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
-  agent_script: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  agent_script: { executor: "agent", endpointRequired: true, otherAgent: true, minAgentVersion: "3.0.0" },
   agent_scheduled_task: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
   agent_services_overview: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
   agent_docker: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
@@ -80,6 +88,13 @@ export const CHECK_TYPE_META = {
   agent_vpn: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
   agent_ups: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
   agent_backup: { executor: "agent", endpointRequired: true, minAgentVersion: "3.0.0" },
+  // Local user accounts: the agent lists them, the engine compares the list
+  // with the previous one and flags new, changed and removed accounts
+  // (services/userAccounts.ts).
+  agent_users: { executor: "agent", endpointRequired: true, minAgentVersion: "5.2.0" },
+  // The largest folders and files on each disk (or under one folder), found
+  // by walking the whole tree on the endpoint (agent/internal/checks/tree.go).
+  agent_disk_tree: { executor: "agent", endpointRequired: true, minAgentVersion: "5.2.0" },
 
   host_cpu: { executor: "report", endpointRequired: true },
   host_memory: { executor: "report", endpointRequired: true },
@@ -104,6 +119,11 @@ export const AGENT_CHECK_TYPES = typesWhere((m) => m.executor === "agent");
 export const REPORT_CHECK_TYPES = typesWhere((m) => m.executor === "report");
 export const ENDPOINT_SCOPED_CHECK_TYPES = typesWhere((m) => Boolean(m.endpointRequired));
 export const REMOTE_PROBE_CHECK_TYPES = typesWhere((m) => Boolean(m.remoteProbe));
+// Agent types another endpoint's agent may run (see otherAgent above).
+export const OTHER_AGENT_CHECK_TYPES = typesWhere((m) => Boolean(m.otherAgent));
+// Every type whose checks.probeEndpointId names the agent that runs it:
+// remote probes (engine types moved to an agent) and otherAgent types.
+export const PINNABLE_CHECK_TYPES = typesWhere((m) => Boolean(m.remoteProbe) || Boolean(m.otherAgent));
 // Engine-run types a site collector runs for its endpoint.
 export const COLLECTOR_CHECK_TYPES = typesWhere((m) => m.executor === "engine" && !m.local);
 export const minAgentVersionFor = (t: string) => meta(t)?.minAgentVersion;

@@ -16,6 +16,8 @@ export const SECRET_KEYS = new Set([
   "passphrase",
   "extraEnv",
   "uri",
+  // DNS zone check: the TSIG key that authorizes zone transfers.
+  "tsigSecret",
 ]);
 
 export const MASK = "••••••••";

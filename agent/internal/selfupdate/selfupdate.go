@@ -155,7 +155,8 @@ const RestartExitCode = 75
 
 // Supervised reports whether a service manager runs this process and will
 // restart it on exit — systemd sets INVOCATION_ID, launchd sets
-// XPC_SERVICE_NAME. Under systemd, Relaunch's detached child would be killed
+// XPC_SERVICE_NAME, and the Android (Termux) run script sets
+// LOOKSEE_SUPERVISED=1 because it restarts the agent in a loop. Under systemd, Relaunch's detached child would be killed
 // along with the exiting service and a clean exit is not restarted, so a
 // supervised agent exits with RestartExitCode instead of relaunching itself.
 func Supervised() bool {
@@ -163,6 +164,9 @@ func Supervised() bool {
 		return true
 	}
 	if name := os.Getenv("XPC_SERVICE_NAME"); name != "" && name != "0" {
+		return true
+	}
+	if os.Getenv("LOOKSEE_SUPERVISED") == "1" {
 		return true
 	}
 	return false

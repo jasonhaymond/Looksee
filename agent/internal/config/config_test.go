@@ -36,3 +36,17 @@ func TestProxyURL(t *testing.T) {
 		t.Fatalf("got %+v, %v", cfg, err)
 	}
 }
+
+// Proves dns_server accepts an IP (with or without a port) and refuses a
+// hostname, which couldn't be looked up without a DNS server.
+func TestDNSServer(t *testing.T) {
+	base := "engine_url: https://looksee.example.com\nagent_key: k\n"
+	for _, ok := range []string{"10.0.0.53", "10.0.0.53:5353", "\"[fd00::1]:53\""} {
+		if _, err := Load(write(t, base+"dns_server: "+ok+"\n")); err != nil {
+			t.Fatalf("%s: %v", ok, err)
+		}
+	}
+	if _, err := Load(write(t, base+"dns_server: dns.example.com\n")); err == nil || !strings.Contains(err.Error(), "dns_server") {
+		t.Fatalf("hostname should be refused, got %v", err)
+	}
+}
