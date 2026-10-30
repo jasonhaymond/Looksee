@@ -26,6 +26,8 @@ export default function SitesPage() {
   const [editing, setEditing] = useState<Site | "new" | null>(null);
   const [editingLocation, setEditingLocation] = useState<Location | "new" | null>(null);
   const [dialog, setDialog] = useState<"delete" | "merge" | "maint" | "location" | null>(null);
+  // The location whose "Delete location…" confirmation is open.
+  const [deletingLocation, setDeletingLocation] = useState<Location | null>(null);
   const toast = useToast();
 
   const load = useCallback(() =>
@@ -65,10 +67,17 @@ export default function SitesPage() {
     return m;
   }, [sites, endpoints, checks]);
 
+  /**
+   * Runs one bulk action on the selected sites (POST /api/sites/bulk), shows
+   * how many were affected, and reloads. The selection is read when the
+   * action starts — it usually runs in the background after its dialog
+   * closes — and cleared straight away for delete/merge, whose sites are gone.
+   */
   async function bulk(action: string, params: Record<string, unknown> = {}, verb = "Updated") {
-    const res = await api.bulkSites(sel.ids, action, params);
-    toast.show(`${verb} ${res.affected}.`);
+    const ids = sel.ids;
     if (action === "delete" || action === "merge") sel.clear();
+    const res = await api.bulkSites(ids, action, params);
+    toast.show(`${verb} ${res.affected}.`);
     await load();
   }
 
@@ -150,11 +159,7 @@ export default function SitesPage() {
                         key: "delete",
                         label: "Delete location…",
                         danger: true,
-                        run: async () => {
-                          if (!confirm(`Delete the location "${location.name}"? Its sites, endpoints and checks stay — they just won't belong to a location.`)) return;
-                          await api.deleteLocation(location.id);
-                          load();
-                        },
+                        run: () => setDeletingLocation(location),
                       },
                     ]}
                   />
@@ -255,6 +260,22 @@ export default function SitesPage() {
           actionLabel={`Delete ${sel.ids.length}`}
           onConfirm={() => bulk("delete", {}, "Deleted")}
           onClose={() => setDialog(null)}
+        />
+      )}
+      {deletingLocation && (
+        // Typed confirmation: deleting a location is one of the three deletes
+        // (with sites and endpoints) that still asks for the word "delete".
+        <ConfirmDialog
+          title={`Delete the location "${deletingLocation.name}"?`}
+          message={<p>Its sites, endpoints and checks stay — they just won&apos;t belong to a location.</p>}
+          confirmWord="delete"
+          actionLabel="Delete location"
+          onClose={() => setDeletingLocation(null)}
+          onConfirm={async () => {
+            await api.deleteLocation(deletingLocation.id);
+            toast.show(`Deleted the location "${deletingLocation.name}".`);
+            await load();
+          }}
         />
       )}
       {dialog === "merge" && (

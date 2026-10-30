@@ -1,6 +1,10 @@
 // The Alert history page (/alerts): every incident, open and resolved, with
 // filters, and Resolve on open ones. Data from /api/alert-rules/events.
 //
+// The location, site and endpoint filters take several values each and
+// cascade (a ticked location only offers its sites; ticked sites only offer
+// their endpoints). They're sent to the engine as comma-separated IDs.
+//
 // "use client" makes this a React component that runs in the browser; the
 // engine refuses every call without a session.
 
@@ -11,7 +15,7 @@ import Link from "next/link";
 import { api, type AlertEvent, type Site, type Endpoint, type Location } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
 import { PageHelp } from "../components/PageHelp";
-import { EmptyState, FilterChip, StatusBadge, inputClass } from "../components/ui";
+import { EmptyState, FilterChip, MultiFilter, StatusBadge, availableOnly, inputClass, type FilterOption } from "../components/ui";
 import { usePageAuth } from "../components/usePageAuth";
 import { pollEvery } from "../lib/poll";
 
@@ -35,9 +39,10 @@ export default function AlertsPage() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [range, setRange] = useState("7d");
   const [status, setStatus] = useState<"" | "open" | "resolved">("");
-  const [siteId, setSiteId] = useState("");
-  const [locationId, setLocationId] = useState("");
-  const [endpointId, setEndpointId] = useState("");
+  // Ticked filter values (none = no filtering).
+  const [siteFilter, setSiteFilter] = useState<string[]>([]);
+  const [locationFilter, setLocationFilter] = useState<string[]>([]);
+  const [endpointFilter, setEndpointFilter] = useState<string[]>([]);
   const [q, setQ] = useState("");
 
   useEffect(() => {
@@ -45,10 +50,28 @@ export default function AlertsPage() {
     Promise.all([api.sites(), api.endpoints(), api.locations()]).then(([e, h, l]) => (setSites(e), setEndpoints(h), setLocations(l)));
   }, [authed]);
 
+  // The cascade: each filter offers only what's inside the ones above it,
+  // and a ticked value no longer offered stops counting (availableOnly).
+  const cascade = useMemo(() => {
+    const locationOptions: FilterOption[] = locations.map((l) => ({ value: l.id, label: l.name }));
+    const locs = availableOnly(locationFilter, locationOptions);
+    const siteOptions: FilterOption[] = sites.filter((e) => !locs.length || (e.locationId != null && locs.includes(e.locationId))).map((e) => ({ value: e.id, label: e.name }));
+    const siteIds = availableOnly(siteFilter, siteOptions);
+    const offeredSites = new Set(siteIds.length ? siteIds : siteOptions.map((o) => o.value));
+    const endpointOptions: FilterOption[] = endpoints.filter((h) => offeredSites.has(h.siteId)).map((h) => ({ value: h.id, label: h.name }));
+    const endpointIds = availableOnly(endpointFilter, endpointOptions);
+    return { locationOptions, locs, siteOptions, siteIds, endpointOptions, endpointIds };
+  }, [locations, sites, endpoints, locationFilter, siteFilter, endpointFilter]);
+  // Joined into strings so the loader below only re-runs when the effective
+  // filters really change, not on every re-draw.
+  const locationParam = cascade.locs.join(",");
+  const siteParam = cascade.siteIds.join(",");
+  const endpointParam = cascade.endpointIds.join(",");
+
   const load = useCallback(async () => {
     const hours = RANGES.find((r) => r[0] === range)![2];
-    setEvents(await api.alertEvents({ since: new Date(Date.now() - hours * 3_600_000).toISOString(), status: status || undefined, siteId: siteId || undefined, locationId: locationId || undefined, endpointId: endpointId || undefined, q: q.trim() || undefined, limit: 2000 }));
-  }, [range, status, siteId, locationId, endpointId, q]);
+    setEvents(await api.alertEvents({ since: new Date(Date.now() - hours * 3_600_000).toISOString(), status: status || undefined, siteId: siteParam || undefined, locationId: locationParam || undefined, endpointId: endpointParam || undefined, q: q.trim() || undefined, limit: 2000 }));
+  }, [range, status, siteParam, locationParam, endpointParam, q]);
 
   useEffect(() => {
     if (!authed) return;
@@ -89,30 +112,9 @@ export default function AlertsPage() {
       </div>
       <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-4">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search check or message…" className={inputClass} aria-label="Search alerts" />
-        <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={inputClass} aria-label="Location">
-          <option value="">All locations</option>
-          {locations.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
-        <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={inputClass} aria-label="Site">
-          <option value="">All sites</option>
-          {sites.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name}
-            </option>
-          ))}
-        </select>
-        <select value={endpointId} onChange={(e) => setEndpointId(e.target.value)} className={inputClass} aria-label="Endpoint">
-          <option value="">All endpoints</option>
-          {endpoints.map((h) => (
-            <option key={h.id} value={h.id}>
-              {h.name}
-            </option>
-          ))}
-        </select>
+        <MultiFilter noun="location" options={cascade.locationOptions} selected={cascade.locs} onChange={setLocationFilter} />
+        <MultiFilter noun="site" options={cascade.siteOptions} selected={cascade.siteIds} onChange={setSiteFilter} />
+        <MultiFilter noun="endpoint" options={cascade.endpointOptions} selected={cascade.endpointIds} onChange={setEndpointFilter} />
       </div>
 
       {events && (

@@ -20,6 +20,7 @@ import { remediationFor } from "./remediation.js";
 import { recordSighting } from "./addresses.js";
 import { isInMaintenance } from "./maintenance.js";
 import type { Status } from "./thresholds.js";
+import { judgeTimeout, timeoutsBeforeDown } from "./timeouts.js";
 import { logger } from "../lib/logger.js";
 
 export type ResultInput = {
@@ -40,9 +41,25 @@ const FLAP_STOP = 3;
 
 // Shared by every result source (engine probes, agent reports, push URLs)
 // so "what counts as a result, and what happens next" lives in one place.
-export async function recordCheckResult(checkId: string, input: ResultInput) {
+export async function recordCheckResult(checkId: string, reported: ResultInput) {
   const check = await db.query.checks.findFirst({ where: eq(checks.id, checkId) });
   if (!check) return;
+  // A timeout reports WARN until it has happened timeoutsBeforeDown times in
+  // a row (services/timeouts.ts). Only a down result is ever affected, so the
+  // history lookup is skipped for the usual up/warn results.
+  const input =
+    reported.status === "down"
+      ? judgeTimeout(
+          check,
+          reported,
+          await db
+            .select({ status: checkResults.status, message: checkResults.message })
+            .from(checkResults)
+            .where(eq(checkResults.checkId, checkId))
+            .orderBy(desc(checkResults.checkedAt))
+            .limit(Math.max(0, timeoutsBeforeDown(check.config as Record<string, unknown>) - 1))
+        )
+      : reported;
   const now = new Date();
   const inMaintenance = await isInMaintenance(check, now);
 

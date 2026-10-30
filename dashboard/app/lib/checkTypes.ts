@@ -992,7 +992,7 @@ export function defaultConfigFor(type: string): Record<string, unknown> {
   return out;
 }
 
-const NUMERIC_EXTRA = ["warnAbove", "criticalAbove", "warnBelow", "criticalBelow", "latencyWarnMs", "latencyCriticalMs"];
+const NUMERIC_EXTRA = ["warnAbove", "criticalAbove", "warnBelow", "criticalBelow", "latencyWarnMs", "latencyCriticalMs", "timeoutsBeforeDown"];
 
 // Form state is strings; the API wants numbers/booleans and no empty keys.
 // Fields hidden by showIf are dropped so a switched mode doesn't leave

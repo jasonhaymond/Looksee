@@ -765,6 +765,10 @@ export function CheckForm({
           <Label label="Retry every (seconds) while failing" help="Re-check sooner while the check isn't up, so recoveries and N-in-a-row alerts land faster. Blank = normal interval.">
             <input type="number" min={5} value={retry} onChange={(e) => setRetry(e.target.value)} className={inputClass} />
           </Label>
+          {/* Read by the engine's services/timeouts.ts: a timeout warns until it has happened this many times in a row. */}
+          <Label label="Timeouts in a row before down" help="A check that gets no answer in time (no reply, timed out) shows WARN first — often the machine running it was just busy. It goes DOWN after this many timeouts in a row. 1 = down at the first timeout. Blank = 3.">
+            <input type="number" min={1} max={20} value={own(config, "timeoutsBeforeDown") == null ? "" : String(own(config, "timeoutsBeforeDown"))} onChange={(e) => set("timeoutsBeforeDown", e.target.value === "" ? undefined : Number(e.target.value))} placeholder="3" className={inputClass} />
+          </Label>
           <Label label="Tags" help="Comma-separated. Filter and bulk-select by tag on the Checks page.">
             <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="core, lan, backups" className={inputClass} />
           </Label>

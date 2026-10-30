@@ -20,7 +20,8 @@ alertRulesRouter.use(requireAuth);
 // alertEvents -> alertRules -> checks by hand (same "fetch and merge, skip
 // drizzle relations() wiring for one small join" posture as GET / below)
 // rather than a single relational query.
-// Filters (all optional): siteId, locationId, checkId, endpointId,
+// Filters (all optional): siteId, locationId, endpointId (each one ID or
+// several comma-separated — matching any of them), checkId,
 // status=open|resolved, since/until (ISO), q (check name or message text).
 alertRulesRouter.get("/events", async (req, res) => {
   const q = (k: string) => {
@@ -31,20 +32,36 @@ alertRulesRouter.get("/events", async (req, res) => {
     const d = q(k) ? new Date(q(k)!) : undefined;
     return d && !Number.isNaN(d.getTime()) ? d : undefined;
   };
-  const siteId = q("siteId");
-  const locationId = q("locationId");
+  // A comma-separated list of IDs. Anything that isn't UUID-shaped is
+  // dropped (the regex matches e.g. "3f2b8c1e-0000-4a5b-9c8d-123456789abc"),
+  // so a malformed value can't reach the database query and cause an error.
+  const ids = (k: string) => (q(k) ?? "").split(",").map((v) => v.trim()).filter((v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v));
+  const siteIds = ids("siteId");
+  const locationIds = ids("locationId");
+  const endpointIds = ids("endpointId");
+  // A filter that was given but held no valid ID matches nothing, rather
+  // than silently showing everything.
+  if (["siteId", "locationId", "endpointId"].some((k) => q(k) && !ids(k).length)) {
+    res.json([]);
+    return;
+  }
   const validSince = date("since");
   const until = date("until");
   const status = q("status");
   const text = q("q")?.toLowerCase();
   const limit = Math.min(Number(req.query.limit) || 50, 2000);
 
-  const locationSites = locationId ? (await db.query.sites.findMany({ where: eq(sites.locationId, locationId) })).map((e) => e.id) : null;
-  const checkRows = (await db.query.checks.findMany({ where: siteId ? eq(checks.siteId, siteId) : undefined })).filter(
-    (c) => (!locationSites || locationSites.includes(c.siteId)) && (!q("checkId") || c.id === q("checkId")) && (!q("endpointId") || c.endpointId === q("endpointId") || c.probeEndpointId === q("endpointId"))
+  // Within one filter any listed ID matches; different filters must all match.
+  const locationSites = locationIds.length ? (await db.query.sites.findMany({ where: inArray(sites.locationId, locationIds) })).map((e) => e.id) : null;
+  const checkRows = (await db.query.checks.findMany({ where: siteIds.length ? inArray(checks.siteId, siteIds) : undefined })).filter(
+    (c) =>
+      (!locationSites || locationSites.includes(c.siteId)) &&
+      (!q("checkId") || c.id === q("checkId")) &&
+      // An endpoint matches the checks on it and the checks its agent runs for others.
+      (!endpointIds.length || endpointIds.some((id) => c.endpointId === id || c.probeEndpointId === id))
   );
   const checkById = new Map(checkRows.map((c) => [c.id, c]));
-  const filtered = siteId || locationId || q("checkId") || q("endpointId");
+  const filtered = siteIds.length || locationIds.length || q("checkId") || endpointIds.length;
   if (filtered && !checkRows.length) {
     res.json([]);
     return;

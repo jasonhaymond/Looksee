@@ -2,6 +2,13 @@
 // actions (run, enable, maintenance, resolve, alert rules, add to group) and
 // the inline detail. "use client" makes this a React component that runs in
 // the browser; the engine refuses every call without a session.
+//
+// Filters cascade and take several values each: the location filter narrows
+// which sites are offered, sites narrow endpoints, and those narrow the kinds
+// and tags offered to what the remaining checks actually have. Ticking two
+// values in one filter shows checks matching either; different filters must
+// all match. Bulk actions run in the background once confirmed
+// (lib/background.ts), so the page stays usable while they finish.
 
 "use client";
 
@@ -13,7 +20,8 @@ import { PageHelp } from "../components/PageHelp";
 import { CheckForm, TypePicker } from "../components/CheckForm";
 import { CheckDetail, displayStatus } from "../components/CheckDetail";
 import { AddToGroupDialog } from "../components/NodeViews";
-import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Modal, MultiPicker, PromptDialog, StatusBadge, Tags, alertRulePayload, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction } from "../components/ui";
+import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Modal, MultiFilter, MultiPicker, PromptDialog, StatusBadge, Tags, alertRulePayload, availableOnly, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction, type FilterOption } from "../components/ui";
+import { runInBackground } from "../lib/background";
 import { pollEvery } from "../lib/poll";
 import { own } from "../lib/own";
 import { useStoredState } from "../lib/useStoredState";
@@ -47,14 +55,16 @@ export default function ChecksPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [locationFilter, setLocationFilter] = useState("");
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]>("all");
-  const [siteFilter, setSiteFilter] = useState("");
-  const [endpointFilter, setEndpointFilter] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("");
-  const [tagFilter, setTagFilter] = useState("");
+  // Each filter holds every ticked value (none ticked = no filtering).
+  // Location values are location IDs, or "none" for sites without one.
+  const [locationFilter, setLocationFilter] = useState<string[]>([]);
+  const [siteFilter, setSiteFilter] = useState<string[]>([]);
+  const [endpointFilter, setEndpointFilter] = useState<string[]>([]);
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
   // How the list is grouped, remembered in this browser (lib/useStoredState.ts).
   const [groupBy, setGroupBy] = useStoredState<GroupBy>("looksee.checks.groupBy.v5", "site", parseGroupBy, String);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -92,20 +102,47 @@ export default function ChecksPage() {
   const siteName = useMemo(() => new Map(sites.map((e) => [e.id, e.name])), [sites]);
   const endpointName = useMemo(() => new Map(endpoints.map((h) => [h.id, h.name])), [endpoints]);
   const locationName = useMemo(() => new Map(locations.map((l) => [l.id, l.name])), [locations]);
-  const allTags = useMemo(() => [...new Set(checks.flatMap((c) => c.tags ?? []))].sort(), [checks]);
+
+  // The cascade, biggest filter first. Each step offers only what's left
+  // after the filters above it, and ignores ticked values no longer offered
+  // (availableOnly) — so ticking a location hides other locations' sites
+  // and endpoints, and the kinds/tags lists only show what those checks have.
+  const cascade = useMemo(() => {
+    // A site's location key: its location's ID, or "none" (also for a
+    // location that no longer exists).
+    const locOf = new Map(sites.map((e) => [e.id, e.locationId && locationName.has(e.locationId) ? e.locationId : "none"]));
+    const locationOptions: FilterOption[] = [...locations.map((l) => ({ value: l.id, label: l.name })), ...(sites.some((e) => locOf.get(e.id) === "none") ? [{ value: "none", label: "No location" }] : [])];
+    const locs = availableOnly(locationFilter, locationOptions);
+    const inLocation = (siteId: string) => !locs.length || locs.includes(locOf.get(siteId) ?? "none");
+
+    const siteOptions: FilterOption[] = sites.filter((e) => inLocation(e.id)).map((e) => ({ value: e.id, label: e.name }));
+    const siteIds = availableOnly(siteFilter, siteOptions);
+    const inSites = (siteId: string) => inLocation(siteId) && (!siteIds.length || siteIds.includes(siteId));
+
+    const endpointOptions: FilterOption[] = endpoints.filter((h) => inSites(h.siteId)).map((h) => ({ value: h.id, label: h.name }));
+    const endpointIds = availableOnly(endpointFilter, endpointOptions);
+    // An endpoint matches the checks on it and the ones its agent runs for others.
+    const placed = checks.filter((c) => inSites(c.siteId) && (!endpointIds.length || endpointIds.some((id) => c.endpointId === id || c.probeEndpointId === id)));
+
+    const categoryOptions: FilterOption[] = CATEGORIES.filter((cat) => placed.some((c) => typeCategory(c.type) === cat)).map((cat) => ({ value: cat, label: cat }));
+    const cats = availableOnly(categoryFilter, categoryOptions);
+    const ofKind = placed.filter((c) => !cats.length || cats.includes(typeCategory(c.type)));
+
+    const tagOptions: FilterOption[] = [...new Set(ofKind.flatMap((c) => c.tags ?? []))].sort().map((t) => ({ value: t, label: t }));
+    const tags = availableOnly(tagFilter, tagOptions);
+    // Checks matching every filter except status and search — what the
+    // status chips count.
+    const scoped = ofKind.filter((c) => !tags.length || tags.some((t) => (c.tags ?? []).includes(t)));
+    return { locationOptions, locs, siteOptions, siteIds, endpointOptions, endpointIds, categoryOptions, cats, tagOptions, tags, scoped };
+  }, [checks, sites, endpoints, locations, locationName, locationFilter, siteFilter, endpointFilter, categoryFilter, tagFilter]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return checks
+    return cascade.scoped
       .filter((c) => {
         const st = displayStatus(c);
         if (statusFilter === "problems" && !["down", "warn"].includes(st)) return false;
         if (statusFilter !== "all" && statusFilter !== "problems" && st !== statusFilter) return false;
-        if (siteFilter && c.siteId !== siteFilter) return false;
-        if (locationFilter && (locationFilter === "none" ? c.locationId : c.locationId !== locationFilter)) return false;
-        if (endpointFilter && c.endpointId !== endpointFilter && c.probeEndpointId !== endpointFilter) return false;
-        if (categoryFilter && typeCategory(c.type) !== categoryFilter) return false;
-        if (tagFilter && !(c.tags ?? []).includes(tagFilter)) return false;
         if (q) {
           const hay = `${c.name} ${typeLabel(c.type)} ${c.lastMessage ?? ""} ${(c.tags ?? []).join(" ")} ${siteName.get(c.siteId) ?? ""} ${c.endpointId ? endpointName.get(c.endpointId) ?? "" : ""} ${JSON.stringify(c.config)}`.toLowerCase();
           if (!hay.includes(q)) return false;
@@ -113,7 +150,7 @@ export default function ChecksPage() {
         return true;
       })
       .sort((a, b) => (STATUS_ORDER[displayStatus(a)] ?? 9) - (STATUS_ORDER[displayStatus(b)] ?? 9) || a.name.localeCompare(b.name));
-  }, [checks, search, statusFilter, siteFilter, locationFilter, endpointFilter, categoryFilter, tagFilter, siteName, endpointName]);
+  }, [cascade, search, statusFilter, siteName, endpointName]);
 
   const groups = useMemo(() => {
     const keyOf = (c: Check): [string, string] => {
@@ -144,32 +181,43 @@ export default function ChecksPage() {
   const visibleIds = useMemo(() => filtered.map((c) => c.id), [filtered]);
   const sel = useSelection(visibleIds);
 
+  // Status chip counts, within the place/kind/tag filters.
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
-    for (const ch of checks) c[displayStatus(ch)] = (c[displayStatus(ch)] ?? 0) + 1;
+    for (const ch of cascade.scoped) c[displayStatus(ch)] = (c[displayStatus(ch)] ?? 0) + 1;
     return c;
-  }, [checks]);
+  }, [cascade]);
 
+  /**
+   * Runs one bulk action on the selected checks (POST /api/checks/bulk),
+   * shows how many were affected (and the first error, if any were
+   * skipped), and reloads. The selection is read when the action starts —
+   * it usually runs in the background after its dialog closes — and cleared
+   * straight away for delete, whose checks are gone.
+   */
   async function bulk(action: string, params: Record<string, unknown> = {}, verb = "Updated") {
-    const res = await api.bulkChecks(sel.ids, action, params);
+    const ids = sel.ids;
+    if (action === "delete") sel.clear();
+    const res = await api.bulkChecks(ids, action, params);
     if (res.errors.length) toast.show(`${verb} ${res.affected}; ${res.errors.length} skipped: ${res.errors[0].error}`, "error");
     else toast.show(`${verb} ${res.affected} check(s).`);
-    if (action === "delete") sel.clear();
     await load();
   }
+  /** A bulk action with no dialog, started straight from the Actions menu, in the background. */
+  const bulkNow = (label: string, action: string, verb?: string) => runInBackground(`${label} ${sel.ids.length} check(s)`, () => bulk(action, {}, verb));
 
   const prompt = (d: Omit<Extract<Dialog, { kind: "prompt" }>, "kind">) => setDialog({ kind: "prompt", ...d });
   const siteOptions = sites.map((e) => ({ value: e.id, label: e.name }));
   const endpointOptions = [{ value: "", label: "— none —" }, ...endpoints.map((h) => ({ value: h.id, label: h.name }))];
 
   const bulkActions: BulkAction[] = [
-    { group: "State", key: "enable", label: "Enable", run: () => bulk("enable") },
-    { group: "State", key: "disable", label: "Disable", run: () => bulk("disable") },
+    { group: "State", key: "enable", label: "Enable", run: () => bulkNow("Enable", "enable") },
+    { group: "State", key: "disable", label: "Disable", run: () => bulkNow("Disable", "disable") },
     { group: "State", key: "resolve", label: "Resolve…", hint: "Mark failing checks recovered now", run: () => prompt({ title: "Resolve checks", label: "Note (optional)", action: "resolve", param: "note", help: "Records an “up” result for each, closing their alerts. Checks that poll report their real status on their next run." }) },
-    { group: "State", key: "run", label: "Run now", hint: "Engine and collector checks only", run: () => bulk("run_now", {}, "Ran") },
+    { group: "State", key: "run", label: "Run now", hint: "Engine and collector checks only", run: () => bulkNow("Run", "run_now", "Ran") },
     { group: "State", key: "maint", label: "Maintenance…", run: () => prompt({ title: "Put in maintenance", label: "For how many minutes?", type: "number", initial: "60", action: "maintenance", param: "minutes", asNumber: true, help: "Results are still recorded; alerts are held and SLA reports skip this time." }) },
     { group: "Alerts", key: "alert", label: "Add alert rule…", run: () => setDialog({ kind: "alertRule" }) },
-    { group: "Alerts", key: "noalert", label: "Remove alert rules", run: () => bulk("clear_alert_rules", {}, "Removed alert rules from") },
+    { group: "Alerts", key: "noalert", label: "Remove alert rules", run: () => bulkNow("Remove alert rules from", "clear_alert_rules", "Removed alert rules from") },
     { group: "Alerts", key: "deps", label: "Depends on…", run: () => setDialog({ kind: "dependencies" }) },
     { group: "Organize", key: "tags", label: "Add tags…", run: () => prompt({ title: "Add tags", label: "Tags (comma-separated)", action: "add_tags", param: "tags", asList: true }) },
     { group: "Organize", key: "untag", label: "Remove tags…", run: () => prompt({ title: "Remove tags", label: "Tags (comma-separated)", action: "remove_tags", param: "tags", asList: true }) },
@@ -185,7 +233,7 @@ export default function ChecksPage() {
 
   if (!authChecked) return null;
 
-  const filtersActive = Boolean(search || statusFilter !== "all" || siteFilter || locationFilter || endpointFilter || categoryFilter || tagFilter);
+  const filtersActive = Boolean(search || statusFilter !== "all" || cascade.locs.length || cascade.siteIds.length || cascade.endpointIds.length || cascade.cats.length || cascade.tags.length);
 
   return (
     <main className="mx-auto max-w-6xl p-4 sm:p-6">
@@ -201,7 +249,7 @@ export default function ChecksPage() {
 
       <div className="mb-3 flex flex-wrap gap-1.5">
         {STATUS_FILTERS.map((s) => {
-          const n = s === "all" ? checks.length : s === "problems" ? (counts.down ?? 0) + (counts.warn ?? 0) : (own(counts, s) ?? 0);
+          const n = s === "all" ? cascade.scoped.length : s === "problems" ? (counts.down ?? 0) + (counts.warn ?? 0) : (own(counts, s) ?? 0);
           if (s !== "all" && s !== "problems" && n === 0) return null;
           return (
             <FilterChip key={s} active={statusFilter === s} onClick={() => setStatusFilter(s)}>
@@ -213,47 +261,11 @@ export default function ChecksPage() {
 
       <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-7">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, type, endpoint, site, message, tag…" className={`${inputClass} col-span-2`} aria-label="Search checks" />
-        <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} className={inputClass} aria-label="Location filter">
-          <option value="">All locations</option>
-          {locations.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-          <option value="none">No location</option>
-        </select>
-        <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)} className={inputClass} aria-label="Site filter">
-          <option value="">All sites</option>
-          {sites.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name}
-            </option>
-          ))}
-        </select>
-        <select value={endpointFilter} onChange={(e) => setEndpointFilter(e.target.value)} className={inputClass} aria-label="Endpoint filter">
-          <option value="">All endpoints</option>
-          {endpoints.map((h) => (
-            <option key={h.id} value={h.id}>
-              {h.name}
-            </option>
-          ))}
-        </select>
-        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className={inputClass} aria-label="Category filter">
-          <option value="">All kinds</option>
-          {CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-        <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className={inputClass} aria-label="Tag filter" disabled={allTags.length === 0}>
-          <option value="">{allTags.length ? "All tags" : "No tags yet"}</option>
-          {allTags.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+        <MultiFilter noun="location" options={cascade.locationOptions} selected={cascade.locs} onChange={setLocationFilter} />
+        <MultiFilter noun="site" options={cascade.siteOptions} selected={cascade.siteIds} onChange={setSiteFilter} />
+        <MultiFilter noun="endpoint" options={cascade.endpointOptions} selected={cascade.endpointIds} onChange={setEndpointFilter} />
+        <MultiFilter noun="kind" options={cascade.categoryOptions} selected={cascade.cats} onChange={setCategoryFilter} />
+        <MultiFilter noun="tag" options={cascade.tagOptions} selected={cascade.tags} onChange={setTagFilter} />
       </div>
 
       <div className="mb-2 flex flex-wrap items-center gap-3 text-sm">
@@ -268,11 +280,11 @@ export default function ChecksPage() {
             onClick={() => {
               setSearch("");
               setStatusFilter("all");
-              setSiteFilter("");
-              setLocationFilter("");
-              setEndpointFilter("");
-              setCategoryFilter("");
-              setTagFilter("");
+              setSiteFilter([]);
+              setLocationFilter([]);
+              setEndpointFilter([]);
+              setCategoryFilter([]);
+              setTagFilter([]);
             }}
           >
             Clear filters
@@ -421,8 +433,8 @@ export default function ChecksPage() {
               endpoints={endpoints}
               checks={checks}
               channels={channels}
-              defaultSiteId={siteFilter || undefined}
-              defaultEndpointId={endpointFilter || undefined}
+              defaultSiteId={cascade.siteIds.length === 1 ? cascade.siteIds[0] : undefined}
+              defaultEndpointId={cascade.endpointIds.length === 1 ? cascade.endpointIds[0] : undefined}
               onChangeType={() => setAddType(null)}
               onSaved={(created, count = 1) => {
                 setDialog(null);
@@ -445,7 +457,6 @@ export default function ChecksPage() {
         <ConfirmDialog
           title={`Delete ${sel.ids.length} check(s)?`}
           message={<p>This deletes the checks, their full result history, and their alert rules. It can&apos;t be undone.</p>}
-          confirmWord="delete"
           actionLabel={`Delete ${sel.ids.length}`}
           onConfirm={() => bulk("delete", {}, "Deleted")}
           onClose={() => setDialog(null)}
@@ -499,7 +510,6 @@ export default function ChecksPage() {
 
 function BulkAlertRuleDialog({ channels, count, onClose, onSubmit }: { channels: Channel[]; count: number; onClose: () => void; onSubmit: (p: Record<string, unknown>) => Promise<void> }) {
   const [value, setValue] = useState(emptyAlertOptions());
-  const [busy, setBusy] = useState(false);
   const payload = alertRulePayload(value);
   return (
     <Modal title={`Add alert rule to ${count} check(s)`} onClose={onClose} wide>
@@ -511,11 +521,11 @@ function BulkAlertRuleDialog({ channels, count, onClose, onSubmit }: { channels:
           </Button>
           <Button
             variant="primary"
-            disabled={!payload || busy}
-            onClick={async () => {
-              setBusy(true);
-              await onSubmit(payload!);
+            disabled={!payload}
+            onClick={() => {
+              // Close now; the change runs in the background (lib/background.ts).
               onClose();
+              runInBackground(`Add an alert rule to ${count} check(s)`, () => onSubmit(payload!));
             }}
           >
             Add rule
@@ -532,7 +542,6 @@ function DuplicateDialog({ checks, sites, endpoints, onClose, onSubmit }: { chec
   const [mode, setMode] = useState<"same" | "sites" | "endpoints">("same");
   const [siteIds, setSiteIds] = useState<string[]>([]);
   const [endpointIds, setEndpointIds] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
   const siteName = new Map(sites.map((e) => [e.id, e.name]));
   const endpointScoped = checks.some((c) => c.endpointId);
   const copies = mode === "same" ? checks.length : checks.length * (mode === "endpoints" ? endpointIds.length : siteIds.length);
@@ -567,11 +576,10 @@ function DuplicateDialog({ checks, sites, endpoints, onClose, onSubmit }: { chec
           </Button>
           <Button
             variant="primary"
-            disabled={busy || copies === 0}
-            onClick={async () => {
-              setBusy(true);
-              await onSubmit(mode === "endpoints" ? { endpointIds } : mode === "sites" ? { siteIds } : {});
+            disabled={copies === 0}
+            onClick={() => {
               onClose();
+              runInBackground(`Create ${copies} cop${copies === 1 ? "y" : "ies"}`, () => onSubmit(mode === "endpoints" ? { endpointIds } : mode === "sites" ? { siteIds } : {}));
             }}
           >
             Duplicate
@@ -605,9 +613,9 @@ function BulkDependencyDialog({ checks, count, onClose, onSubmit }: { checks: Ch
           </Button>
           <Button
             variant="primary"
-            onClick={async () => {
-              await onSubmit(picked);
+            onClick={() => {
               onClose();
+              runInBackground(`Set dependencies of ${count} check(s)`, () => onSubmit(picked));
             }}
           >
             Save

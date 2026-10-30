@@ -2,6 +2,10 @@
 // filters, bulk actions, and the endpoint panel inline. "use client" makes
 // this a React component that runs in the browser; the engine refuses every
 // call without a session.
+//
+// The location and site filters take several values each and cascade: ticking
+// a location only offers that location's sites. Bulk actions run in the
+// background once confirmed (lib/background.ts).
 
 "use client";
 
@@ -9,12 +13,13 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type Channel, type Check, type Site, type Endpoint, type Location } from "../lib/api";
 import { PageHelp } from "../components/PageHelp";
-import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, Label, Modal, PromptDialog, StatusBadge, Tags, alertRulePayload, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction } from "../components/ui";
+import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, Label, Modal, MultiFilter, PromptDialog, StatusBadge, Tags, alertRulePayload, availableOnly, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction, type FilterOption } from "../components/ui";
 import { displayStatus } from "../components/CheckDetail";
 import { collectorState } from "../components/collector";
 import { EndpointPanel, endpointState } from "../components/EndpointPanel";
 import { AddToGroupDialog } from "../components/NodeViews";
 import { pollEvery } from "../lib/poll";
+import { runInBackground } from "../lib/background";
 
 export default function EndpointsPage() {
   const router = useRouter();
@@ -27,8 +32,9 @@ export default function EndpointsPage() {
   const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
-  const [siteFilter, setSiteFilter] = useState("");
-  const [locationFilter, setLocationFilter] = useState("");
+  // Ticked filter values (none = no filtering); "none" is "no location".
+  const [siteFilter, setSiteFilter] = useState<string[]>([]);
+  const [locationFilter, setLocationFilter] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"add" | "delete" | "move" | "tags" | "untag" | "maint" | "suggest" | "group" | null>(null);
   const toast = useToast();
@@ -66,19 +72,40 @@ export default function EndpointsPage() {
     for (const e of sites) if (e.collectorEndpointId) m.set(e.collectorEndpointId, [...(m.get(e.collectorEndpointId) ?? []), e.name]);
     return m;
   }, [sites]);
+  // The cascade: the location filter decides which sites are offered, and
+  // a ticked site that's no longer offered stops counting (availableOnly).
+  const cascade = useMemo(() => {
+    const known = new Set(locations.map((l) => l.id));
+    const locOf = new Map(sites.map((e) => [e.id, e.locationId && known.has(e.locationId) ? e.locationId : "none"]));
+    const locationOptions: FilterOption[] = [...locations.map((l) => ({ value: l.id, label: l.name })), ...(sites.some((e) => locOf.get(e.id) === "none") ? [{ value: "none", label: "No location" }] : [])];
+    const locs = availableOnly(locationFilter, locationOptions);
+    const inLocation = (siteId: string) => !locs.length || locs.includes(locOf.get(siteId) ?? "none");
+    const siteOptions: FilterOption[] = sites.filter((e) => inLocation(e.id)).map((e) => ({ value: e.id, label: e.name }));
+    const siteIds = availableOnly(siteFilter, siteOptions);
+    return { locationOptions, locs, siteOptions, siteIds, inPlace: (siteId: string) => inLocation(siteId) && (!siteIds.length || siteIds.includes(siteId)) };
+  }, [sites, locations, locationFilter, siteFilter]);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const locOf = new Map(sites.map((e) => [e.id, e.locationId]));
-    return endpoints.filter((h) => (!siteFilter || h.siteId === siteFilter) && (!locationFilter || locOf.get(h.siteId) === locationFilter) && (!q || `${h.name} ${h.hostname ?? ""} ${h.os ?? ""} ${h.macAddress ?? ""} ${(h.tags ?? []).join(" ")} ${h.agentVersion ?? ""}`.toLowerCase().includes(q)));
-  }, [endpoints, search, siteFilter, locationFilter, sites]);
+    return endpoints.filter((h) => cascade.inPlace(h.siteId) && (!q || `${h.name} ${h.hostname ?? ""} ${h.os ?? ""} ${h.macAddress ?? ""} ${(h.tags ?? []).join(" ")} ${h.agentVersion ?? ""}`.toLowerCase().includes(q)));
+  }, [endpoints, search, cascade]);
   const sel = useSelection(filtered.map((h) => h.id));
 
+  /**
+   * Runs one bulk action on the selected endpoints (POST /api/endpoints/bulk),
+   * shows how many were affected (and the first error, if any were skipped),
+   * and reloads. The selection is read when the action starts — it usually
+   * runs in the background after its dialog closes — and cleared straight
+   * away for delete, whose endpoints are gone.
+   */
   async function bulk(action: string, params: Record<string, unknown> = {}, verb = "Updated") {
-    const res = await api.bulkEndpoints(sel.ids, action, params);
-    toast.show(res.errors.length ? `${verb} ${res.affected}; ${res.errors.length} skipped: ${res.errors[0].error}` : `${verb} ${res.affected}.`, res.errors.length ? "error" : "info");
+    const ids = sel.ids;
     if (action === "delete") sel.clear();
+    const res = await api.bulkEndpoints(ids, action, params);
+    toast.show(res.errors.length ? `${verb} ${res.affected}; ${res.errors.length} skipped: ${res.errors[0].error}` : `${verb} ${res.affected}.`, res.errors.length ? "error" : "info");
     await load();
   }
+  /** A bulk action with no dialog, started straight from the Actions menu, in the background. */
+  const bulkNow = (label: string, action: string, verb?: string) => runInBackground(`${label} ${sel.ids.length} endpoint(s)`, () => bulk(action, {}, verb));
 
   if (!authChecked) return null;
 
@@ -94,22 +121,8 @@ export default function EndpointsPage() {
 
       <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-4">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, IP, MAC, OS, tag…" className={`${inputClass} sm:col-span-2`} aria-label="Search endpoints" />
-        <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} className={inputClass} aria-label="Location filter">
-          <option value="">All locations</option>
-          {locations.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
-        <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)} className={inputClass} aria-label="Site filter">
-          <option value="">All sites</option>
-          {sites.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name}
-            </option>
-          ))}
-        </select>
+        <MultiFilter noun="location" options={cascade.locationOptions} selected={cascade.locs} onChange={setLocationFilter} />
+        <MultiFilter noun="site" options={cascade.siteOptions} selected={cascade.siteIds} onChange={setSiteFilter} />
       </div>
 
       {loaded && endpoints.length === 0 ? (
@@ -182,11 +195,11 @@ export default function EndpointsPage() {
         actions={
           [
             { group: "Checks", key: "suggest", label: "Add suggested checks…", hint: "Everything recommended for each endpoint", run: () => setDialog("suggest") },
-            { group: "Checks", key: "on", label: "Enable their checks", run: () => bulk("enable_checks", {}, "Enabled checks:") },
-            { group: "Checks", key: "off", label: "Disable their checks", run: () => bulk("disable_checks", {}, "Disabled checks:") },
+            { group: "Checks", key: "on", label: "Enable their checks", run: () => bulkNow("Enable checks on", "enable_checks", "Enabled checks:") },
+            { group: "Checks", key: "off", label: "Disable their checks", run: () => bulkNow("Disable checks on", "disable_checks", "Disabled checks:") },
             { group: "Checks", key: "maint", label: "Maintenance…", run: () => setDialog("maint") },
-            { group: "Agent", key: "update", label: "Update agents", run: () => bulk("request_update", {}, "Requested an update on") },
-            { group: "Agent", key: "wake", label: "Wake (WoL)", run: () => bulk("wake", {}, "Sent wake packet to") },
+            { group: "Agent", key: "update", label: "Update agents", run: () => bulkNow("Update agents on", "request_update", "Requested an update on") },
+            { group: "Agent", key: "wake", label: "Wake (WoL)", run: () => bulkNow("Wake", "wake", "Sent wake packet to") },
             { group: "Organize", key: "move", label: "Move to site…", run: () => setDialog("move") },
             { group: "Organize", key: "group", label: "Add to group…", run: () => setDialog("group") },
             { group: "Organize", key: "tags", label: "Add tags…", run: () => setDialog("tags") },
@@ -207,9 +220,9 @@ export default function EndpointsPage() {
         />
       )}
       {dialog === "suggest" && <BulkSuggestDialog channels={channels} count={sel.ids.length} onClose={() => setDialog(null)} onSubmit={(alertRule) => bulk("apply_suggestions", { alertRule }, "Created checks:")} />}
-      {dialog === "add" && <AddEndpointDialog sites={sites} defaultSiteId={siteFilter} onClose={() => setDialog(null)} onCreated={(h) => (load(), setExpanded(h.id))} />}
+      {dialog === "add" && <AddEndpointDialog sites={sites} defaultSiteId={cascade.siteIds.length === 1 ? cascade.siteIds[0] : ""} onClose={() => setDialog(null)} onCreated={(h) => (load(), setExpanded(h.id))} />}
       {dialog === "delete" && (
-        <ConfirmDialog title={`Delete ${sel.ids.length} host(s)?`} message={<p>Deletes the endpoints, every check tied to them, and their metrics history.</p>} confirmWord="delete" actionLabel={`Delete ${sel.ids.length}`} onConfirm={() => bulk("delete", {}, "Deleted")} onClose={() => setDialog(null)} />
+        <ConfirmDialog title={`Delete ${sel.ids.length} endpoint(s)?`} message={<p>Deletes the endpoints, every check tied to them, and their metrics history.</p>} confirmWord="delete" actionLabel={`Delete ${sel.ids.length}`} onConfirm={() => bulk("delete", {}, "Deleted")} onClose={() => setDialog(null)} />
       )}
       {dialog === "move" && (
         <PromptDialog
@@ -233,9 +246,8 @@ export default function EndpointsPage() {
 
 function BulkSuggestDialog({ channels, count, onClose, onSubmit }: { channels: Channel[]; count: number; onClose: () => void; onSubmit: (alertRule: ReturnType<typeof alertRulePayload>) => Promise<void> }) {
   const [alert, setAlert] = useState(emptyAlertOptions());
-  const [busy, setBusy] = useState(false);
   return (
-    <Modal title={`Add suggested checks to ${count} host(s)`} onClose={onClose} wide>
+    <Modal title={`Add suggested checks to ${count} endpoint(s)`} onClose={onClose} wide>
       <div className="space-y-3 text-sm">
         <p className="text-xs text-[var(--muted)]">Adds every recommended check each endpoint doesn&apos;t have yet (open an endpoint&apos;s Suggested checks tab to pick individually). Optionally attach an alert rule to all of them:</p>
         <AlertOptions channels={channels} value={alert} onChange={setAlert} />
@@ -245,11 +257,10 @@ function BulkSuggestDialog({ channels, count, onClose, onSubmit }: { channels: C
           </Button>
           <Button
             variant="primary"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              await onSubmit(alertRulePayload(alert));
+            onClick={() => {
+              // Close now; creating the checks runs in the background (lib/background.ts).
               onClose();
+              runInBackground(`Add suggested checks to ${count} endpoint(s)`, () => onSubmit(alertRulePayload(alert)));
             }}
           >
             Add checks

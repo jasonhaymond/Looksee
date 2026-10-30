@@ -340,6 +340,7 @@ export type AlertEvent = {
   checkType?: string | null;
   durationMinutes?: number;
 };
+// siteId, locationId and endpointId take one ID or several comma-separated (any of them matches).
 export type AlertEventQuery = { siteId?: string; locationId?: string; checkId?: string; endpointId?: string; status?: "open" | "resolved"; since?: string; until?: string; q?: string; limit?: number };
 export type EndpointMetric = {
   id: string;

@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [5.3.0] - 2026-10-30
+
+Calmer timeouts, faster bulk actions, and better filters. Engine, dashboard and agent
+move to 5.3.0 together (the agent itself is unchanged). No database migration.
+
+### Changed
+
+- **Timeouts warn first.** A check that gets no answer in time (no reply, timed out,
+  no response — from the engine, an agent or a collector) now reports **WARN**, and
+  only goes **DOWN** at the 3rd timeout in a row, so a busy machine running the checks
+  no longer floods alerts. Set the number per check under **Advanced → Timeouts in a
+  row before down** (1 = down at the first timeout, the old behaviour; up to 20).
+  Other failures are still DOWN at once; scripts, logs, events, pushed values and
+  heartbeats are never softened. Alert rules set to trigger on *warn* still alert on
+  the first timeout.
+- **Actions run in the background.** Confirm and prompt dialogs close as soon as you
+  confirm; a *Working:* note in the corner shows what's still running (and *Failed:*
+  with the reason if one fails) while you carry on. One-click bulk actions (enable,
+  disable, run now, update agents, wake…) work the same way.
+- **Typing "delete" is only asked for locations, sites and endpoints.** Deleting
+  checks and groups is one confirming click. Deleting a location now asks for the
+  typed word too (it used to be a plain browser prompt).
+- **Filters take several values and cascade** on the Checks, Endpoints and Alert
+  history pages: tick several locations, sites, endpoints, kinds or tags (any of them
+  matches), and each filter offers only what's inside the ones before it. The Checks
+  page's status counts follow the filters.
+- The alert-history API (`GET /api/alert-rules/events`) accepts several
+  comma-separated IDs in `siteId`, `locationId` and `endpointId`; a malformed ID now
+  matches nothing instead of causing a server error.
+
+### Security
+
+- Engine dependency `@azure/msal-node` (used by the SQL Server check through `mssql` →
+  `tedious` → `@azure/identity`) updated 6.0.1 → 7.1.2 by moving `@azure/identity` to
+  4.14.1, fixing GHSA-xcx6-jx8p-x3h5 (accepted as a risk in 5.1.0 and 5.2.0). Lockfile
+  only; the production dependency audit is now clean.
+
 ## [5.2.0] - 2026-10-26
 
 Three new check types, one collector for several networks, an Android agent, SNMP

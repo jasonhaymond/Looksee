@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "./Tooltip";
 import { own } from "../lib/own";
+import { runInBackground } from "../lib/background";
 
 // Shared building blocks for the management pages, so every table, filter
 // bar and bulk-action flow looks and behaves the same.
@@ -97,8 +98,16 @@ export function Modal({ title, onClose, children, wide = false }: { title: strin
   );
 }
 
-// Destructive bulk actions require retyping a word (the global standard for
-// hard-to-reverse admin actions), not just a click-through.
+/** A dialog title as a background-task label: "Delete 4 check(s)?" → "Delete 4 check(s)". */
+const taskLabel = (title: string) => title.replace(/[?…]+$/, "");
+
+/**
+ * Asks "are you sure?" before an action. With `confirmWord`, the button stays
+ * disabled until that word is typed — kept for deleting locations, sites and
+ * endpoints, which take everything inside them along; other deletes are one
+ * click. On confirm the dialog closes at once and `onConfirm` runs in the
+ * background (lib/background.ts shows it as "Working…", and any error).
+ */
 export function ConfirmDialog({
   title,
   message,
@@ -115,7 +124,6 @@ export function ConfirmDialog({
   onClose: () => void;
 }) {
   const [typed, setTyped] = useState("");
-  const [busy, setBusy] = useState(false);
   const ok = !confirmWord || typed.trim().toLowerCase() === confirmWord.toLowerCase();
   return (
     <Modal title={title} onClose={onClose}>
@@ -132,18 +140,13 @@ export function ConfirmDialog({
           </Button>
           <Button
             variant="danger"
-            disabled={!ok || busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                await onConfirm();
-                onClose();
-              } finally {
-                setBusy(false);
-              }
+            disabled={!ok}
+            onClick={() => {
+              onClose();
+              runInBackground(taskLabel(title), onConfirm);
             }}
           >
-            {busy ? "Working…" : actionLabel}
+            {actionLabel}
           </Button>
         </div>
       </div>
@@ -434,8 +437,11 @@ export function AlertOptions({ channels, value, onChange }: { channels: { id: st
   );
 }
 
-// A small one-field prompt modal for bulk actions that need a parameter
-// (minutes, interval, tags, target site...).
+/**
+ * A small one-field prompt modal for bulk actions that need a parameter
+ * (minutes, interval, tags, target site...). On submit it closes at once and
+ * `onSubmit` runs in the background (lib/background.ts).
+ */
 export function PromptDialog({
   title,
   label,
@@ -458,20 +464,14 @@ export function PromptDialog({
   onClose: () => void;
 }) {
   const [value, setValue] = useState(initial || options?.[0]?.value || "");
-  const [busy, setBusy] = useState(false);
   return (
     <Modal title={title} onClose={onClose}>
       <form
         className="space-y-3"
-        onSubmit={async (e) => {
+        onSubmit={(e) => {
           e.preventDefault();
-          setBusy(true);
-          try {
-            await onSubmit(value);
-            onClose();
-          } finally {
-            setBusy(false);
-          }
+          onClose();
+          runInBackground(taskLabel(title), () => onSubmit(value));
         }}
       >
         <Label label={label} help={help}>
@@ -491,8 +491,8 @@ export function PromptDialog({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" disabled={busy || (!options && value === "")}>
-            {busy ? "Working…" : actionLabel}
+          <Button variant="primary" type="submit" disabled={!options && value === ""}>
+            {actionLabel}
           </Button>
         </div>
       </form>
@@ -552,6 +552,90 @@ export function FilterChip({ active, onClick, children }: { active: boolean; onC
     >
       {children}
     </button>
+  );
+}
+
+export type FilterOption = { value: string; label: string };
+
+/**
+ * Keeps only the chosen filter values that are still offered. Used for
+ * cascading filters: when a bigger filter (location) narrows a smaller one's
+ * options (sites), a site chosen earlier that's no longer offered stops
+ * counting — and counts again if the bigger filter is widened back.
+ */
+export const availableOnly = (selected: string[], options: FilterOption[]) => {
+  const offered = new Set(options.map((o) => o.value));
+  return selected.filter((v) => offered.has(v));
+};
+
+/**
+ * A filter dropdown where several values can be ticked at once (any of them
+ * matches). The button reads "All sites" with nothing ticked, the one name
+ * when one is, or "3 sites" for more. Long lists get a search box.
+ *
+ * @param noun what one option is, e.g. "site" — for the button and labels
+ * @param options what can be picked (callers pass only what's still
+ *   available under the bigger filters, so the list cascades)
+ * @param selected the ticked values; onChange receives the new list
+ */
+export function MultiFilter({ noun, options, selected, onChange, allLabel, className = "" }: { noun: string; options: FilterOption[]; selected: string[]; onChange: (values: string[]) => void; allLabel?: string; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  // Close when clicking anywhere outside the dropdown, or on Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const chosen = new Set(selected);
+  const query = q.trim().toLowerCase();
+  const shown = query ? options.filter((o) => o.label.toLowerCase().includes(query)) : options;
+  const plural = `${noun}s`;
+  const summary = selected.length === 0 ? (allLabel ?? `All ${plural}`) : selected.length === 1 ? (options.find((o) => o.value === selected[0])?.label ?? `1 ${noun}`) : `${selected.length} ${plural}`;
+  const toggle = (v: string) => onChange(chosen.has(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+  return (
+    <div ref={ref} className={`relative ${className}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={options.length === 0}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`${noun[0].toUpperCase()}${noun.slice(1)} filter`}
+        className={`${inputClass} flex items-center justify-between gap-1 text-left disabled:cursor-not-allowed disabled:opacity-50 ${selected.length ? "border-[var(--accent)]" : ""}`}
+      >
+        <span className="truncate">{options.length === 0 ? `No ${plural}` : summary}</span>
+        <span className="text-xs text-[var(--muted)]">▾</span>
+      </button>
+      {open && (
+        // As wide as the button on phones (so a filter in the right-hand
+        // column can't run off-screen), 16rem from the small breakpoint up.
+        <div className="absolute left-0 top-full z-40 mt-1 w-full rounded-lg sm:w-64 border border-[var(--border-strong)] bg-[var(--panel-2)] p-1 shadow-2xl">
+          {options.length > 8 && <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${plural}…`} aria-label={`Search ${plural}`} className={`${inputClass} mb-1`} />}
+          <div role="listbox" aria-multiselectable="true" className="max-h-64 overflow-y-auto">
+            {shown.length === 0 && <p className="p-2 text-xs text-[var(--muted)]">Nothing matches.</p>}
+            {shown.map((o) => (
+              <label key={o.value} className={`flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-[var(--border)]/30 ${chosen.has(o.value) ? "bg-[var(--accent)]/10" : ""}`}>
+                <input type="checkbox" checked={chosen.has(o.value)} onChange={() => toggle(o.value)} className="accent-[var(--accent)]" />
+                <span className="truncate">{o.label}</span>
+              </label>
+            ))}
+          </div>
+          {selected.length > 0 && (
+            <button type="button" onClick={() => onChange([])} className="mt-1 w-full border-t border-[var(--border)] px-2 pt-1.5 text-left text-xs text-[var(--muted)] underline">
+              Clear ({selected.length} ticked)
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

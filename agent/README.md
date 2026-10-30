@@ -2,7 +2,7 @@
 
 A single static binary that reports a machine's metrics and runs the on-machine checks a
 Looksee engine assigns to it. No runtime dependency — Go compiles to one self-contained
-executable per platform. Version 5.2.0 (versioned in lockstep with the engine and
+executable per platform. Version 5.3.0 (versioned in lockstep with the engine and
 dashboard; see [CHANGELOG.md](../CHANGELOG.md)). Running it on Windows alongside Smart
 App Control, Defender, ASR, WDAC/AppLocker or an EDR, and signing it, are covered in
 [windows-agent-security.md](../docs/windows-agent-security.md).

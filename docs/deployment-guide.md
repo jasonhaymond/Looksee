@@ -19,7 +19,7 @@ adjust package manager commands for another distro.
 5. [Firewall](#5-firewall)
 6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
 7. [Backups](#7-backups)
-8. [Updating](#8-updating) — including [Upgrading to 5.2](#upgrading-to-52), [Upgrading to 5.0](#upgrading-to-50), [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
+8. [Updating](#8-updating) — including [Upgrading to 5.3](#upgrading-to-53), [Upgrading to 5.2](#upgrading-to-52), [Upgrading to 5.0](#upgrading-to-50), [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
 9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Security notes](#11-security-notes)
@@ -353,6 +353,23 @@ You can run the same checks by hand at any time:
 
 **Check:** every line reads `PASS` and the last line is `RESULT: PASS`; the full report
 is saved under `~/Looksee/security-reports/`.
+
+### Upgrading to 5.3
+
+5.3 has no database migration and no agent changes (agents report 5.3.0 only so the
+version stays in lockstep; updating them is optional).
+
+1. **Run the update as usual:** `~/Looksee/scripts/update.sh`. **Check:** `Update
+   complete — engine is healthy on v5.3.0.`, then `RESULT: PASS` from the post-deploy
+   checks.
+2. **Know the one behaviour change:** a check that times out now shows **WARN** and
+   only goes **DOWN** at the 3rd timeout in a row. For a device where a single missed
+   answer must alert as down, open the check and set **Advanced → Timeouts in a row
+   before down** to `1`. **Check:** on the Checks page, a timing-out check's message
+   starts with `Timeout 1 of 3 before down —`.
+
+**Rolling back to 5.2.0** is code-only (`scripts/update.sh v5.2.0`); there is nothing to
+restore in the database.
 
 ### Upgrading to 5.2
 

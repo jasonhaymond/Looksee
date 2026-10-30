@@ -225,7 +225,6 @@ export default function GroupPage() {
         <ConfirmDialog
           title={`Delete "${g.name}"?`}
           message="The group is removed. Its members (locations, sites, endpoints, checks) are not touched. Maintenance windows aimed at this group stop applying."
-          confirmWord="delete"
           actionLabel="Delete group"
           onClose={() => setDialog(null)}
           onConfirm={async () => {

@@ -18,13 +18,26 @@ endpoint's agent. *Report* checks are judged by the engine from the metrics ever
 report already carries. Commands below marked *(from Looksee)* should be run on whatever
 runs the check — the Looksee server, the collector machine, or the agent's machine.
 
-**Common to every check.** Under **Advanced** every check has a retry interval, tags,
-**Depends on** and **Recovers together with**; any failing check can be **resolved** by
+**Common to every check.** Under **Advanced** every check has a retry interval,
+**Timeouts in a row before down**, tags, **Depends on** and **Recovers together with**;
+any failing check can be **resolved** by
 hand or through its recovery URL; and checks that look at several items (disks,
 interfaces, services, containers, events, packages) take **exclusions** — their own
 and from reusable lists. See the user guide's
 [Resolving and recovery](user-guide.md#resolving-and-recovery) and
 [Exclusions](user-guide.md#exclusions).
+
+**Timeouts warn first.** When a check gets no answer in time — a ping with no reply, a
+TCP, HTTP or SNMP request that timed out — the result is **WARN**, not DOWN, because the
+cause is often a busy machine (the Looksee server, or the agent or collector running the
+check) rather than a dead device. If it keeps timing out, it goes **DOWN** at the third
+timeout in a row. Change that number per check with **Advanced → Timeouts in a row
+before down** (1 = down at the first timeout, the old behaviour; up to 20). The message
+shows the count, e.g. `Timeout 1 of 3 before down — No reply from nas`. Other failures
+(connection refused, wrong HTTP status, a threshold crossed) are DOWN straight away.
+Scripts, logs, events, pushed values and heartbeats are never softened this way. An alert
+rule set to trigger on **warn** still alerts on the first timeout; one set to **down**
+waits for the run of timeouts.
 
 ## Contents
 

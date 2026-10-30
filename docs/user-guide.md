@@ -210,11 +210,18 @@ result worse — a check that already failed stays down.
 On the Checks page:
 
 - The **status chips** (All, Problems, Down, Warn, …) show counts and filter with one
-  click. **Problems** = down or warn.
+  click. **Problems** = down or warn. The counts follow the other filters.
 - The **search box** matches names, types, endpoints, sites, last messages, tags and
   configuration (so searching an IP finds every check pointing at it).
 - The dropdowns filter by **location**, **site**, **endpoint**, **kind** (category) and
-  **tag**.
+  **tag**. Tick as many values in each as you like: ticking two sites shows checks in
+  either; different dropdowns must all match. Long lists have a search box, and
+  **Clear** in a dropdown unticks everything in it.
+- The dropdowns **cascade** — each only offers what's inside the ones before it. Tick a
+  location and the site list shows only that location's sites; tick sites and the
+  endpoint list shows only their endpoints; the kind and tag lists show only what the
+  remaining checks have. A value you ticked earlier that a bigger filter now hides
+  stops counting until you widen that filter again.
 - **Group by** sorts the list into sections by location, site, endpoint, kind, status,
   or nothing. Click a section header to collapse it. Your choice is remembered in this
   browser.
@@ -242,10 +249,18 @@ On the Checks page:
 | Organize | Duplicate… | Copy them — see [Duplicating checks](#duplicating-checks) |
 | Schedule | Run from… | Run ping/TCP/HTTP/DNS/TLS checks from the engine or a chosen agent |
 | Schedule | Interval… / Retry interval… | Change how often they run (retry: how often while failing; 0 clears) |
-| — | Delete… | Delete — you must type `delete` to confirm |
+| — | Delete… | Delete — asks once to confirm |
 
-3. A message confirms how many changed. If any were skipped (for example, a type that
-   can't run on an agent), the message names the first one and why.
+3. Once you confirm, the dialog closes straight away and the action **runs in the
+   background** — a **Working:** note in the bottom-right corner shows what's still
+   running, so you can carry on (even move to another page) meanwhile. When it
+   finishes, a message confirms how many changed. If any were skipped (for example, a
+   type that can't run on an agent), the message names the first one and why. If the
+   action fails, the corner note turns into **Failed:** with the reason.
+
+Deleting asks for one confirming click everywhere except **locations, sites and
+endpoints** — deleting one of those takes everything inside it along (or, for a
+location, unlinks its sites), so you must type `delete` to confirm.
 
 Combine this with filters: e.g. filter by tag `wan`, **Select all**, then **Add alert
 rule…** to alert on every WAN check at once.
@@ -1121,8 +1136,8 @@ Looksee also holds alerts back automatically when:
 its check recovered:
 
 - Range chips (24 hours to 1 year) and **All / Open / Resolved**.
-- Filters for **location**, **site**, **endpoint**, and a search over check names and
-  messages.
+- Filters for **location**, **site**, **endpoint** (tick several in each; they cascade
+  like the Checks page's), and a search over check names and messages.
 - A summary line: how many incidents, how many still open, and total problem time.
 - Each row: status, the check (click for its page), where it is, when it started, how
   long it lasted, and the alert message. An open incident has **Resolve** — see
