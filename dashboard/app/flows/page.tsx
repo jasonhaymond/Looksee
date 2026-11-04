@@ -8,7 +8,8 @@ import { useEffect, useState } from "react";
 import { api, type FlowRow } from "../lib/api";
 import { SiteSelect } from "../components/SiteSelect";
 import { PageHelp } from "../components/PageHelp";
-import { EmptyState, formatBytes, inputClass, relativeTime } from "../components/ui";
+import { EmptyState, SortPicker, formatBytes, inputClass, relativeTime } from "../components/ui";
+import { useSort } from "../lib/useSort";
 import { usePageAuth } from "../components/usePageAuth";
 import { pollEvery } from "../lib/poll";
 
@@ -28,6 +29,7 @@ export default function FlowsPage() {
   const [site, setSite] = useState("");
   const [exporters, setExporters] = useState<{ exporter: string; last: string }[]>([]);
   const [rows, setRows] = useState<FlowRow[] | null>(null);
+  const sort = useSort<FlowRow>("flows", { label: (r) => r.label, bytes: (r) => r.bytes, packets: (r) => r.packets, avgMbps: (r) => r.avgMbps });
 
   useEffect(() => {
     if (authed) api.flowExporters().then(setExporters);
@@ -72,11 +74,12 @@ export default function FlowsPage() {
           ))}
         </select>
       </div>
+      <SortPicker sort={sort} className="mb-3" none="Most traffic" options={[["label", "Name"], ["bytes", "Bytes"], ["packets", "Packets"], ["avgMbps", "Average speed"]]} />
       {rows && rows.length === 0 ? (
         <EmptyState>{exporters.length ? "No traffic recorded in this window." : "No flow exporter has sent data yet."}</EmptyState>
       ) : (
         <ol className="space-y-2">
-          {(rows ?? []).map((r, i) => (
+          {sort.apply(rows ?? []).map((r, i) => (
             <li key={r.label} className="rounded-lg surface p-2 text-sm">
               <div className="flex flex-wrap justify-between gap-2">
                 <span className="font-mono">

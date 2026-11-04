@@ -18,7 +18,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Endpoint, type WatchdogView } from "../lib/api";
 import { PageHelp } from "../components/PageHelp";
-import { Button, Label, inputClass, relativeTime, useToast } from "../components/ui";
+import { Button, Label, SortPicker, inputClass, relativeTime, useToast } from "../components/ui";
+import { useSort } from "../lib/useSort";
 import { usePageAuth } from "../components/usePageAuth";
 
 /** The page: the outbound watchdog's settings, the watchdog agents, and setup help. */
@@ -30,6 +31,7 @@ export default function WatchdogPage() {
   const [interval, setInterval_] = useState("60");
   // Endpoints set up as watchdog agents.
   const [agents, setAgents] = useState<Endpoint[]>([]);
+  const sort = useSort<Endpoint>("watchdogAgents", { name: (a) => a.name, alerting: (a) => (a.watchdogStatus?.alerting ? 0 : 1) });
   const toast = useToast();
 
   // Loads the outbound watchdog's settings and the endpoints that are
@@ -123,7 +125,10 @@ export default function WatchdogPage() {
         </p>
         {agents.length ? (
           <ul className="space-y-1">
-            {agents.map((a) => (
+            <li className="mb-1">
+              <SortPicker sort={sort} options={[["name", "Name"], ["alerting", "Alerting first"]]} />
+            </li>
+            {sort.apply(agents).map((a) => (
               <li key={a.id} className="flex flex-wrap items-center gap-2 text-xs">
                 {a.watchdogStatus?.alerting ? <span className="text-[var(--down)]">✕ alerting</span> : a.watchdogStatus ? <span className="text-[var(--up)]">✓ reaching Looksee</span> : <span className="text-[var(--muted)]">? no report yet</span>}
                 <Link href={`/endpoints/${a.id}`} className="font-medium underline">

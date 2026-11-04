@@ -181,6 +181,20 @@ doesn't have on its own. **By default (5.0+) the installer grants it:**
 | backups (Borg/restic) | read the repository + its key | *not granted* — run with the same user/permissions as the backup, or grant read access to the repo | — |
 | local user accounts: locked/expired state and password changes | read `/etc/shadow` | *not granted* — see below | — |
 
+**SMART works by hand but the check says it's unavailable?** The check now gives the
+agent's reason. *Permission denied* means this drop-in isn't installed: you ran `sudo
+smartctl`, while the agent is an unprivileged user. Agents installed before 5.0 or with
+`--minimal` don't have it, and updating an agent doesn't add it, so install it with the
+commands at the top of `looksee-agent-privileged.conf`. *found no drives* is normal on a
+virtual machine. SMART is read every 30 minutes, or straight away after restarting the
+agent.
+
+**macOS:** the agent runs as root, so it doesn't look in Homebrew's folders, which the
+user who installed Homebrew can write to: malware running as that user could plant a
+`smartctl` there. A Homebrew-installed `smartctl` therefore isn't used. To use one, copy
+it to a folder only root can write to and add that folder to the `PATH` in the launchd
+plist's `EnvironmentVariables`.
+
 **Know what you're granting.** Membership of the `docker` group is effectively root
 access on that machine (anyone who can talk to the Docker socket can start a container
 that mounts the whole disk). It's on by default because container checks are among the

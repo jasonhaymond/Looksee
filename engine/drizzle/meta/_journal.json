@@ -197,6 +197,13 @@
       "when": 1793042851215,
       "tag": "0027_v5_2_zones_users_trees",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793804534602,
+      "tag": "0028_v5_4_retention_software_history",
+      "breakpoints": true
     }
   ]
 }

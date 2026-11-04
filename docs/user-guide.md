@@ -44,6 +44,7 @@ two-factor, IP restriction, attack alerts), [windows-agent-security.md](windows-
    - [Check type reference](#check-type-reference)
 4. [Endpoints](#endpoints)
    - [Processes and services](#processes-and-services)
+   - [Installed software and its history](#installed-software-and-its-history)
    - [MAC addresses and IP changes](#mac-addresses-and-ip-changes)
    - [Suggested checks and templates](#suggested-checks)
 5. [Sites and locations](#sites)
@@ -66,7 +67,8 @@ two-factor, IP restriction, attack alerts), [windows-agent-security.md](windows-
 22. [Watchdog](#watchdog) (including [watchdog agents](#watchdog-agents))
 23. [Times and time zones](#times-and-time-zones)
 24. [Light and dark theme](#light-and-dark-theme)
-25. [Backups and logs](#backups-and-logs)
+25. [Data retention](#data-retention)
+26. [Backups and logs](#backups-and-logs)
 
 ## How Looksee is organized
 
@@ -102,7 +104,7 @@ The **sidebar** on the left has two parts. The top lists the pages:
 | Monitoring | Checks, Endpoints, Sites & locations, Groups, Discovery, SNMP templates |
 | Alerting | Alert history, Channels, Maintenance, Exclusions |
 | Insights | SLA reports, Traps & syslog, Top talkers, Status pages |
-| System | Security, Watchdog, Backups, Logs, Help & user guide |
+| System | Security, Watchdog, Data retention, Backups, Logs, Help & user guide |
 
 Click a section name to fold it away; the sidebar remembers what you opened.
 
@@ -117,6 +119,14 @@ theme button (◐ ☀ ☾), **Enable push notifications** and **Sign out** are a
 of the sidebar. **Help & user guide** holds this guide, the check reference and the
 security guides. Each page starts with a one-line explanation and a
 **Learn more** link to the matching section of this guide.
+
+**Sorting lists.** Click a column heading to sort a table by it: once for ascending,
+again for descending, and a third time to go back to the list's usual order. An arrow
+shows the current order, and blank values always stay at the bottom. Lists without
+headings (groups, channels, the Checks page and others) have a **Sort by** dropdown with
+an arrow button for the direction, and on a phone the Endpoints list has one too. Each
+list remembers its order in this browser. Long histories (alert history, logs, received
+events) sort the rows loaded on the page, not everything ever recorded.
 
 ## Checks
 
@@ -549,6 +559,12 @@ Two more checks (agent 5.2) round this out:
   **Exclude accounts** skips ones whose changes are expected (a service account whose
   password rotates). Windows, Linux and macOS; details of how each is read are in the
   [check reference](check-reference.md#agent_users).
+- **RDP sessions** — who is connected to a Windows machine over Remote Desktop: each
+  session's user, state (active or disconnected) and the computer it's from. **Expected
+  users** fails the check when anyone else connects; **Warn if disconnected for over**
+  catches sessions left open. The Overview tab of a Windows endpoint shows the same list.
+  Needs a Windows agent 5.4 or newer; see the
+  [check reference](check-reference.md#host_rdp_sessions).
 - **Largest folders and files** (under *Files & logs*) — walks each disk, or one folder,
   and lists the largest folders and files, with how much each grew since the last scan.
   It runs every 6 hours by default and never slows the agent's reports.
@@ -656,7 +672,7 @@ move to a site (their checks move too), add to a group, add or remove tags, or d
 Agent 4.0+ keeps a full inventory of each endpoint, refreshed about every 5 minutes:
 
 - **Processes** — every running process with PID, user, CPU %, memory and command line.
-  Search, and sort by memory, CPU or name.
+  Search, and click any column heading to sort. Most memory comes first until you do.
 - **Services** — every systemd unit (Linux), Windows service, or launchd job (macOS)
   with its state and start type. Filter to *running*, *not running*, or **automatic but
   stopped** — usually the interesting ones.
@@ -672,6 +688,29 @@ that never shows a config poll has never reached Looksee with its key; the agent
 [troubleshooting section](../agent/README.md#troubleshooting-an-endpoint-never-checks-in)
 goes through the rest. On the **Logs** page, entries about an endpoint link to it, and
 *only this endpoint* narrows the log to that one.
+
+### Installed software and its history
+
+The **Software** tab on an endpoint has two views:
+
+- **History** — every program or package installed, removed or updated, with its old and
+  new versions. Filter by kind of change, search, and sort by any column.
+- **Installed now** — everything the agent last reported, with version and source.
+
+Agents check about every 6 hours, so **Noticed** is when Looksee found out, not the
+moment it happened. The first report is the starting point: history begins with the next
+one, and nothing before the update that added this exists. Project dependencies from lock
+files are listed under *Installed now* but left out of the history, because they change
+with every deploy. If one package manager fails to answer (a timeout, say), its packages
+are held back rather than recorded as removed, and compared once it answers again.
+
+History is kept for 2 years by default; change that under
+[Data retention](#data-retention). To be *alerted* to a change rather than look it up
+later, add an **Installed software changed** check.
+
+**Check it worked:** install or remove a small program on the endpoint. Within about 6
+hours it's listed on the **History** view. To see it sooner, restart the agent, which
+collects on startup.
 
 ### MAC addresses and IP changes
 
@@ -1346,6 +1385,69 @@ should match your local time, not UTC.
 The theme button at the bottom of the sidebar cycles **System → Light → Dark**. *System* follows your
 device's setting. The choice is remembered per browser. Both themes use the same
 status colors (always shown with a text label too), checked for contrast.
+
+## Data retention
+
+**System → Data retention** decides how long Looksee keeps its data, and protects the
+disk from filling up. A full disk stops the database, and with it all monitoring.
+
+**How long each kind of data is kept.** Old data is deleted every night. Each box shows
+its current period; leave one blank for the default.
+
+| Data | Default | What it's for |
+|---|---|---|
+| Network flows | 7 days | Top talkers |
+| Endpoint metrics | 30 days | Charts; usually the largest table |
+| Traps and syslog | 30 days | Received events |
+| Application logs | 30 days | The Logs page |
+| Software history | 730 days | The endpoint's Software tab |
+| Check results | 400 days | Check history and SLA reports. Keep it for as long as you report on |
+| Security events | 180 days | The sign-in and settings audit log. Can't be set below 30 days here |
+
+A period set in the engine's `.env` still applies until you set one here.
+
+**Keeping the disk from filling up.** Every 5 minutes Looksee measures free space on the
+disk holding the database. Below the limit (**3 GB free** by default; you can set a number
+of GB or a percentage of the disk) it rolls over the oldest data early, even if its
+retention period hasn't run out:
+
+1. Network flows go first, then endpoint metrics, traps and syslog, application logs and
+   software history. Check results go last, because your uptime history depends on them.
+2. Only as much as the shortfall needs is deleted, plus a small margin.
+3. Looksee then compacts the table to give the space back to the disk. That needs room for
+   a temporary copy of the table, and holds up writes to that table while it runs (usually
+   seconds). Agents wait and retry, so nothing is lost.
+
+There are two limits on what it will delete:
+
+- Data from the last **24 hours** (*Always keep the last*) is never rolled over.
+- **Security events** are never rolled over, so filling a disk can't erase the record of
+  an attack.
+
+If only those are left and the disk is still low, something else is filling it. Looksee
+logs an error and shows the reason on this page rather than deleting more.
+
+**Reading the page.** The **Disk** panel shows free space and whether it's under the limit.
+If it mentions room *new data will reuse*, Looksee freed space inside the database but
+couldn't compact it because there wasn't room for the copy. The database won't grow until
+that's used up, even though the disk's free space hasn't risen, and Looksee doesn't delete
+more because of it. **Last rollover** says when it last had to act and what it removed.
+
+**Disk to watch.** Looksee measures the disk holding `DATA_DISK_PATH` if set, then Docker's
+data folder (`/var/lib/docker`), then the app's own folder. If your database's data lives
+on another disk, enter any folder on that disk. If Postgres runs on a different machine,
+Looksee can't measure that machine's disk: turn rollover off there and watch that disk with
+a *Disk free space* check on that machine's agent.
+
+**Check it worked.** Lower nothing: just confirm the **Disk** panel shows the free space
+you expect, comparing it on the server with:
+
+```bash
+df -h /var/lib/docker
+```
+
+The two should agree. **Apply now** runs the nightly cleanup and the free-space check
+straight away. It deletes data, so it asks first.
 
 ## Backups and logs
 

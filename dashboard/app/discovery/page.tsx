@@ -6,10 +6,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type DiscoveryScan, type Site } from "../lib/api";
+import { api, type DiscoveredDevice, type DiscoveryScan, type Site } from "../lib/api";
+import { useSort } from "../lib/useSort";
 import { typeLabel } from "../lib/checkTypes";
 import { PageHelp } from "../components/PageHelp";
-import { AlertOptions, Button, Checkbox, EmptyState, Label, Modal, alertRulePayload, emptyAlertOptions, inputClass, relativeTime, useToast } from "../components/ui";
+import { AlertOptions, Button, Checkbox, EmptyState, Label, Modal, SortPicker, alertRulePayload, emptyAlertOptions, inputClass, relativeTime, useToast } from "../components/ui";
 import type { Channel } from "../lib/api";
 import { usePageAuth } from "../components/usePageAuth";
 import { pollEvery } from "../lib/poll";
@@ -20,6 +21,7 @@ type Pick = { host: boolean; checks: Set<number> };
 
 export default function DiscoveryPage() {
   const authed = usePageAuth();
+  const deviceSort = useSort<DiscoveredDevice>("discovery", { ip: (d) => d.ip, name: (d) => d.hostname ?? d.snmp?.sysName, ports: (d) => d.openPorts.length, suggested: (d) => d.suggestedChecks.length });
   const [cidr, setCidr] = useState("192.168.1.0/24");
   const [community, setCommunity] = useState("public");
   const [scan, setScan] = useState<DiscoveryScan | null>(null);
@@ -63,7 +65,7 @@ export default function DiscoveryPage() {
   // that aren't hosts yet.
   const pickOf = (d: { ip: string; knownEndpointId?: string | null }): Pick => own(picks, d.ip) ?? { host: !d.knownEndpointId, checks: new Set(d.knownEndpointId ? [] : [0]) };
 
-  const devices = scan?.results ?? [];
+  const devices = deviceSort.apply(scan?.results ?? []);
   const chosen = devices.filter((d) => pickOf(d).host || pickOf(d).checks.size);
   const toggleCheck = (d: (typeof devices)[number], i: number) => {
     const cur = pickOf(d);
@@ -137,6 +139,7 @@ export default function DiscoveryPage() {
           </p>
           {devices.length > 0 && (
             <div className="space-y-2">
+              <SortPicker sort={deviceSort} none="Found order" options={[["ip", "Address"], ["name", "Name"], ["ports", "Open ports"], ["suggested", "Suggested checks"]]} />
               {devices.map((d) => {
                 const p = pickOf(d);
                 return (

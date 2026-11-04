@@ -23,7 +23,8 @@ import { useRouter } from "next/navigation";
 import { api, ApiError, type Check, type Site, type Endpoint, type Group, type MaintenanceWindow } from "../lib/api";
 import { browserTimeZone } from "../lib/localTime";
 import { PageHelp } from "../components/PageHelp";
-import { Button, EmptyState, Label, Modal, StatusBadge, inputClass, useToast } from "../components/ui";
+import { Button, EmptyState, Label, Modal, SortPicker, StatusBadge, inputClass, useToast } from "../components/ui";
+import { useSort } from "../lib/useSort";
 
 // Day names in JavaScript's numbering (0 = Sunday), as stored in daysOfWeek.
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -63,6 +64,7 @@ export default function MaintenancePage() {
   // useState holds values that re-draw the page when they change.
   const [authChecked, setAuthChecked] = useState(false);
   const [windows, setWindows] = useState<MaintenanceWindow[]>([]);
+  const sort = useSort<MaintenanceWindow>("maintenance", { name: (w) => w.name, active: (w) => (w.active ? 0 : w.enabled ? 1 : 2), repeats: (w) => (w.daysOfWeek?.length ? 1 : 0), scope: (w) => w.scope, starts: (w) => (w.startsAt ? new Date(w.startsAt) : null) });
   const [sites, setSites] = useState<Site[]>([]);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [checks, setChecks] = useState<Check[]>([]);
@@ -116,7 +118,10 @@ export default function MaintenancePage() {
         <EmptyState>No maintenance windows.</EmptyState>
       ) : (
         <ul className="space-y-2">
-          {windows.map((w) => (
+          <li>
+            <SortPicker sort={sort} options={[["name", "Name"], ["active", "Active first"], ["repeats", "One-time, then weekly"], ["scope", "Applies to"], ["starts", "Start time"]]} />
+          </li>
+          {sort.apply(windows).map((w) => (
             <li key={w.id} className="rounded-xl surface p-3 text-sm">
               <div className="flex flex-wrap items-center gap-3">
                 <StatusBadge status={w.active ? "maintenance" : w.enabled ? "unknown" : "disabled"} />

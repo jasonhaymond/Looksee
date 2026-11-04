@@ -18,13 +18,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ExclusionKind, type ExclusionList, type Group } from "../lib/api";
 import { PageHelp } from "../components/PageHelp";
-import { Button, ConfirmDialog, EmptyState, Label, Modal, MultiPicker, inputClass } from "../components/ui";
+import { Button, ConfirmDialog, EmptyState, Label, Modal, MultiPicker, SortPicker, inputClass } from "../components/ui";
+import { useSort } from "../lib/useSort";
 import { usePageAuth } from "../components/usePageAuth";
 
 /** The page: every list with its kind, scope and items, plus the editor. */
 export default function ExclusionsPage() {
   const authed = usePageAuth();
   const [lists, setLists] = useState<ExclusionList[] | null>(null);
+  const sort = useSort<ExclusionList>("exclusions", { name: (l) => l.name, kind: (l) => l.kind, items: (l) => l.items.length });
   const [kinds, setKinds] = useState<ExclusionKind[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   // The list open in the editor: an existing one, "new", or none.
@@ -65,7 +67,10 @@ export default function ExclusionsPage() {
         <EmptyState>No exclusion lists yet.</EmptyState>
       ) : (
         <ul className="space-y-2">
-          {(lists ?? []).map((l) => (
+          <li>
+            <SortPicker sort={sort} options={[["name", "Name"], ["kind", "Kind"], ["items", "Number of items"]]} />
+          </li>
+          {sort.apply(lists ?? []).map((l) => (
             <li key={l.id} className="surface space-y-1.5 rounded-xl p-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`font-medium ${l.enabled ? "" : "opacity-60"}`}>{l.name}</span>

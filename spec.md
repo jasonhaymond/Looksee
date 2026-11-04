@@ -180,6 +180,18 @@ if a real use case shows up.
 - Engine-side command checks (rejected — see CLAUDE.md: scripts run only from
   `script_dir`).
 
+### Built for 5.4 (requested 2026-11-04)
+
+- [x] **Event log checks no longer time out** — `wevtutil` instead of PowerShell; a failed
+  read reports unknown and the next run catches up, so nothing is lost.
+- [x] **SMART that works by hand works in the agent** — finds smartctl outside the service's
+  PATH, retries a drive with smartctl's own detection, and shows the reason when it can't.
+- [x] **Data retention page** — periods per kind of data, and a free-space guard (3 GB by
+  default, or a percentage) that rolls over the oldest data early.
+- [x] **RDP sessions** (`host_rdp_sessions`) — user, state and source of each session.
+- [x] **Software history** — installed, removed and updated, on the endpoint's Software tab.
+- [x] **Sorting** on every list (lib/useSort.ts): by column heading, or a dropdown.
+
 ### Backlog (requested 2026-10-26)
 
 Built for 5.2 (not yet released):

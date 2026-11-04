@@ -74,6 +74,12 @@ global doc governs.
 - **Event/flow receivers stay on unprivileged ports with a private-source allowlist** by
   default, so the engine never needs root and isn't an open ingestion endpoint.
 
+- **Rolling over data for disk space never touches the last `minKeepHours` of data or the
+  security audit log** (5.4, Jason asked that the disk never fills, whatever the retention
+  periods say). Postgres `DELETE` doesn't return disk space, so `services/retention.ts`
+  compacts with VACUUM FULL where the copy fits and otherwise counts the freed room as
+  reusable. Don't simplify this to "delete until free space rises": that would delete
+  everything without free space ever rising.
 - **Lockfiles must satisfy the server's npm (npm 10; npm 11 once the server moves to Node 24 — npm 10 lockfiles work with both).** `scripts/update.sh` uses
   `npm ci`, which refuses a lockfile it considers out of sync — and npm 11 (the dev
   machine) writes lockfiles npm 10 rejects (3.0.4: vitest's nested `esbuild` peer was

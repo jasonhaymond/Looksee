@@ -762,6 +762,22 @@ export const CHECK_TYPES: CheckTypeDef[] = [
     ],
   },
 
+  {
+    type: "host_rdp_sessions",
+    label: "RDP sessions",
+    category: "Software & security (agent)",
+    description: "Who is connected to this Windows machine over Remote Desktop: each session's user, state (active or disconnected) and the computer it's from. Can flag unexpected users and sessions left disconnected.",
+    needsEndpoint: true,
+    value: { unit: "", hint: "number of sessions" },
+    fields: [
+      { key: "allowedUsers", label: "Expected users", kind: "textarea", placeholder: "alice\nCORP\\admin-*", help: "One per line; case ignored, * matches anything, and the domain is optional. Anyone else connecting fails the check. Blank = anyone may connect." },
+      { key: "unexpectedSeverity", label: "Status for an unexpected user", kind: "select", options: opts(["down", "Down (critical)"], ["warn", "Warn"]), default: "down", showIf: (c) => Boolean(c.allowedUsers) },
+      { key: "disconnectedMaxMinutes", label: "Warn if disconnected for over (minutes)", kind: "number", placeholder: "off", help: "A disconnected session keeps the user's programs running and holds a licence." },
+      { ...severity("warn"), label: "Status for a long-disconnected session", showIf: (c) => Boolean(c.disconnectedMaxMinutes) },
+      { key: "includeConsole", label: "Also count the local console", kind: "checkbox", advanced: true, help: "Off by default: someone at the keyboard isn't a remote session." },
+    ],
+  },
+
   // ---- Files & logs (agent) ----
   {
     type: "agent_file",

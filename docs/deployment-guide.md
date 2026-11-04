@@ -354,6 +354,32 @@ You can run the same checks by hand at any time:
 **Check:** every line reads `PASS` and the last line is `RESULT: PASS`; the full report
 is saved under `~/Looksee/security-reports/`.
 
+### Upgrading to 5.4
+
+`npm run update` handles it. The migration adds two tables, one column and three indexes.
+On a large database the index builds hold up writes to `check_results`, `endpoint_metrics`
+and `logs` for a short time; agents wait and retry. Nothing existing changes.
+
+After updating:
+
+1. Open **System → Data retention**. **Success looks like:** the **Disk** panel shows the
+   disk that holds your database, with the same free space as this command on the server:
+
+   ```bash
+   df -h /var/lib/docker
+   ```
+
+   If your database isn't in Docker's default folder, or it's on another machine, set
+   **Disk to watch** (see the [user guide](user-guide.md#data-retention)). Otherwise this is
+   ready: the 3 GB limit is on by default, and periods set in `.env` still apply.
+2. **The free-space guard is on from the first start.** If the disk is already under 3 GB
+   free when the engine starts, it rolls over old data straight away. Free up space or lower
+   the limit first if you don't want that.
+3. Update agents from the **Endpoints** page. The event log fix, SMART fix and RDP sessions
+   need agent 5.4; everything else works with older agents.
+4. On Linux endpoints where SMART still says *Permission denied*, install the privileged
+   drop-in: the [agent guide](../agent/README.md#privileges) has the commands.
+
 ### Upgrading to 5.3
 
 5.3 has no database migration and no agent changes (agents report 5.3.0 only so the

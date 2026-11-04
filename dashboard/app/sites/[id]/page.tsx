@@ -16,7 +16,9 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { api, type Site, type Tree, type TreeSite } from "../../lib/api";
+import { api, type Site, type Tree, type TreeEndpoint, type TreeSite } from "../../lib/api";
+import { useSort } from "../../lib/useSort";
+import { SortTh } from "../../components/ui";
 import { Breadcrumbs, ChecksTable, GroupChips, SummaryLine, type CheckRow, type Crumb } from "../../components/NodeViews";
 import { StatusGlyph } from "../../components/Sidebar";
 import { usePageAuth } from "../../components/usePageAuth";
@@ -26,6 +28,7 @@ import { SiteSuggestions } from "../../components/SiteSuggestions";
 /** The page: loads the tree and the site's settings, then lists its contents. */
 export default function SitePage() {
   const authed = usePageAuth();
+  const sort = useSort<TreeEndpoint>("siteEndpoints", { status: (e) => e.status, name: (e) => e.name, os: (e) => e.os, agent: (e) => e.agent, checks: (e) => e.children.length });
   const { id } = useParams<{ id: string }>();
   const [tree, setTree] = useState<Tree | null>(null);
   const [site, setSite] = useState<Site | null>(null);
@@ -88,15 +91,25 @@ export default function SitePage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-[var(--muted)]">
-                  <th className="py-1 pr-2 font-normal">Status</th>
-                  <th className="py-1 pr-2 font-normal">Endpoint</th>
-                  <th className="py-1 pr-2 font-normal">OS</th>
-                  <th className="py-1 pr-2 font-normal">Agent</th>
-                  <th className="py-1 font-normal">Checks</th>
+                  <SortTh sort={sort} column="status" className="py-1 pr-2 font-normal">
+                    Status
+                  </SortTh>
+                  <SortTh sort={sort} column="name" className="py-1 pr-2 font-normal">
+                    Endpoint
+                  </SortTh>
+                  <SortTh sort={sort} column="os" className="py-1 pr-2 font-normal">
+                    OS
+                  </SortTh>
+                  <SortTh sort={sort} column="agent" className="py-1 pr-2 font-normal">
+                    Agent
+                  </SortTh>
+                  <SortTh sort={sort} column="checks" className="py-1 font-normal">
+                    Checks
+                  </SortTh>
                 </tr>
               </thead>
               <tbody>
-                {node.endpoints.map((e) => (
+                {sort.apply(node.endpoints).map((e) => (
                   <tr key={e.id} className="border-t border-[var(--border)]">
                     <td className="py-1.5 pr-2">
                       <span className="inline-flex items-center gap-1 text-xs">

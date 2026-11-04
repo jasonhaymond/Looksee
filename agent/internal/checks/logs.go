@@ -1,15 +1,13 @@
-// Log checks: new lines in a log file (follows rotation), new systemd journal
-// entries, and new Windows Event Log events, counted when they match the
-// check's pattern (Go's RE2 engine — no catastrophic backtracking). Lines
-// containing an excluded text, and excluded event IDs, are dropped first.
-// Filter values reach PowerShell through environment variables, never the
-// script text.
+// Log checks: new lines in a log file (follows rotation) and new systemd journal
+// entries, counted when they match the check's pattern (Go's RE2 engine — no
+// catastrophic backtracking). Lines containing an excluded text are dropped
+// first. The Windows Event Log check is in eventlog.go and shares the matching
+// helpers here.
 
 package checks
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -206,87 +204,4 @@ func runJournal(c Cfg, st map[string]any) Result {
 		}
 	}
 	return matchResult(c, matchLines(withoutExcluded(lines, c.Excludes(false)), re, false), "the journal")
-}
-
-// D8: Windows Event Log entries since the previous cycle. Filter values go
-// through environment variables, never into the script text.
-func runEventLog(c Cfg, st map[string]any) Result {
-	if runtime.GOOS != "windows" {
-		return unknown("Event Log checks are Windows-only")
-	}
-	re, err := compilePattern(c)
-	if err != nil {
-		return unknown("invalid pattern: " + err.Error())
-	}
-	since, ok := st["since"].(time.Time)
-	now := time.Now()
-	st["since"] = now
-	if !ok {
-		return up("Watching the event log — baseline recorded", val(0))
-	}
-	levels := map[string]string{"critical": "1", "error": "2", "warning": "3", "information": "4"}
-	levelList := []string{}
-	for _, l := range strings.Split(c.Str("levels", ""), ",") {
-		if n, ok := levels[strings.ToLower(strings.TrimSpace(l))]; ok {
-			levelList = append(levelList, n)
-		}
-	}
-	env := map[string]string{
-		"LOOKSEE_LOG":       c.Str("logName", "System"),
-		"LOOKSEE_IDS":       c.Str("eventIds", ""),
-		"LOOKSEE_LEVELS":    strings.Join(levelList, ","),
-		"LOOKSEE_PROVIDER":  c.Str("provider", ""),
-		"LOOKSEE_SINCE_SEC": strconv.FormatInt(int64(now.Sub(since).Seconds())+1, 10),
-	}
-	script := `$f = @{ LogName = $env:LOOKSEE_LOG; StartTime = (Get-Date).AddSeconds(-[int]$env:LOOKSEE_SINCE_SEC) }
-if ($env:LOOKSEE_IDS) { $f.Id = @($env:LOOKSEE_IDS -split ',' | ForEach-Object { [int]$_.Trim() }) }
-if ($env:LOOKSEE_LEVELS) { $f.Level = @($env:LOOKSEE_LEVELS -split ',' | ForEach-Object { [int]$_ }) }
-if ($env:LOOKSEE_PROVIDER) { $f.ProviderName = $env:LOOKSEE_PROVIDER }
-try { ConvertTo-Json -Compress -Depth 4 -InputObject @(Get-WinEvent -FilterHashtable $f -MaxEvents 500 -ErrorAction Stop | Select-Object TimeCreated,Id,LevelDisplayName,ProviderName,@{n='Message';e={($_.Message -split "` + "`" + `n")[0]}}) }
-catch { if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { '[]' } else { throw } }`
-	res, err := execx.PowerShell(60*time.Second, env, script)
-	if err != nil {
-		return down(err.Error())
-	}
-	if res.ExitCode != 0 {
-		return down("Get-WinEvent failed: " + execx.FirstLine(res.Stderr))
-	}
-	var events []struct {
-		Id               int
-		LevelDisplayName string
-		ProviderName     string
-		Message          string
-	}
-	out := strings.TrimSpace(res.Stdout)
-	if out != "" && out != "[]" {
-		if err := json.Unmarshal([]byte(out), &events); err != nil {
-			var one struct {
-				Id               int
-				LevelDisplayName string
-				ProviderName     string
-				Message          string
-			}
-			if json.Unmarshal([]byte(out), &one) == nil {
-				events = append(events, one)
-			}
-		}
-	}
-	// Exclusions: an all-digits item is an event ID to skip; anything else is
-	// a text that, found in the event's line, skips it.
-	var ids, texts []string
-	for _, x := range c.Excludes(false) {
-		if isDigits(x) {
-			ids = append(ids, x)
-		} else {
-			texts = append(texts, x)
-		}
-	}
-	var lines []string
-	for _, e := range events {
-		if nameExcluded(strconv.Itoa(e.Id), ids) {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("[%s %d] %s: %s", e.LevelDisplayName, e.Id, e.ProviderName, strings.TrimSpace(e.Message)))
-	}
-	return matchResult(c, matchLines(withoutExcluded(lines, texts), re, false), c.Str("logName", "System")+" log")
 }

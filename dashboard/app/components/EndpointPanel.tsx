@@ -1,13 +1,16 @@
 // Everything about one endpoint, in tabs: overview, checks, suggested checks
-// and templates, processes, services, IP history, agent install/update,
-// watchdog and edit. Used on the Endpoints list and each endpoint's page.
+// and templates, processes, services, installed software and its history, IP
+// history, agent install/update, watchdog and edit. Used on the Endpoints list
+// and each endpoint's page. Every table sorts by clicking a column header
+// (lib/useSort.ts).
 
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { api, type AddressRow, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type Suggestion } from "../lib/api";
+import { api, type AddressRow, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type EndpointSession, type EndpointSoftware, type Suggestion } from "../lib/api";
+import { useSort, type SortState } from "../lib/useSort";
 import { typeLabel } from "../lib/checkTypes";
-import { AlertOptions, Button, FilterChip, Label, MultiPicker, StatusBadge, alertRulePayload, emptyAlertOptions, formatBytes, inputClass, relativeTime, useToast } from "./ui";
+import { AlertOptions, Button, FilterChip, Label, MultiPicker, SortPicker, SortTh, StatusBadge, alertRulePayload, emptyAlertOptions, formatBytes, inputClass, relativeTime, useToast } from "./ui";
 import { displayStatus } from "./CheckDetail";
 import { WatchdogSettings } from "./WatchdogSettings";
 import { RoleTemplates } from "./RoleTemplates";
@@ -48,6 +51,157 @@ function Bar({ percent }: { percent: number }) {
   );
 }
 
+type Snapshot = NonNullable<EndpointDetail["lastSnapshot"]>;
+
+/** The Overview tab's filesystems: mount, type, how full, free space. */
+function FilesystemsTable({ disks }: { disks: NonNullable<Snapshot["disks"]> }) {
+  type Disk = (typeof disks)[number];
+  const sort = useSort<Disk>("endpointDisks", { mount: (d) => d.mount, type: (d) => d.fstype, used: (d) => d.percent, free: (d) => d.free });
+  return (
+    <div className="overflow-x-auto">
+      <div className="mb-1 text-xs text-[var(--muted)]">Filesystems</div>
+      <table className="w-full whitespace-nowrap text-xs">
+        <thead className="text-left text-[var(--muted)]">
+          <tr>
+            <SortTh sort={sort} column="mount" className="py-1 pr-2 font-normal">
+              Mount
+            </SortTh>
+            <SortTh sort={sort} column="type" className="pr-2 font-normal">
+              Type
+            </SortTh>
+            <SortTh sort={sort} column="used" className="pr-2 font-normal">
+              Used
+            </SortTh>
+            <SortTh sort={sort} column="free" className="pr-2 font-normal">
+              Free
+            </SortTh>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {sort.apply(disks).map((d) => (
+            <tr key={d.mount} className="border-t border-[var(--border)]">
+              <td className="py-1 pr-2 font-mono">{d.mount}</td>
+              <td className="pr-2 text-[var(--muted)]">{d.fstype}</td>
+              <td className="pr-2">
+                <Bar percent={d.percent} /> {d.percent.toFixed(0)}%
+              </td>
+              <td className="pr-2">{formatBytes(d.free)} free</td>
+              <td className="text-[var(--down)]">{d.stale ? "stale" : d.readOnly ? "read-only" : ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** The Overview tab's network interfaces. */
+function InterfacesTable({ net }: { net: NonNullable<Snapshot["net"]> }) {
+  type Interface = (typeof net)[number];
+  const sort = useSort<Interface>("endpointNet", { name: (n) => n.name, link: (n) => (n.up ? 0 : 1), speed: (n) => n.speedMbps, traffic: (n) => n.rxBytesPerSec + n.txBytesPerSec, mac: (n) => n.mac, addresses: (n) => (n.addrs ?? [])[0] });
+  return (
+    <div className="overflow-x-auto">
+      <div className="mb-1 text-xs text-[var(--muted)]">Interfaces</div>
+      <table className="w-full whitespace-nowrap text-xs">
+        <thead className="text-left text-[var(--muted)]">
+          <tr>
+            <SortTh sort={sort} column="name" className="py-1 pr-2 font-normal">
+              Name
+            </SortTh>
+            <SortTh sort={sort} column="link" className="pr-2 font-normal">
+              Link
+            </SortTh>
+            <SortTh sort={sort} column="speed" className="pr-2 font-normal">
+              Speed
+            </SortTh>
+            <SortTh sort={sort} column="traffic" className="pr-2 font-normal">
+              Traffic
+            </SortTh>
+            <SortTh sort={sort} column="mac" className="pr-2 font-normal">
+              MAC
+            </SortTh>
+            <SortTh sort={sort} column="addresses" className="font-normal">
+              Addresses
+            </SortTh>
+          </tr>
+        </thead>
+        <tbody>
+          {sort.apply(net).map((n) => (
+            <tr key={n.name} className="border-t border-[var(--border)]">
+              <td className="py-1 pr-2">{n.name}</td>
+              <td className="pr-2">{n.up ? "up" : <span className="text-[var(--down)]">down</span>}</td>
+              <td className="pr-2 text-[var(--muted)]">{n.speedMbps ? `${n.speedMbps} Mbps` : ""}</td>
+              <td className="pr-2">
+                ↓ {((n.rxBytesPerSec * 8) / 1e6).toFixed(2)} ↑ {((n.txBytesPerSec * 8) / 1e6).toFixed(2)} Mbps
+              </td>
+              <td className="pr-2 font-mono text-[var(--muted)]">{n.mac || "—"}</td>
+              <td className="truncate text-[var(--muted)]">{(n.addrs ?? []).slice(0, 3).join(", ")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** "2 h 5 min" from seconds; "—" when unknown. */
+function duration(seconds: number | undefined) {
+  if (seconds == null) return "—";
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
+}
+
+/** The Overview tab's signed-in users on Windows: user, connection, state, source. */
+function SessionsTable({ sessions }: { sessions: EndpointSession[] }) {
+  const connection = (s: EndpointSession) => (s.kind === "console" ? "console" : "RDP");
+  const from = (s: EndpointSession) => [s.clientName, s.host].filter(Boolean).join(" ");
+  const sort = useSort<EndpointSession>("endpointSessions", { user: (s) => s.user, connection, state: (s) => s.state, from, idle: (s) => s.idleSeconds, signedIn: (s) => s.started });
+  return (
+    <div className="overflow-x-auto">
+      <div className="mb-1 text-xs text-[var(--muted)]">Signed-in users</div>
+      <table className="w-full whitespace-nowrap text-xs">
+        <thead className="text-left text-[var(--muted)]">
+          <tr>
+            <SortTh sort={sort} column="user" className="py-1 pr-2 font-normal">
+              User
+            </SortTh>
+            <SortTh sort={sort} column="connection" className="pr-2 font-normal">
+              Connection
+            </SortTh>
+            <SortTh sort={sort} column="state" className="pr-2 font-normal">
+              State
+            </SortTh>
+            <SortTh sort={sort} column="from" className="pr-2 font-normal">
+              From
+            </SortTh>
+            <SortTh sort={sort} column="idle" className="pr-2 font-normal">
+              Idle
+            </SortTh>
+            <SortTh sort={sort} column="signedIn" className="font-normal">
+              Signed in
+            </SortTh>
+          </tr>
+        </thead>
+        <tbody>
+          {sort.apply(sessions).map((s, i) => (
+            <tr key={s.id ?? i} className="border-t border-[var(--border)]">
+              <td className="py-1 pr-2">{s.user}</td>
+              <td className="pr-2 text-[var(--muted)]">{connection(s)}</td>
+              <td className={`pr-2 ${s.state === "disconnected" ? "text-[var(--warn)]" : ""}`}>{s.state ?? "—"}</td>
+              <td className="pr-2 text-[var(--muted)]">{from(s) || "—"}</td>
+              <td className="pr-2 text-[var(--muted)]">{duration(s.idleSeconds)}</td>
+              <td className="text-[var(--muted)]">{s.started ? new Date(s.started * 1000).toLocaleString() : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Overview({ detail }: { detail: EndpointDetail }) {
   const s = detail.lastSnapshot;
   if (!s) return <p className="text-sm text-[var(--muted)]">No 3.x agent report yet. Install or update the agent (Agent tab) to see live detail here.</p>;
@@ -73,58 +227,9 @@ function Overview({ detail }: { detail: EndpointDetail }) {
         </div>
       </div>
 
-      {s.disks && s.disks.length > 0 && (
-        <div className="overflow-x-auto">
-          <div className="mb-1 text-xs text-[var(--muted)]">Filesystems</div>
-          <table className="w-full whitespace-nowrap text-xs">
-            <tbody>
-              {s.disks.map((d) => (
-                <tr key={d.mount} className="border-t border-[var(--border)]">
-                  <td className="py-1 pr-2 font-mono">{d.mount}</td>
-                  <td className="pr-2 text-[var(--muted)]">{d.fstype}</td>
-                  <td className="pr-2">
-                    <Bar percent={d.percent} /> {d.percent.toFixed(0)}%
-                  </td>
-                  <td className="pr-2">{formatBytes(d.free)} free</td>
-                  <td className="text-[var(--down)]">{d.stale ? "stale" : d.readOnly ? "read-only" : ""}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {s.net && s.net.length > 0 && (
-        <div className="overflow-x-auto">
-          <div className="mb-1 text-xs text-[var(--muted)]">Interfaces</div>
-          <table className="w-full whitespace-nowrap text-xs">
-            <thead className="text-left text-[var(--muted)]">
-              <tr>
-                <th className="py-1 pr-2 font-normal">Name</th>
-                <th className="pr-2 font-normal">Link</th>
-                <th className="pr-2 font-normal">Speed</th>
-                <th className="pr-2 font-normal">Traffic</th>
-                <th className="pr-2 font-normal">MAC</th>
-                <th className="font-normal">Addresses</th>
-              </tr>
-            </thead>
-            <tbody>
-              {s.net.map((n) => (
-                <tr key={n.name} className="border-t border-[var(--border)]">
-                  <td className="py-1 pr-2">{n.name}</td>
-                  <td className="pr-2">{n.up ? "up" : <span className="text-[var(--down)]">down</span>}</td>
-                  <td className="pr-2 text-[var(--muted)]">{n.speedMbps ? `${n.speedMbps} Mbps` : ""}</td>
-                  <td className="pr-2">
-                    ↓ {((n.rxBytesPerSec * 8) / 1e6).toFixed(2)} ↑ {((n.txBytesPerSec * 8) / 1e6).toFixed(2)} Mbps
-                  </td>
-                  <td className="pr-2 font-mono text-[var(--muted)]">{n.mac || "—"}</td>
-                  <td className="truncate text-[var(--muted)]">{(n.addrs ?? []).slice(0, 3).join(", ")}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {s.disks && s.disks.length > 0 && <FilesystemsTable disks={s.disks} />}
+      {s.net && s.net.length > 0 && <InterfacesTable net={s.net} />}
+      {s.users?.detail && s.users.sessions?.length > 0 && <SessionsTable sessions={s.users.sessions} />}
 
       <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-3">
         <span>Firewall on: {yes(s.firewall?.enabled)}</span>
@@ -468,11 +573,15 @@ function EditTab({ host, sites, onSaved }: { host: Endpoint; sites: Site[]; onSa
   );
 }
 
+// Most memory first until a column is chosen.
+const MOST_MEMORY: SortState = { key: "memory", dir: "desc" };
+
 function InventoryTab({ host, kind }: { host: Endpoint; kind: "processes" | "services" }) {
   const [inv, setInv] = useState<EndpointInventory | null>(null);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
-  const [sort, setSort] = useState<"memory" | "cpu" | "name">("memory");
+  const procSort = useSort<NonNullable<EndpointInventory["processes"]>[number]>("endpointProcesses", { name: (p) => p.name, pid: (p) => p.pid, user: (p) => p.user, cpu: (p) => p.cpuPercent, memory: (p) => p.memoryMb, command: (p) => p.command }, MOST_MEMORY);
+  const svcSort = useSort<NonNullable<EndpointInventory["services"]>[number]>("endpointServices", { name: (s) => s.displayName ?? s.name, state: (s) => s.state, starts: (s) => s.startType });
   useEffect(() => {
     api.endpointInventory(host.id).then(setInv);
   }, [host.id, host.lastSeenAt]);
@@ -482,28 +591,35 @@ function InventoryTab({ host, kind }: { host: Endpoint; kind: "processes" | "ser
   if (kind === "processes") {
     const rows = inv.processes;
     if (!rows) return <p className="text-sm text-[var(--muted)]">{inv.processNames?.length ? `This agent only reports process names (${inv.processNames.length}). Update it to agent 4.0+ for PID, user, CPU and memory.` : "No process inventory yet — it arrives with the first 4.0+ agent report."}</p>;
-    const shown = rows.filter((p) => !query || `${p.name} ${p.user ?? ""} ${p.command ?? ""} ${p.pid}`.toLowerCase().includes(query)).sort((a, b) => (sort === "name" ? a.name.localeCompare(b.name) : sort === "cpu" ? (b.cpuPercent ?? 0) - (a.cpuPercent ?? 0) : (b.memoryMb ?? 0) - (a.memoryMb ?? 0)));
+    const shown = procSort.apply(rows.filter((p) => !query || `${p.name} ${p.user ?? ""} ${p.command ?? ""} ${p.pid}`.toLowerCase().includes(query)));
     return (
       <div className="space-y-2 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${rows.length} processes…`} className={`${inputClass} max-w-xs`} />
-          <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className={`${inputClass} w-auto`} aria-label="Sort">
-            <option value="memory">Most memory</option>
-            <option value="cpu">Most CPU</option>
-            <option value="name">Name</option>
-          </select>
           <span className="text-xs text-[var(--muted)]">{updated}</span>
         </div>
         <div className="max-h-96 overflow-auto rounded border border-[var(--border)]">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-[var(--panel-2)] text-left text-[var(--muted)]">
               <tr>
-                <th className="px-2 py-1 font-normal">Name</th>
-                <th className="px-2 py-1 font-normal">PID</th>
-                <th className="px-2 py-1 font-normal">User</th>
-                <th className="px-2 py-1 text-right font-normal">CPU %</th>
-                <th className="px-2 py-1 text-right font-normal">Memory</th>
-                <th className="px-2 py-1 font-normal">Command</th>
+                <SortTh sort={procSort} column="name" className="px-2 py-1 font-normal">
+                  Name
+                </SortTh>
+                <SortTh sort={procSort} column="pid" className="px-2 py-1 font-normal">
+                  PID
+                </SortTh>
+                <SortTh sort={procSort} column="user" className="px-2 py-1 font-normal">
+                  User
+                </SortTh>
+                <SortTh sort={procSort} column="cpu" className="px-2 py-1 text-right font-normal">
+                  CPU %
+                </SortTh>
+                <SortTh sort={procSort} column="memory" className="px-2 py-1 text-right font-normal">
+                  Memory
+                </SortTh>
+                <SortTh sort={procSort} column="command" className="px-2 py-1 font-normal">
+                  Command
+                </SortTh>
               </tr>
             </thead>
             <tbody>
@@ -552,13 +668,19 @@ function InventoryTab({ host, kind }: { host: Endpoint; kind: "processes" | "ser
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-[var(--panel-2)] text-left text-[var(--muted)]">
             <tr>
-              <th className="px-2 py-1 font-normal">Service</th>
-              <th className="px-2 py-1 font-normal">State</th>
-              <th className="px-2 py-1 font-normal">Starts</th>
+              <SortTh sort={svcSort} column="name" className="px-2 py-1 font-normal">
+                Service
+              </SortTh>
+              <SortTh sort={svcSort} column="state" className="px-2 py-1 font-normal">
+                State
+              </SortTh>
+              <SortTh sort={svcSort} column="starts" className="px-2 py-1 font-normal">
+                Starts
+              </SortTh>
             </tr>
           </thead>
           <tbody>
-            {shown.map((s) => (
+            {svcSort.apply(shown).map((s) => (
               <tr key={s.name} className="border-t border-[var(--border)]">
                 <td className="px-2 py-1">
                   <span className="font-medium">{s.name}</span>
@@ -577,8 +699,130 @@ function InventoryTab({ host, kind }: { host: Endpoint; kind: "processes" | "ser
   );
 }
 
+/**
+ * The Software tab: what's installed now and the history of what changed. The
+ * history starts from the first report the engine received with it turned on, and
+ * agents collect every 6 hours, so a date here is when Looksee noticed, not the
+ * moment of the install.
+ */
+function SoftwareTab({ host }: { host: Endpoint }) {
+  const [data, setData] = useState<EndpointSoftware | null>(null);
+  const [view, setView] = useState<"history" | "installed">("history");
+  const [q, setQ] = useState("");
+  const [action, setAction] = useState("all");
+  const historySort = useSort<EndpointSoftware["history"][number]>("softwareHistory", { when: (h) => new Date(h.detectedAt), action: (h) => h.action, name: (h) => h.name, source: (h) => h.source, from: (h) => h.fromVersion, to: (h) => h.toVersion });
+  const packageSort = useSort<EndpointSoftware["packages"][number]>("softwarePackages", { name: (p) => p.name, version: (p) => p.version, source: (p) => p.source });
+  useEffect(() => {
+    api.endpointSoftware(host.id).then(setData);
+  }, [host.id, host.lastSeenAt]);
+  if (!data) return null;
+  if (!data.updatedAt) return <p className="text-sm text-[var(--muted)]">No software report yet. It arrives from agents 5.0 and newer, within about 6 hours of the agent starting.</p>;
+  const query = q.trim().toLowerCase();
+  const matches = (text: string) => !query || text.toLowerCase().includes(query);
+  const history = historySort.apply(data.history.filter((h) => (action === "all" || h.action === action) && matches(`${h.name} ${h.source} ${h.fromVersion ?? ""} ${h.toVersion ?? ""}`)));
+  const packages = packageSort.apply(data.packages.filter((p) => matches(`${p.name} ${p.version} ${p.source} ${p.path ?? ""}`)));
+  const actionLabel = (a: string) => (a === "installed" ? <span className="text-[var(--up)]">installed</span> : a === "removed" ? <span className="text-[var(--warn)]">removed</span> : "updated");
+  return (
+    <div className="space-y-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterChip active={view === "history"} onClick={() => setView("history")}>
+          History ({data.history.length})
+        </FilterChip>
+        <FilterChip active={view === "installed"} onClick={() => setView("installed")}>
+          Installed now ({data.packages.length})
+        </FilterChip>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" aria-label="Search software" className={`${inputClass} max-w-xs`} />
+        {view === "history" && (
+          <select value={action} onChange={(e) => setAction(e.target.value)} className={`${inputClass} !w-auto`} aria-label="Show which changes">
+            <option value="all">All changes</option>
+            <option value="installed">Installed</option>
+            <option value="removed">Removed</option>
+            <option value="updated">Updated</option>
+          </select>
+        )}
+        <span className="text-xs text-[var(--muted)]">Last report {relativeTime(data.updatedAt)}. Agents check about every 6 hours.</span>
+      </div>
+      {data.errors.length > 0 && <p className="text-xs text-[var(--warn)]">The agent couldn&apos;t list everything: {data.errors.join("; ")}</p>}
+      {view === "history" ? (
+        data.history.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">No changes recorded yet. The first report is the starting point, so changes appear from the next one on.</p>
+        ) : (
+          <div className="max-h-96 overflow-auto rounded border border-[var(--border)]">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-[var(--panel-2)] text-left text-[var(--muted)]">
+                <tr>
+                  <SortTh sort={historySort} column="when" className="px-2 py-1 font-normal">
+                    Noticed
+                  </SortTh>
+                  <SortTh sort={historySort} column="action" className="px-2 py-1 font-normal">
+                    Change
+                  </SortTh>
+                  <SortTh sort={historySort} column="name" className="px-2 py-1 font-normal">
+                    Name
+                  </SortTh>
+                  <SortTh sort={historySort} column="from" className="px-2 py-1 font-normal">
+                    From
+                  </SortTh>
+                  <SortTh sort={historySort} column="to" className="px-2 py-1 font-normal">
+                    To
+                  </SortTh>
+                  <SortTh sort={historySort} column="source" className="px-2 py-1 font-normal">
+                    Source
+                  </SortTh>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((h) => (
+                  <tr key={h.id} className="border-t border-[var(--border)]">
+                    <td className="whitespace-nowrap px-2 py-1 text-[var(--muted)]">{new Date(h.detectedAt).toLocaleString()}</td>
+                    <td className="px-2 py-1">{actionLabel(h.action)}</td>
+                    <td className="px-2 py-1 font-medium">{h.name}</td>
+                    <td className="px-2 py-1 text-[var(--muted)]">{h.fromVersion ?? "—"}</td>
+                    <td className="px-2 py-1">{h.toVersion ?? "—"}</td>
+                    <td className="px-2 py-1 text-[var(--muted)]">{h.source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+        <div className="max-h-96 overflow-auto rounded border border-[var(--border)]">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-[var(--panel-2)] text-left text-[var(--muted)]">
+              <tr>
+                <SortTh sort={packageSort} column="name" className="px-2 py-1 font-normal">
+                  Name
+                </SortTh>
+                <SortTh sort={packageSort} column="version" className="px-2 py-1 font-normal">
+                  Version
+                </SortTh>
+                <SortTh sort={packageSort} column="source" className="px-2 py-1 font-normal">
+                  Source
+                </SortTh>
+              </tr>
+            </thead>
+            <tbody>
+              {packages.slice(0, 2000).map((p, i) => (
+                <tr key={`${p.source}:${p.name}:${p.path ?? ""}:${i}`} className="border-t border-[var(--border)]">
+                  <td className="px-2 py-1 font-medium">{p.name}</td>
+                  <td className="px-2 py-1">{p.version}</td>
+                  <td className="px-2 py-1 text-[var(--muted)]" title={p.path ?? undefined}>
+                    {p.source}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AddressesTab({ host }: { host: Endpoint }) {
   const [rows, setRows] = useState<AddressRow[] | null>(null);
+  const sort = useSort<AddressRow>("endpointAddresses", { ip: (r) => r.ip, first: (r) => new Date(r.firstSeenAt), last: (r) => new Date(r.lastSeenAt), source: (r) => r.source });
   useEffect(() => {
     api.endpointAddresses(host.id).then(setRows);
   }, [host.id]);
@@ -594,19 +838,26 @@ function AddressesTab({ host }: { host: Endpoint }) {
           <table className="w-full text-xs">
             <thead className="text-left text-[var(--muted)]">
               <tr>
-                <th className="py-1 pr-2 font-normal">IP</th>
-                <th className="pr-2 font-normal">First seen</th>
-                <th className="pr-2 font-normal">Last seen</th>
-                <th className="font-normal">Source</th>
+                <SortTh sort={sort} column="ip" className="py-1 pr-2 font-normal">
+                  IP
+                </SortTh>
+                <SortTh sort={sort} column="first" className="pr-2 font-normal">
+                  First seen
+                </SortTh>
+                <SortTh sort={sort} column="last" className="pr-2 font-normal">
+                  Last seen
+                </SortTh>
+                <SortTh sort={sort} column="source" className="font-normal">
+                  Source
+                </SortTh>
               </tr>
             </thead>
             <tbody>
-              {rows
-                .filter((r) => r.mac === mac)
-                .map((r, i) => (
+              {sort.apply(rows.filter((r) => r.mac === mac))
+                .map((r) => (
                   <tr key={r.id} className="border-t border-[var(--border)]">
                     <td className="py-1 pr-2 font-mono">
-                      {r.ip} {i === 0 && <span className="text-[var(--up)]">(current)</span>}
+                      {r.ip} {r.id === rows.find((x) => x.mac === mac)?.id && <span className="text-[var(--up)]">(current)</span>}
                     </td>
                     <td className="pr-2">{new Date(r.firstSeenAt).toLocaleString()}</td>
                     <td className="pr-2">{relativeTime(r.lastSeenAt)}</td>
@@ -622,7 +873,8 @@ function AddressesTab({ host }: { host: Endpoint }) {
 }
 
 export function EndpointPanel({ host, sites, checks, channels, latestAgentVersion, onChanged }: { host: Endpoint; sites: Site[]; checks: Check[]; channels: Channel[]; latestAgentVersion: string | null; onChanged: () => void }) {
-  const [tab, setTab] = useState<"overview" | "checks" | "suggest" | "processes" | "services" | "addresses" | "agent" | "watchdog" | "edit">("overview");
+  const [tab, setTab] = useState<"overview" | "checks" | "suggest" | "processes" | "services" | "software" | "addresses" | "agent" | "watchdog" | "edit">("overview");
+  const checkSort = useSort<Check>("endpointChecks", { name: (c) => c.name, status: (c) => displayStatus(c), type: (c) => typeLabel(c.type), message: (c) => c.lastMessage });
   const [detail, setDetail] = useState<EndpointDetail | null>(null);
   const toast = useToast();
   useEffect(() => {
@@ -635,6 +887,7 @@ export function EndpointPanel({ host, sites, checks, channels, latestAgentVersio
     ["suggest", "Suggested checks"],
     ["processes", `Processes${host.processCount ? ` (${host.processCount})` : ""}`],
     ["services", `Services${host.serviceCount ? ` (${host.serviceCount})` : ""}`],
+    ["software", "Software"],
     ["addresses", "IP history"],
     ["agent", "Agent"],
     ["watchdog", host.watchdog?.enabled ? "Watchdog ✓" : "Watchdog"],
@@ -669,7 +922,10 @@ export function EndpointPanel({ host, sites, checks, channels, latestAgentVersio
       {tab === "checks" &&
         (mine.length ? (
           <ul className="space-y-1 text-sm">
-            {mine.map((c) => (
+            <li className="mb-1">
+              <SortPicker sort={checkSort} options={[["name", "Name"], ["status", "Status"], ["type", "Type"], ["message", "Message"]]} />
+            </li>
+            {checkSort.apply(mine).map((c) => (
               <li key={c.id} className="flex items-center gap-2">
                 <StatusBadge status={displayStatus(c)} compact />
                 <a href={`/checks/${c.id}`} className="hover:underline">
@@ -690,6 +946,7 @@ export function EndpointPanel({ host, sites, checks, channels, latestAgentVersio
       )}
       {tab === "processes" && <InventoryTab host={host} kind="processes" />}
       {tab === "services" && <InventoryTab host={host} kind="services" />}
+      {tab === "software" && <SoftwareTab host={host} />}
       {tab === "addresses" && <AddressesTab host={host} />}
       {tab === "agent" && <AgentTab host={host} sites={sites} latestAgentVersion={latestAgentVersion} onChanged={onChanged} />}
       {tab === "watchdog" && <WatchdogSettings host={host} channels={channels} onChanged={onChanged} />}

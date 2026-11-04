@@ -42,6 +42,11 @@ func Run(timeout time.Duration, env map[string]string, name string, args ...stri
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	// After the timeout kills the command, stop waiting for its output a few
+	// seconds later even if a child process it started still holds the output
+	// pipes open. Without this a timed-out command could block its caller
+	// forever, well past the timeout.
+	cmd.WaitDelay = 5 * time.Second
 	if len(env) > 0 {
 		cmd.Env = os.Environ()
 		for k, v := range env {
@@ -70,16 +75,40 @@ func Run(timeout time.Duration, env map[string]string, name string, args ...stri
 			// grep-style tools), so it's returned as data, not an error.
 			return res, nil
 		}
+		// WaitDelay ran out: the command finished but a child kept its output
+		// pipes open. What it printed before that is still its real answer.
+		if errors.Is(err, exec.ErrWaitDelay) {
+			return res, nil
+		}
 		return res, err
 	}
 	return res, nil
 }
 
+// How many PowerShell processes may run at once. powershell.exe is slow to
+// start (it loads .NET, and antivirus scans it each time), so when an agent
+// starts a dozen at the same moment — its background jobs and checks all fire
+// together — each one slows the others until some hit their timeout. Queueing
+// them keeps every script's timeout about the script itself.
+const maxConcurrentPowerShell = 2
+
+// powerShellSlots holds one entry per running PowerShell process; a full
+// channel means the next caller waits.
+var powerShellSlots = make(chan struct{}, maxConcurrentPowerShell)
+
 // PowerShell runs a script with values passed through LOOKSEE_* environment
 // variables. -Command treats trailing argv as more script text rather than
 // binding it to $args, so environment variables are the injection-safe way
-// to hand it user input.
+// to hand it user input. It waits for a free slot first (at most `timeout`,
+// returning an error if none opens up), then gives the script its full
+// `timeout` to run.
 func PowerShell(timeout time.Duration, env map[string]string, script string) (Result, error) {
+	select {
+	case powerShellSlots <- struct{}{}:
+		defer func() { <-powerShellSlots }()
+	case <-time.After(timeout):
+		return Result{}, fmt.Errorf("powershell busy: no free slot after %s", timeout)
+	}
 	return Run(timeout, env, "powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
 		"$ProgressPreference='SilentlyContinue'; $ErrorActionPreference='Stop'; "+script)
 }

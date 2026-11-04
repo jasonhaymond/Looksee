@@ -10,6 +10,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type LogEntry, type LogLevel } from "../lib/api";
+import { useSort } from "../lib/useSort";
+import { SortPicker } from "../components/ui";
 import { Tooltip } from "../components/Tooltip";
 import { PageHelp } from "../components/PageHelp";
 import { pollEvery } from "../lib/poll";
@@ -97,6 +99,8 @@ export default function LogsPage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [level, setLevel] = useState<LogLevel | "">("");
   const [entries, setEntries] = useState<LogEntry[]>([]);
+  // Severity first means errors at the top when sorted ascending.
+  const sort = useSort<LogEntry>("logs", { time: (e) => new Date(e.createdAt), level: (e) => ["error", "warn", "info", "debug"].indexOf(e.level), source: (e) => e.source, message: (e) => e.humanMessage ?? e.message });
   // Narrowed to one endpoint's entries, when set — from "only this
   // endpoint" on a row, or ?endpointId= in the address (read once, on the
   // first render in the browser; the page shows nothing until sign-in is
@@ -156,11 +160,12 @@ export default function LogsPage() {
         </p>
       )}
 
+      <SortPicker sort={sort} className="mb-3" none="Newest first" options={[["time", "Time"], ["level", "Level"], ["source", "Source"], ["message", "Message"]]} />
       {entries.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">No log entries yet at this level.</p>
       ) : (
         <ul className="space-y-1.5">
-          {entries.map((entry) => (
+          {sort.apply(entries).map((entry) => (
             <LogRow key={entry.id} entry={entry} onOnlyEndpoint={setEndpointId} />
           ))}
         </ul>

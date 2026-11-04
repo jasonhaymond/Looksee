@@ -15,7 +15,8 @@ import Link from "next/link";
 import { api, type AlertEvent, type Site, type Endpoint, type Location } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
 import { PageHelp } from "../components/PageHelp";
-import { EmptyState, FilterChip, MultiFilter, StatusBadge, availableOnly, inputClass, type FilterOption } from "../components/ui";
+import { EmptyState, FilterChip, MultiFilter, SortTh, StatusBadge, availableOnly, inputClass, type FilterOption } from "../components/ui";
+import { useSort } from "../lib/useSort";
 import { usePageAuth } from "../components/usePageAuth";
 import { pollEvery } from "../lib/poll";
 
@@ -34,6 +35,8 @@ const duration = (min: number) => (min < 60 ? `${min} min` : min < 2880 ? `${Mat
 export default function AlertsPage() {
   const authed = usePageAuth();
   const [events, setEvents] = useState<AlertEvent[] | null>(null);
+  // Newest first until a column is chosen: the order the engine sends them in.
+  const sort = useSort<AlertEvent>("alerts", { status: (e) => (e.resolvedAt ? 1 : 0), check: (e) => e.checkName, started: (e) => new Date(e.triggeredAt), lasted: (e) => e.durationMinutes ?? 0, message: (e) => e.message });
   const [sites, setSites] = useState<Site[]>([]);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -129,15 +132,25 @@ export default function AlertsPage() {
           <table className="w-full text-sm">
             <thead className="bg-[var(--panel-2)] text-left text-xs text-[var(--muted)]">
               <tr>
-                <th className="px-3 py-2 font-normal">Status</th>
-                <th className="px-3 py-2 font-normal">Check</th>
-                <th className="px-3 py-2 font-normal">Started</th>
-                <th className="px-3 py-2 font-normal">Lasted</th>
-                <th className="px-3 py-2 font-normal">Message</th>
+                <SortTh sort={sort} column="status" className="px-3 py-2 font-normal">
+                  Status
+                </SortTh>
+                <SortTh sort={sort} column="check" className="px-3 py-2 font-normal">
+                  Check
+                </SortTh>
+                <SortTh sort={sort} column="started" className="px-3 py-2 font-normal">
+                  Started
+                </SortTh>
+                <SortTh sort={sort} column="lasted" className="px-3 py-2 font-normal">
+                  Lasted
+                </SortTh>
+                <SortTh sort={sort} column="message" className="px-3 py-2 font-normal">
+                  Message
+                </SortTh>
               </tr>
             </thead>
             <tbody>
-              {(events ?? []).map((e) => (
+              {sort.apply(events ?? []).map((e) => (
                 <tr key={e.id} className="border-t border-[var(--border)] align-top">
                   <td className="whitespace-nowrap px-3 py-2">
                     <StatusBadge status={e.resolvedAt ? "up" : (e.severity ?? "down")} />

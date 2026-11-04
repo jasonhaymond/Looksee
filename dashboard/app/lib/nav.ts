@@ -47,6 +47,7 @@ export const NAV: NavGroup[] = [
     items: [
       { href: "/security", label: "Security", hint: "Sign-in, 2FA, IP allowlist, attacks" },
       { href: "/watchdog", label: "Watchdog", hint: "Get told if Looksee itself goes down" },
+      { href: "/retention", label: "Data retention", hint: "How long data is kept; never fill the disk" },
       { href: "/backups", label: "Backups" },
       { href: "/logs", label: "Logs" },
       { href: "/help", label: "Help & user guide" },

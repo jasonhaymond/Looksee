@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,16 +46,36 @@ type Battery struct {
 	Present  bool    `json:"present"`
 }
 
+// Session is one signed-in user. The fields after Started are only filled in
+// on Windows, by the session API (sessions_windows.go), for the RDP sessions
+// check; other systems report who is signed in and from where.
 type Session struct {
 	User     string `json:"user"`
 	Terminal string `json:"terminal,omitempty"`
 	Host     string `json:"host,omitempty"`
 	Started  int64  `json:"started,omitempty"`
+	// Windows' session number.
+	ID int `json:"id,omitempty"`
+	// "active", "disconnected", or "idle"/"connected"/... for rarer states.
+	State string `json:"state,omitempty"`
+	// "rdp", "console", or "" when Windows can't say: a disconnected session
+	// has no connection left to name.
+	Kind string `json:"kind,omitempty"`
+	// The computer name the user connected from (RDP).
+	ClientName string `json:"clientName,omitempty"`
+	// Seconds since the user's last keyboard or mouse input.
+	IdleSeconds *int64 `json:"idleSeconds,omitempty"`
+	// When the session was disconnected (Unix seconds).
+	DisconnectedAt int64 `json:"disconnectedAt,omitempty"`
 }
 
 type Users struct {
 	Count    int       `json:"count"`
 	Sessions []Session `json:"sessions"`
+	// True when Sessions carry state and connection type (Windows, agent 5.4+),
+	// which is what tells the engine's RDP check that "no sessions" is a real
+	// answer and not an agent that can't tell.
+	Detail bool `json:"detail,omitempty"`
 }
 
 type TimeSync struct {
@@ -107,23 +128,25 @@ type RaidArray struct {
 type SlowCollector struct {
 	NTPServer string
 
-	mu         sync.Mutex
-	users      *Users
-	temps      []Temp
-	fans       []Fan
-	battery    *Battery
-	reboot     *bool
-	timeSync   *TimeSync
-	updates    *Updates
-	defender   *Defender
-	firewall   *Toggle
-	encryption *Toggle
-	failed     *int
-	smart      []SmartDisk
-	raid       []RaidArray
-	linkSpeeds map[string]int
-	winSystem  *winPerfSystem
-	inventory  map[string]any
+	mu           sync.Mutex
+	smartAt      time.Time
+	smartProblem string
+	users        *Users
+	temps        []Temp
+	fans         []Fan
+	battery      *Battery
+	reboot       *bool
+	timeSync     *TimeSync
+	updates      *Updates
+	defender     *Defender
+	firewall     *Toggle
+	encryption   *Toggle
+	failed       *int
+	smart        []SmartDisk
+	raid         []RaidArray
+	linkSpeeds   map[string]int
+	winSystem    *winPerfSystem
+	inventory    map[string]any
 	// Software (software.go): upgradable packages from the updates job,
 	// installed packages from the software job, and the lock files the
 	// engine asked to read.
@@ -205,6 +228,12 @@ func (s *SlowCollector) Apply(ext *Extended) {
 	ext.Encryption = s.encryption
 	ext.FailedLogins = s.failed
 	ext.Smart = s.smart
+	ext.SmartProblem = s.smartProblem
+	// Reports start before the first read finishes (it can take up to a minute),
+	// and "still reading" shouldn't look like the drive isn't reporting.
+	if s.smart == nil && s.smartProblem == "" {
+		ext.SmartProblem = "still reading the drives; the first read can take a minute after the agent starts"
+	}
 	ext.Raid = s.raid
 	if s.winSystem != nil {
 		ext.CtxSwitchesPerSec = fp(s.winSystem.ContextSwitchesPersec)
@@ -241,30 +270,28 @@ func boolp(b bool) *bool { return &b }
 
 // ---- sessions ----
 
+// collectSessions records who is signed in. On Windows it asks the session API
+// (windowsSessions), which also says each session's state and connection type
+// and works in any display language, unlike parsing quser's translated text. A
+// failed read leaves the previous list in place rather than reporting that
+// everyone signed out.
 func (s *SlowCollector) collectSessions() {
 	var sessions []Session
+	detail := false
 	if runtime.GOOS == "windows" {
-		res, err := execx.Run(15*time.Second, nil, "quser")
-		if err == nil {
-			for _, line := range strings.Split(res.Stdout, "\n")[1:] {
-				f := strings.Fields(strings.TrimPrefix(line, ">"))
-				if len(f) < 3 {
-					continue
-				}
-				sess := Session{User: f[0]}
-				if len(f) >= 6 && (f[3] == "Active" || f[3] == "Disc") {
-					sess.Terminal = f[1]
-				}
-				sessions = append(sessions, sess)
-			}
+		found, err := windowsSessions()
+		if err != nil {
+			log.Printf("couldn't list sessions: %v", err)
+			return
 		}
+		sessions, detail = found, true
 	} else if us, err := host.Users(); err == nil {
 		for _, u := range us {
 			sessions = append(sessions, Session{User: u.User, Terminal: u.Terminal, Host: u.Host, Started: int64(u.Started)})
 		}
 	}
 	s.mu.Lock()
-	s.users = &Users{Count: len(sessions), Sessions: sessions}
+	s.users = &Users{Count: len(sessions), Sessions: sessions, Detail: detail}
 	s.mu.Unlock()
 }
 
@@ -371,11 +398,12 @@ func (s *SlowCollector) collectFailedLogins() {
 	var count *int
 	switch runtime.GOOS {
 	case "windows":
-		out, ok := ps(`try { @(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4625;StartTime=(Get-Date).AddMinutes(-5)} -ErrorAction Stop).Count } catch { if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { 0 } else { throw } }`, nil, 30*time.Second)
-		if ok {
-			if n, err := strconv.Atoi(out); err == nil {
-				count = &n
-			}
+		// Failed logons (event 4625) in the last 300,000 ms. wevtutil rather than
+		// PowerShell because this runs every minute: see checks/eventlog.go.
+		res, err := execx.Run(30*time.Second, nil, "wevtutil", "qe", "Security", "/q:*[System[EventID=4625 and TimeCreated[timediff(@SystemTime) <= 300000]]]", "/c:1000", "/f:xml")
+		if err == nil && res.ExitCode == 0 {
+			n := strings.Count(res.Stdout, "<Event ")
+			count = &n
 		}
 	case "linux":
 		res, err := execx.Run(20*time.Second, nil, "journalctl", "-q", "--no-pager", "-o", "cat", "--since", "-5min", "_COMM=sshd")
@@ -677,19 +705,96 @@ func parseStorcli(out string) []RaidArray {
 
 // ---- SMART ----
 
+// smartKeepFor is how long the last good SMART data is kept while collecting
+// fails. A slow moment shouldn't make drives vanish from the report for half an
+// hour (the job's interval); a drive that stays unreadable is reported after this.
+const smartKeepFor = 2 * time.Hour
+
+// collectSmart reads drive health: smartctl where it's installed, Windows' own
+// reliability counters otherwise (or if smartctl can't read anything). When
+// nothing can be read it records why (smartProblem), and the engine shows that
+// reason instead of only saying SMART isn't reported.
 func (s *SlowCollector) collectSmart() {
 	var disks []SmartDisk
-	if execx.Exists("smartctl") {
-		disks = smartctlDisks()
-	} else if runtime.GOOS == "windows" {
-		disks = windowsStorageReliability()
+	var problem string
+	if path := findSmartctl(); path != "" {
+		disks, problem = smartctlDisks(path)
+	} else {
+		problem = "smartctl isn't installed"
+	}
+	if len(disks) == 0 && runtime.GOOS == "windows" {
+		var why string
+		if disks, why = windowsStorageReliability(); len(disks) == 0 {
+			problem = strings.TrimPrefix(problem+"; Windows reliability counters: "+why, "; ")
+		}
 	}
 	s.mu.Lock()
-	s.smart = disks
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	if len(disks) > 0 {
+		s.smart, s.smartAt, s.smartProblem = disks, time.Now(), ""
+		return
+	}
+	s.smartProblem = problem
+	if time.Since(s.smartAt) > smartKeepFor {
+		s.smart = nil
+	}
+}
+
+// smartctlSearchPaths are the usual install locations, tried when smartctl isn't
+// on the agent's PATH. A service's PATH is fixed when it starts, and a user's
+// shell often has folders a service doesn't, which is how smartctl can work when
+// typed by hand yet look missing to the agent.
+//
+// Security: whatever is found here runs with the agent's privileges (root on macOS,
+// SYSTEM on Windows), so this must only list folders ordinary users can't write to.
+// That rules out Homebrew's folders on macOS: /opt/homebrew, and /usr/local on Intel
+// Macs, belong to whoever installed Homebrew, so malware running as that user could
+// plant a "smartctl" there and have it run as root.
+func smartctlSearchPaths(goos string) []string {
+	switch goos {
+	case "windows":
+		var paths []string
+		for _, env := range []string{"ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"} {
+			if dir := os.Getenv(env); dir != "" {
+				paths = append(paths, filepath.Join(dir, "smartmontools", "bin", "smartctl.exe"))
+			}
+		}
+		return paths
+	case "darwin":
+		return []string{"/usr/sbin/smartctl", "/sbin/smartctl", "/usr/bin/smartctl"}
+	default:
+		paths := []string{"/usr/sbin/smartctl", "/sbin/smartctl", "/usr/local/sbin/smartctl", "/usr/bin/smartctl", "/usr/local/bin/smartctl"}
+		// Termux's folder is only the agent's own app folder on Android. On ordinary
+		// Linux nothing protects that path, so someone able to create it could plant a
+		// program there for the agent to run.
+		if android.IsAndroid() {
+			paths = append(paths, "/data/data/com.termux/files/usr/bin/smartctl")
+		}
+		return paths
+	}
+}
+
+// findSmartctl returns the command to run for smartctl, or "" if it isn't there.
+func findSmartctl() string {
+	if execx.Exists("smartctl") {
+		return "smartctl"
+	}
+	for _, p := range smartctlSearchPaths(runtime.GOOS) {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 type smartJSON struct {
+	// smartctl's own notes about this run, e.g. "Permission denied".
+	Smartctl struct {
+		Messages []struct {
+			String   string `json:"string"`
+			Severity string `json:"severity"`
+		} `json:"messages"`
+	} `json:"smartctl"`
 	ModelName   string `json:"model_name"`
 	SmartStatus *struct {
 		Passed bool `json:"passed"`
@@ -748,37 +853,117 @@ func ParseSmartctl(device string, out []byte) (SmartDisk, error) {
 	return d, nil
 }
 
-func smartctlDisks() []SmartDisk {
-	res, err := execx.Run(30*time.Second, nil, "smartctl", "--scan", "-j")
-	if err != nil {
-		return nil
+// SmartctlMessage returns the first error smartctl reports in its JSON output
+// (e.g. "Permission denied"), or "" if there isn't one or it isn't JSON.
+func SmartctlMessage(out []byte) string {
+	var j smartJSON
+	if json.Unmarshal(out, &j) != nil {
+		return ""
 	}
-	var scan struct {
-		Devices []struct {
-			Name string `json:"name"`
-			Type string `json:"type"`
-		} `json:"devices"`
-	}
-	if json.Unmarshal([]byte(res.Stdout), &scan) != nil {
-		return nil
-	}
-	var out []SmartDisk
-	for _, d := range scan.Devices {
-		r, err := execx.Run(60*time.Second, nil, "smartctl", "-a", "-j", "-d", d.Type, d.Name)
-		if err != nil {
-			continue
-		}
-		if sd, err := ParseSmartctl(d.Name, []byte(r.Stdout)); err == nil && (sd.Passed != nil || sd.TempC != nil) {
-			out = append(out, sd)
+	for _, m := range j.Smartctl.Messages {
+		if m.Severity == "error" && m.String != "" {
+			return m.String
 		}
 	}
-	return out
+	return ""
 }
 
-func windowsStorageReliability() []SmartDisk {
-	out, ok := ps(`ConvertTo-Json -Compress -Depth 4 -InputObject @(Get-PhysicalDisk | ForEach-Object { $r = $_ | Get-StorageReliabilityCounter; [pscustomobject]@{ Name=$_.FriendlyName; Id=$_.DeviceId; Health=[string]$_.HealthStatus; Wear=$r.Wear; Temp=$r.Temperature; Errors=$r.ReadErrorsUncorrected } })`, nil, 60*time.Second)
-	if !ok || out == "" {
-		return nil
+// smartDeviceTypes lists the -d values to try for a drive, best guess first: what
+// the scan said, then smartctl's own detection ("" = no -d), then SATA-behind-USB
+// ("sat"). A scan often calls a USB-attached or controller-attached drive "scsi",
+// which then answers with no health data, while the plain command typed by hand
+// detects it correctly.
+func smartDeviceTypes(scanned string) []string {
+	types := []string{}
+	for _, t := range []string{scanned, "", "sat"} {
+		if !slices.Contains(types, t) {
+			types = append(types, t)
+		}
+	}
+	return types
+}
+
+// smartctlScanDevice is one drive from `smartctl --scan -j`.
+type smartctlScanDevice struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// smartctlDisks reads every drive smartctl can find.
+//
+// path is the command to run (see findSmartctl). It returns the drives it could
+// read, and when it could read none, a plain-language reason for the dashboard.
+// A drive smartctl can't read (a card reader, a virtual disk) is skipped.
+func smartctlDisks(path string) ([]SmartDisk, string) {
+	res, err := execx.Run(30*time.Second, nil, path, "--scan", "-j")
+	if err != nil {
+		return nil, "smartctl --scan failed: " + err.Error()
+	}
+	var scan struct {
+		Devices []smartctlScanDevice `json:"devices"`
+	}
+	if json.Unmarshal([]byte(res.Stdout), &scan) != nil {
+		return nil, "smartctl didn't answer in JSON — Looksee needs smartmontools 7 or newer"
+	}
+	if len(scan.Devices) == 0 {
+		return nil, "smartctl found no drives (a virtual machine usually has none it can read)"
+	}
+	var out []SmartDisk
+	var reasons []string
+	for _, d := range scan.Devices {
+		why := ""
+		found := false
+		// Try each device type until one returns health data.
+		for _, t := range smartDeviceTypes(d.Type) {
+			args := []string{"-a", "-j"}
+			if t != "" {
+				args = append(args, "-d", t)
+			}
+			r, err := execx.Run(60*time.Second, nil, path, append(args, d.Name)...)
+			if err != nil {
+				why = err.Error()
+				continue
+			}
+			sd, err := ParseSmartctl(d.Name, []byte(r.Stdout))
+			if err == nil && (sd.Passed != nil || sd.TempC != nil) {
+				out = append(out, sd)
+				found = true
+				break
+			}
+			if m := SmartctlMessage([]byte(r.Stdout)); m != "" {
+				why = m
+			} else if why == "" {
+				why = "no health data"
+			}
+		}
+		if !found {
+			reasons = append(reasons, d.Name+": "+why)
+		}
+	}
+	if len(out) > 0 {
+		return out, ""
+	}
+	return nil, smartHint(strings.Join(reasons, "; "))
+}
+
+// smartHint adds what to do when the reason is a permissions problem. On Linux
+// that's the usual cause: the agent is its own unprivileged user, while smartctl
+// typed by hand runs under sudo, so it works by hand but not for the agent.
+func smartHint(reason string) string {
+	if strings.Contains(strings.ToLower(reason), "permission denied") && runtime.GOOS == "linux" {
+		return reason + " — the agent lacks disk access. Install its privileged drop-in (agent README → Privileges; agents installed before 5.0 or with --minimal don't have it)"
+	}
+	return reason
+}
+
+// windowsStorageReliability reads Windows' own view of drive health. A drive whose
+// reliability counters can't be read (common for virtual disks and some RAID
+// controllers) still reports its health status rather than failing the whole
+// list. Returns the drives, or nil and why.
+func windowsStorageReliability() ([]SmartDisk, string) {
+	out, ok := ps(`ConvertTo-Json -Compress -Depth 4 -InputObject @(Get-PhysicalDisk | ForEach-Object { $r = try { $_ | Get-StorageReliabilityCounter -ErrorAction Stop } catch { $null }; [pscustomobject]@{ Name=$_.FriendlyName; Id=$_.DeviceId; Health=[string]$_.HealthStatus; Wear=$r.Wear; Temp=$r.Temperature; Errors=$r.ReadErrorsUncorrected } })`, nil, 60*time.Second)
+	if !ok {
+		return nil, "Get-PhysicalDisk failed or timed out"
 	}
 	var rows []struct {
 		Name   string
@@ -788,8 +973,8 @@ func windowsStorageReliability() []SmartDisk {
 		Temp   *float64
 		Errors *float64
 	}
-	if json.Unmarshal([]byte(out), &rows) != nil {
-		return nil
+	if out == "" || json.Unmarshal([]byte(out), &rows) != nil {
+		return nil, "Get-PhysicalDisk returned nothing readable"
 	}
 	var disks []SmartDisk
 	for _, r := range rows {
@@ -799,7 +984,10 @@ func windowsStorageReliability() []SmartDisk {
 		}
 		disks = append(disks, d)
 	}
-	return disks
+	if len(disks) == 0 {
+		return nil, "Windows lists no physical disks"
+	}
+	return disks, ""
 }
 
 // ---- link speeds (Windows; Linux reads sysfs directly) ----

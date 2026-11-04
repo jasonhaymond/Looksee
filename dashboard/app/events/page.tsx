@@ -8,7 +8,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type EventRow } from "../lib/api";
 import { SiteSelect } from "../components/SiteSelect";
 import { PageHelp } from "../components/PageHelp";
-import { EmptyState, inputClass } from "../components/ui";
+import { EmptyState, SortTh, inputClass } from "../components/ui";
+import { useSort } from "../lib/useSort";
 import { usePageAuth } from "../components/usePageAuth";
 import { pollEvery } from "../lib/poll";
 
@@ -18,6 +19,7 @@ const SEV_COLOR = (s: number | null) => (s == null ? "var(--muted)" : s <= 3 ? "
 export default function EventsPage() {
   const authed = usePageAuth();
   const [rows, setRows] = useState<EventRow[] | null>(null);
+  const sort = useSort<EventRow>("events", { received: (r) => new Date(r.receivedAt), from: (r) => r.sourceIp, type: (r) => r.source, severity: (r) => r.severity, message: (r) => r.message });
   const [source, setSource] = useState("");
   const [sourceIp, setSourceIp] = useState("");
   const [q, setQ] = useState("");
@@ -77,15 +79,25 @@ export default function EventsPage() {
           <table className="w-full text-xs">
             <thead className="text-[var(--muted)]">
               <tr>
-                <th className="px-2 py-2 text-left font-normal">Received</th>
-                <th className="px-2 py-2 text-left font-normal">From</th>
-                <th className="px-2 py-2 text-left font-normal">Type</th>
-                <th className="px-2 py-2 text-left font-normal">Severity</th>
-                <th className="px-2 py-2 text-left font-normal">Message</th>
+                <SortTh sort={sort} column="received" className="px-2 py-2 text-left font-normal">
+                  Received
+                </SortTh>
+                <SortTh sort={sort} column="from" className="px-2 py-2 text-left font-normal">
+                  From
+                </SortTh>
+                <SortTh sort={sort} column="type" className="px-2 py-2 text-left font-normal">
+                  Type
+                </SortTh>
+                <SortTh sort={sort} column="severity" className="px-2 py-2 text-left font-normal">
+                  Severity
+                </SortTh>
+                <SortTh sort={sort} column="message" className="px-2 py-2 text-left font-normal">
+                  Message
+                </SortTh>
               </tr>
             </thead>
             <tbody>
-              {(rows ?? []).map((r) => (
+              {sort.apply(rows ?? []).map((r) => (
                 <tr key={r.id} className="border-t border-[var(--border)] align-top">
                   <td className="whitespace-nowrap px-2 py-1.5 text-[var(--muted)]">{new Date(r.receivedAt).toLocaleString()}</td>
                   <td className="px-2 py-1.5">

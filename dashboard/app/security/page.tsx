@@ -10,7 +10,8 @@ import qrcode from "qrcode-generator";
 import { startRegistration } from "@simplewebauthn/browser";
 import { api, type Passkey, type Channel, type IpBlock, type SecurityEvent, type SecurityOverview, type SecurityRule, type SessionRow, type TrustedIp } from "../lib/api";
 import { PageHelp } from "../components/PageHelp";
-import { ActionMenu, Button, FilterChip, Label, Modal, inputClass, relativeTime, useToast } from "../components/ui";
+import { ActionMenu, Button, FilterChip, Label, Modal, SortTh, inputClass, relativeTime, useToast } from "../components/ui";
+import { useSort } from "../lib/useSort";
 import { Tooltip } from "../components/Tooltip";
 import { usePageAuth } from "../components/usePageAuth";
 import { own } from "../lib/own";
@@ -72,6 +73,7 @@ function AccountCard({ overview, toast, reload }: { overview: SecurityOverview; 
   const [rotate, setRotate] = useState<{ challengeId: string; secret: string; uri: string } | null>(null);
   const [rotateCode, setRotateCode] = useState("");
   const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const sessionSort = useSort<SessionRow>("securitySessions", { from: (s) => s.ip, browser: (s) => s.userAgent, signedIn: (s) => new Date(s.createdAt), lastActive: (s) => (s.lastSeenAt ? new Date(s.lastSeenAt) : null) });
   const loadSessions = useCallback(() => api.sessions().then(setSessions), []);
   useEffect(() => {
     loadSessions();
@@ -162,15 +164,23 @@ function AccountCard({ overview, toast, reload }: { overview: SecurityOverview; 
           <table className="w-full text-xs">
             <thead className="text-left text-[var(--muted)]">
               <tr>
-                <th className="py-1 pr-2 font-normal">From</th>
-                <th className="pr-2 font-normal">Browser</th>
-                <th className="pr-2 font-normal">Signed in</th>
-                <th className="pr-2 font-normal">Last active</th>
+                <SortTh sort={sessionSort} column="from" className="py-1 pr-2 font-normal">
+                  From
+                </SortTh>
+                <SortTh sort={sessionSort} column="browser" className="pr-2 font-normal">
+                  Browser
+                </SortTh>
+                <SortTh sort={sessionSort} column="signedIn" className="pr-2 font-normal">
+                  Signed in
+                </SortTh>
+                <SortTh sort={sessionSort} column="lastActive" className="pr-2 font-normal">
+                  Last active
+                </SortTh>
                 <th />
               </tr>
             </thead>
             <tbody>
-              {sessions.map((s) => (
+              {sessionSort.apply(sessions).map((s) => (
                 <tr key={s.id} className="border-t border-[var(--border)]">
                   <td className="py-1 pr-2 font-mono">{s.ip ?? "—"}</td>
                   <td className="max-w-xs truncate pr-2 text-[var(--muted)]" title={s.userAgent ?? ""}>
@@ -408,6 +418,9 @@ export default function SecurityPage() {
   const [blocks, setBlocks] = useState<IpBlock[]>([]);
   const [trusted, setTrusted] = useState<TrustedIp[]>([]);
   const [events, setEvents] = useState<SecurityEvent[]>([]);
+  const blockSort = useSort<IpBlock>("securityBlocks", { ip: (b) => b.ip, reason: (b) => b.reason, until: (b) => (b.until ? new Date(b.until) : null) });
+  const ruleSort = useSort<SecurityRule>("securityRules", { name: (r) => r.name, enabled: (r) => !r.enabled, lastFired: (r) => (r.lastFiredAt ? new Date(r.lastFiredAt) : null) });
+  const eventSort = useSort<SecurityEvent>("securityEvents", { when: (e) => new Date(e.createdAt), kind: (e) => e.kind, ip: (e) => e.ip, detail: (e) => e.detail });
   const [evFilter, setEvFilter] = useState({ kind: "", severity: "", q: "", hours: 168 });
   const [editingRule, setEditingRule] = useState<SecurityRule | "new" | null>(null);
   const [newBlock, setNewBlock] = useState({ ip: "", minutes: "", reason: "" });
@@ -531,8 +544,22 @@ export default function SecurityPage() {
             <p className="text-xs text-[var(--muted)]">None right now. Rules below block attackers automatically; you can also block by hand.</p>
           ) : (
             <table className="w-full text-xs">
+              <thead className="text-left text-[var(--muted)]">
+                <tr>
+                  <SortTh sort={blockSort} column="ip" className="py-1 pr-2 font-normal">
+                    Address
+                  </SortTh>
+                  <SortTh sort={blockSort} column="reason" className="pr-2 font-normal">
+                    Reason
+                  </SortTh>
+                  <SortTh sort={blockSort} column="until" className="pr-2 font-normal">
+                    Until
+                  </SortTh>
+                  <th />
+                </tr>
+              </thead>
               <tbody>
-                {blocks.map((b) => (
+                {blockSort.apply(blocks).map((b) => (
                   <tr key={b.id} className="border-t border-[var(--border)]">
                     <td className="py-1 pr-2 font-mono">{b.ip}</td>
                     <td className="pr-2">{b.reason}</td>
@@ -605,15 +632,19 @@ export default function SecurityPage() {
             <table className="w-full text-xs">
               <thead className="text-left text-[var(--muted)]">
                 <tr>
-                  <th className="py-1 pr-2 font-normal">Rule</th>
+                  <SortTh sort={ruleSort} column="name" className="py-1 pr-2 font-normal">
+                    Rule
+                  </SortTh>
                   <th className="pr-2 font-normal">When</th>
                   <th className="pr-2 font-normal">Then</th>
-                  <th className="pr-2 font-normal">Last fired</th>
+                  <SortTh sort={ruleSort} column="lastFired" className="pr-2 font-normal">
+                    Last fired
+                  </SortTh>
                   <th />
                 </tr>
               </thead>
               <tbody>
-                {rules.map((r) => (
+                {ruleSort.apply(rules).map((r) => (
                   <tr key={r.id} className={`border-t border-[var(--border)] align-top ${r.enabled ? "" : "opacity-60"}`}>
                     <td className="py-1.5 pr-2 font-medium">
                       {r.name}
@@ -669,14 +700,22 @@ export default function SecurityPage() {
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-[var(--panel-2)] text-left text-[var(--muted)]">
                 <tr>
-                  <th className="px-2 py-1 font-normal">When</th>
-                  <th className="px-2 py-1 font-normal">Event</th>
-                  <th className="px-2 py-1 font-normal">IP</th>
-                  <th className="px-2 py-1 font-normal">Detail</th>
+                  <SortTh sort={eventSort} column="when" className="px-2 py-1 font-normal">
+                    When
+                  </SortTh>
+                  <SortTh sort={eventSort} column="kind" className="px-2 py-1 font-normal">
+                    Event
+                  </SortTh>
+                  <SortTh sort={eventSort} column="ip" className="px-2 py-1 font-normal">
+                    IP
+                  </SortTh>
+                  <SortTh sort={eventSort} column="detail" className="px-2 py-1 font-normal">
+                    Detail
+                  </SortTh>
                 </tr>
               </thead>
               <tbody>
-                {events.map((e) => (
+                {eventSort.apply(events).map((e) => (
                   <tr key={e.id} className="border-t border-[var(--border)] align-top">
                     <td className="whitespace-nowrap px-2 py-1 text-[var(--muted)]">{new Date(e.createdAt).toLocaleString()}</td>
                     <td className={`px-2 py-1 ${e.severity === "warn" ? "text-[var(--warn)]" : ""}`}>{kindLabel.get(e.kind) ?? e.kind}</td>

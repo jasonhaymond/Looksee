@@ -45,6 +45,7 @@ import { exclusionsRouter } from "./routes/exclusions.js";
 import { snmpTemplatesRouter } from "./routes/snmpTemplates.js";
 import { securityRouter } from "./routes/security.js";
 import { watchdogRouter } from "./routes/watchdog.js";
+import { retentionRouter } from "./routes/retention.js";
 import { notFoundHandler, securityGate, securityHeaders } from "./middleware/securityGate.js";
 import { requireAgentAuth } from "./middleware/auth.js";
 import { stripNulBody } from "./lib/stripNul.js";
@@ -63,6 +64,10 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
 // Doesn't call app.listen() — that lives in index.ts — so tests can import
 // this directly with supertest without binding a real port.
 export const app = express();
+// Removes the header naming the framework, so a scan can't tell what this server runs.
+// The scanner rule below flags this line because it recommends the helmet package for
+// the same job, but this line does the job (test/v5-4-features.test.ts proves it).
+// nosemgrep: ajinabraham.njsscan.good.good_helmet_checks.helmet_header_x_powered_by
 app.disable("x-powered-by");
 // Which X-Forwarded-For hops to believe for the client IP (blocks, the
 // allowlist, lockouts and the event log all key on it). The default trusts
@@ -98,6 +103,7 @@ app.use("/api/exclusion-lists", exclusionsRouter);
 app.use("/api/snmp-templates", snmpTemplatesRouter);
 app.use("/api/security", securityRouter);
 app.use("/api/watchdog", watchdogRouter);
+app.use("/api/retention", retentionRouter);
 app.use("/api/endpoints", endpointsRouter);
 app.use("/api/checks", checksRouter);
 app.use("/api/channels", channelsRouter);

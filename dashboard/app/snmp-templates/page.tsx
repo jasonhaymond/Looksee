@@ -17,7 +17,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Endpoint, type Site, type SnmpTemplate, type SnmpTemplateItem } from "../lib/api";
 import { PageHelp } from "../components/PageHelp";
-import { Button, ConfirmDialog, Label, Modal, inputClass, useToast } from "../components/ui";
+import { Button, ConfirmDialog, Label, Modal, SortPicker, inputClass, useToast } from "../components/ui";
+import { useSort } from "../lib/useSort";
 import { usePageAuth } from "../components/usePageAuth";
 import { own } from "../lib/own";
 
@@ -58,6 +59,7 @@ function describeItem(i: SnmpTemplateItem) {
 export default function SnmpTemplatesPage() {
   const authed = usePageAuth();
   const [templates, setTemplates] = useState<SnmpTemplate[] | null>(null);
+  const sort = useSort<SnmpTemplate>("snmpTemplates", { name: (t) => t.name, items: (t) => t.items.length });
   const [editing, setEditing] = useState<SnmpTemplate | "new" | null>(null);
   const [applying, setApplying] = useState<SnmpTemplate | null>(null);
   // Device address handed over by the Discovery page's "SNMP template" link.
@@ -83,8 +85,8 @@ export default function SnmpTemplatesPage() {
   }, [authed]);
 
   if (!authed) return null;
-  const builtIn = (templates ?? []).filter((t) => t.builtIn);
-  const own = (templates ?? []).filter((t) => !t.builtIn);
+  const builtIn = sort.apply((templates ?? []).filter((t) => t.builtIn));
+  const own = sort.apply((templates ?? []).filter((t) => !t.builtIn));
 
   const card = (t: SnmpTemplate) => (
     <li key={t.id} className="surface space-y-1.5 rounded-xl p-3 text-sm">
@@ -136,6 +138,7 @@ export default function SnmpTemplatesPage() {
       <PageHelp anchor="snmp-templates">
         A template is a set of SNMP checks for one kind of device. Apply it to a device and Looksee creates every check at once, with your thresholds. Start from a built-in one (copy it to change it), or build your own from OIDs — the walk browser in any SNMP check shows what a device offers, with names and readable values.
       </PageHelp>
+      <SortPicker sort={sort} className="mt-3" options={[["name", "Name"], ["items", "Number of checks"]]} />
       <h2 className="mb-2 mt-4 text-sm font-medium">Your templates</h2>
       {own.length ? <ul className="space-y-2">{own.map(card)}</ul> : <p className="text-sm text-[var(--muted)]">None yet — copy a built-in one below, or start a new one.</p>}
       <h2 className="mb-2 mt-6 text-sm font-medium">Built-in</h2>

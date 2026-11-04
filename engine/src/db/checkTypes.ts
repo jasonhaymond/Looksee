@@ -105,6 +105,9 @@ export const CHECK_TYPE_META = {
   // From the 5.0 agent's software report (services/software.ts).
   host_packages: { executor: "report", endpointRequired: true, minAgentVersion: "5.0.0" },
   host_software: { executor: "report", endpointRequired: true, minAgentVersion: "5.0.0" },
+  // Who is connected over Remote Desktop, from the Windows agent's session list
+  // (services/rdpSessions.ts).
+  host_rdp_sessions: { executor: "report", endpointRequired: true, minAgentVersion: "5.4.0" },
 } as const satisfies Record<string, CheckTypeMeta>;
 
 export type CheckType = keyof typeof CHECK_TYPE_META;

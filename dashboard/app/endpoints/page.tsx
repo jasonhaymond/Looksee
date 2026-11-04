@@ -12,8 +12,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type Channel, type Check, type Site, type Endpoint, type Location } from "../lib/api";
+import { useSort } from "../lib/useSort";
 import { PageHelp } from "../components/PageHelp";
-import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, Label, Modal, MultiFilter, PromptDialog, StatusBadge, Tags, alertRulePayload, availableOnly, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction, type FilterOption } from "../components/ui";
+import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, Label, Modal, MultiFilter, PromptDialog, SortHead, SortPicker, StatusBadge, Tags, alertRulePayload, availableOnly, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction, type FilterOption } from "../components/ui";
 import { displayStatus } from "../components/CheckDetail";
 import { collectorState } from "../components/collector";
 import { EndpointPanel, endpointState } from "../components/EndpointPanel";
@@ -88,6 +89,19 @@ export default function EndpointsPage() {
     const q = search.trim().toLowerCase();
     return endpoints.filter((h) => cascade.inPlace(h.siteId) && (!q || `${h.name} ${h.hostname ?? ""} ${h.os ?? ""} ${h.macAddress ?? ""} ${(h.tags ?? []).join(" ")} ${h.agentVersion ?? ""}`.toLowerCase().includes(q)));
   }, [endpoints, search, cascade]);
+  // Problem counts, needed both to sort by and to show.
+  const problemCount = (id: string) => checks.filter((c) => c.endpointId === id && ["down", "warn"].includes(displayStatus(c))).length;
+  const sort = useSort<Endpoint>("endpoints", {
+    agent: (h) => endpointState(h),
+    name: (h) => h.name,
+    address: (h) => h.hostname ?? h.os,
+    os: (h) => h.os,
+    site: (h) => siteName.get(h.siteId),
+    checks: (h) => checks.filter((c) => c.endpointId === h.id).length,
+    problems: (h) => problemCount(h.id),
+    version: (h) => h.agentVersion,
+    lastReport: (h) => (h.lastSeenAt ? new Date(h.lastSeenAt) : null),
+  });
   const sel = useSelection(filtered.map((h) => h.id));
 
   /**
@@ -131,18 +145,32 @@ export default function EndpointsPage() {
         <div className="surface overflow-hidden rounded-xl">
           <div className="hidden grid-cols-[28px_100px_minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 border-b border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-xs text-[var(--muted)] md:grid">
             <Checkbox checked={sel.allSelected} indeterminate={sel.someSelected} onChange={(on) => sel.setMany(filtered.map((h) => h.id), on)} label="Select all endpoints" />
-            <span>Agent</span>
-            <span>Name</span>
-            <span>Address / OS</span>
-            <span>Site</span>
-            <span>Checks</span>
-            <span>Last report</span>
+            <SortHead sort={sort} column="agent">
+              Agent
+            </SortHead>
+            <SortHead sort={sort} column="name">
+              Name
+            </SortHead>
+            <SortHead sort={sort} column="address">
+              Address / OS
+            </SortHead>
+            <SortHead sort={sort} column="site">
+              Site
+            </SortHead>
+            <SortHead sort={sort} column="problems">
+              Checks
+            </SortHead>
+            <SortHead sort={sort} column="lastReport">
+              Last report
+            </SortHead>
           </div>
           <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2 text-xs text-[var(--muted)] md:hidden">
             <Checkbox checked={sel.allSelected} indeterminate={sel.someSelected} onChange={(on) => sel.setMany(filtered.map((h) => h.id), on)} label="Select all endpoints" />
             Select all {filtered.length}
+            {/* Phones have no header row to click, so they get the dropdown. */}
+            <SortPicker sort={sort} className="ml-auto" options={[["name", "Name"], ["agent", "Agent state"], ["site", "Site"], ["problems", "Problems"], ["lastReport", "Last report"]]} />
           </div>
-          {filtered.map((h) => {
+          {sort.apply(filtered).map((h) => {
             const state = endpointState(h);
             const mine = checks.filter((c) => c.endpointId === h.id);
             const bad = mine.filter((c) => ["down", "warn"].includes(displayStatus(c))).length;

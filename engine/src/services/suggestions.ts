@@ -175,6 +175,7 @@ export function suggestChecks(host: EndpointLike, existing: ExistingCheck[]): Su
     add("unexpected shutdowns", "agent_eventlog", { logName: "System", eventIds: "41,6008", levels: "critical,error", severity: "down" }, "Kernel-Power 41 / EventLog 6008 — the machine lost power or crashed.");
     add("service crashes", "agent_eventlog", { logName: "System", eventIds: "7031,7034", levels: "critical,error,warning", severity: "warn" }, "Service Control Manager: a service terminated unexpectedly.");
     add("disk errors", "agent_eventlog", { logName: "System", eventIds: "7,11,51,153", levels: "critical,error,warning", severity: "warn" }, "Bad blocks, controller errors and I/O retries.");
+    add("RDP sessions", "host_rdp_sessions", { disconnectedMaxMinutes: 1440, severity: "warn" }, "Who is connected over Remote Desktop, their state, and sessions left disconnected for over a day.");
   } else if ((host.os ?? "").toLowerCase().includes("linux") || s.load) {
     add("critical journal entries", "agent_journal", { unit: "", priority: "crit", pattern: "" }, "Anything logged at critical or worse.");
   }

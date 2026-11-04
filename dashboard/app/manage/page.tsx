@@ -15,12 +15,13 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type Channel, type Check, type Site, type Endpoint, type Location } from "../lib/api";
+import { useSort } from "../lib/useSort";
 import { CATEGORIES, typeCategory, typeLabel } from "../lib/checkTypes";
 import { PageHelp } from "../components/PageHelp";
 import { CheckForm, TypePicker } from "../components/CheckForm";
 import { CheckDetail, displayStatus } from "../components/CheckDetail";
 import { AddToGroupDialog } from "../components/NodeViews";
-import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Modal, MultiFilter, MultiPicker, PromptDialog, StatusBadge, Tags, alertRulePayload, availableOnly, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction, type FilterOption } from "../components/ui";
+import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Modal, MultiFilter, MultiPicker, PromptDialog, SortHead, SortPicker, StatusBadge, Tags, alertRulePayload, availableOnly, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction, type FilterOption } from "../components/ui";
 import { runInBackground } from "../lib/background";
 import { pollEvery } from "../lib/poll";
 import { own } from "../lib/own";
@@ -152,6 +153,19 @@ export default function ChecksPage() {
       .sort((a, b) => (STATUS_ORDER[displayStatus(a)] ?? 9) - (STATUS_ORDER[displayStatus(b)] ?? 9) || a.name.localeCompare(b.name));
   }, [cascade, search, statusFilter, siteName, endpointName]);
 
+  // The order inside each group. Until something is chosen: worst status first,
+  // then by name (above).
+  const checkSort = useSort<Check>("checks", {
+    name: (c) => c.name,
+    status: (c) => STATUS_ORDER[displayStatus(c)] ?? 9,
+    type: (c) => typeLabel(c.type),
+    endpoint: (c) => (c.endpointId ? endpointName.get(c.endpointId) : null),
+    site: (c) => siteName.get(c.siteId),
+    interval: (c) => c.intervalSeconds,
+    lastCheck: (c) => (c.lastCheckedAt ? new Date(c.lastCheckedAt) : null),
+    message: (c) => c.lastMessage,
+  });
+
   const groups = useMemo(() => {
     const keyOf = (c: Check): [string, string] => {
       switch (groupBy) {
@@ -175,8 +189,12 @@ export default function ChecksPage() {
       if (!map.has(k)) map.set(k, { label, items: [] });
       map.get(k)!.items.push(c);
     }
+    for (const group of map.values()) group.items = checkSort.apply(group.items);
     return [...map.entries()].sort((a, b) => (groupBy === "status" ? (STATUS_ORDER[a[0]] ?? 9) - (STATUS_ORDER[b[0]] ?? 9) : a[1].label.localeCompare(b[1].label)));
-  }, [filtered, groupBy, siteName, endpointName, locationName]);
+    // checkSort.apply changes on every render, so it's the chosen column and
+    // direction that decide when this runs again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, groupBy, siteName, endpointName, locationName, checkSort.key, checkSort.dir]);
 
   const visibleIds = useMemo(() => filtered.map((c) => c.id), [filtered]);
   const sel = useSelection(visibleIds);
@@ -307,6 +325,7 @@ export default function ChecksPage() {
             <option value="none">Nothing</option>
           </select>
         </label>
+        <SortPicker sort={checkSort} none="Worst status first" options={[["name", "Name"], ["status", "Status"], ["type", "Type"], ["endpoint", "Endpoint"], ["site", "Site"], ["interval", "Interval"], ["lastCheck", "Last checked"], ["message", "Message"]]} />
       </div>
 
       {loaded && checks.length === 0 ? (
@@ -353,11 +372,31 @@ export default function ChecksPage() {
                   <div role="table" aria-label={`Checks in ${group.label}`}>
                     <div role="row" className="hidden grid-cols-[28px_110px_minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,2fr)_90px] gap-3 bg-[var(--panel-2)] px-3 py-1.5 text-xs text-[var(--muted)] md:grid">
                       <span />
-                      <span role="columnheader">Status</span>
-                      <span role="columnheader">Name</span>
-                      <span role="columnheader">Kind / where</span>
-                      <span role="columnheader">Last result</span>
-                      <span role="columnheader">Checked</span>
+                      <span role="columnheader">
+                        <SortHead sort={checkSort} column="status">
+                          Status
+                        </SortHead>
+                      </span>
+                      <span role="columnheader">
+                        <SortHead sort={checkSort} column="name">
+                          Name
+                        </SortHead>
+                      </span>
+                      <span role="columnheader">
+                        <SortHead sort={checkSort} column="type">
+                          Kind / where
+                        </SortHead>
+                      </span>
+                      <span role="columnheader">
+                        <SortHead sort={checkSort} column="message">
+                          Last result
+                        </SortHead>
+                      </span>
+                      <span role="columnheader">
+                        <SortHead sort={checkSort} column="lastCheck">
+                          Checked
+                        </SortHead>
+                      </span>
                     </div>
                     {group.items.map((c) => {
                       const open = expanded === c.id;

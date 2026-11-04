@@ -368,6 +368,10 @@ export const endpoints = pgTable("endpoints", {
   // changes. Read by the software checks (services/software.ts).
   software: jsonb("software").$type<Record<string, unknown>>(),
   softwareUpdatedAt: timestamp("software_updated_at", { withTimezone: true }),
+  // Packages from a source that dropped out of a report (say, its package
+  // manager timed out), held back so its return isn't recorded as everything
+  // having been reinstalled (services/software.ts, softwareChanges).
+  softwareHeld: jsonb("software_held").$type<{ n: string; v: string; s: string }[]>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -469,7 +473,7 @@ export const checkResults = pgTable("check_results", {
   excluded: boolean("excluded").notNull().default(false),
   excludedReason: text("excluded_reason"),
   checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("check_results_check_time_idx").on(t.checkId, t.checkedAt)]);
+}, (t) => [index("check_results_check_time_idx").on(t.checkId, t.checkedAt), index("check_results_time_idx").on(t.checkedAt)]);
 
 // Endpoint resource metrics reported by the Go agent on its own interval —
 // separate from check_results because this is always-on telemetry for a
@@ -489,7 +493,7 @@ export const endpointMetrics = pgTable("endpoint_metrics", {
   // widgets.
   extended: jsonb("extended"),
   recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("endpoint_metrics_endpoint_time_idx").on(t.endpointId, t.recordedAt)]);
+}, (t) => [index("endpoint_metrics_endpoint_time_idx").on(t.endpointId, t.recordedAt), index("endpoint_metrics_time_idx").on(t.recordedAt)]);
 
 // A destination alert rules can notify. `config` shape depends on `type`
 // (e.g. { to } for email, { url } for webhook, { subscription } for
@@ -893,6 +897,47 @@ export const logs = pgTable("logs", {
   humanMessage: text("human_message"),
   metadata: jsonb("metadata"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("logs_time_idx").on(t.createdAt)]);
+
+// What changed in an endpoint's installed programs and packages, worked out by
+// comparing each software report with the previous one (services/software.ts).
+// Project dependencies from lock files aren't recorded: they change with every
+// deploy and would bury real installs. Pruned by the retention job.
+export const softwareHistory = pgTable("software_history", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // Deleting an endpoint deletes its history.
+  endpointId: uuid("endpoint_id").notNull().references(() => endpoints.id, { onDelete: "cascade" }),
+  // "installed", "removed" or "updated".
+  action: text("action").notNull(),
+  name: text("name").notNull(),
+  // Where it came from: dpkg, rpm, windows, macos, npm, pip, ...
+  source: text("source").notNull(),
+  fromVersion: text("from_version"),
+  toVersion: text("to_version"),
+  // When Looksee noticed, not when it happened: agents collect this every 6 hours.
+  detectedAt: timestamp("detected_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("software_history_endpoint_time_idx").on(t.endpointId, t.detectedAt), index("software_history_time_idx").on(t.detectedAt)]);
+
+// Singleton row (id always 1) behind the Data retention page. See
+// services/retention.ts for how these are used.
+export const retentionSettings = pgTable("retention_settings", {
+  id: integer("id").primaryKey(),
+  // Days to keep each kind of data, by DataKind key. A kind left out falls back to
+  // its environment setting, then its default.
+  days: jsonb("days").$type<Record<string, number>>().notNull().default({}),
+  // Roll over the oldest data early when the disk runs low.
+  rolloverEnabled: boolean("rollover_enabled").notNull().default(true),
+  // Which of the next two limits applies: "gb" or "percent".
+  minFreeMode: text("min_free_mode").notNull().default("gb"),
+  minFreeGb: doublePrecision("min_free_gb").notNull().default(3),
+  minFreePercent: doublePrecision("min_free_percent").notNull().default(10),
+  // Data newer than this is never rolled over, however low the disk is.
+  minKeepHours: integer("min_keep_hours").notNull().default(24),
+  // Which folder's disk to measure. Null = worked out automatically.
+  storagePath: text("storage_path"),
+  lastRolloverAt: timestamp("last_rollover_at", { withTimezone: true }),
+  lastRolloverMessage: text("last_rollover_message"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // Singleton row (id always 1), upserted on every successful boot — not just

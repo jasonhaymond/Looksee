@@ -15,7 +15,9 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { api, type Tree, type TreeLocation } from "../../lib/api";
+import { api, type Tree, type TreeLocation, type TreeSite } from "../../lib/api";
+import { useSort } from "../../lib/useSort";
+import { SortPicker } from "../../components/ui";
 import { Breadcrumbs, ChecksTable, GroupChips, SummaryLine, type CheckRow } from "../../components/NodeViews";
 import { StatusGlyph } from "../../components/Sidebar";
 import { usePageAuth } from "../../components/usePageAuth";
@@ -24,6 +26,7 @@ import { pollEvery } from "../../lib/poll";
 /** The page: loads the tree, finds this location, and lists its contents. */
 export default function LocationPage() {
   const authed = usePageAuth();
+  const sort = useSort<TreeSite>("locationSites", { name: (s) => s.name, status: (s) => s.status, endpoints: (s) => s.endpoints.length, checks: (s) => s.checkCount, problems: (s) => s.problems });
   const { id } = useParams<{ id: string }>();
   const [tree, setTree] = useState<Tree | null>(null);
 
@@ -58,10 +61,13 @@ export default function LocationPage() {
       </div>
 
       <section className="surface rounded-xl p-4">
-        <h2 className="mb-2 text-sm font-medium">Sites ({loc.sites.length})</h2>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-medium">Sites ({loc.sites.length})</h2>
+          <SortPicker sort={sort} options={[["name", "Name"], ["status", "Status"], ["endpoints", "Endpoints"], ["checks", "Checks"], ["problems", "Problems"]]} />
+        </div>
         {loc.sites.length ? (
           <ul className="space-y-2">
-            {loc.sites.map((s) => (
+            {sort.apply(loc.sites).map((s) => (
               <li key={s.id} className="rounded-lg border border-[var(--border)] p-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusGlyph status={s.status} />

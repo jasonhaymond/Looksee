@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -83,5 +84,57 @@ func TestRedactCommand(t *testing.T) {
 		if got := RedactCommand(in); got != want {
 			t.Errorf("RedactCommand(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// smartctl's reason for failing is read out of its JSON, so the dashboard can say
+// "Permission denied" instead of only "isn't reported".
+func TestSmartctlMessage(t *testing.T) {
+	out := `{"smartctl":{"messages":[{"string":"note","severity":"information"},{"string":"Smartctl open device: /dev/sda failed: Permission denied","severity":"error"}]}}`
+	if got := SmartctlMessage([]byte(out)); got != "Smartctl open device: /dev/sda failed: Permission denied" {
+		t.Errorf("got %q", got)
+	}
+	if got := SmartctlMessage([]byte("not json")); got != "" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// Attack: malware running as the Mac user who installed Homebrew plants a "smartctl" in
+// a Homebrew folder and waits for the root agent to run it. The agent must never look
+// in a folder that user can write to, on any non-Windows system.
+func TestSmartctlSearchPathsAvoidUserWritableFolders(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		for _, p := range smartctlSearchPaths(goos) {
+			if strings.Contains(p, "homebrew") {
+				t.Errorf("%s searches %s", goos, p)
+			}
+			// Termux's folder is only safe on Android, which this test machine isn't.
+			if strings.Contains(p, "termux") {
+				t.Errorf("%s searches %s outside Android", goos, p)
+			}
+		}
+	}
+	// On Intel Macs Homebrew owns /usr/local too.
+	for _, p := range smartctlSearchPaths("darwin") {
+		if strings.HasPrefix(p, "/usr/local") {
+			t.Errorf("darwin searches %s", p)
+		}
+	}
+}
+
+// A drive the scan calls "scsi" is retried with smartctl's own detection and as
+// SATA-behind-USB, which is what makes the plain command work by hand.
+func TestSmartDeviceTypes(t *testing.T) {
+	got := smartDeviceTypes("scsi")
+	if len(got) != 3 || got[0] != "scsi" || got[1] != "" || got[2] != "sat" {
+		t.Errorf("scsi: %q", got)
+	}
+	got = smartDeviceTypes("sat")
+	if len(got) != 2 || got[0] != "sat" || got[1] != "" {
+		t.Errorf("sat: %q", got)
+	}
+	got = smartDeviceTypes("")
+	if len(got) != 2 || got[0] != "" || got[1] != "sat" {
+		t.Errorf("no type: %q", got)
 	}
 }

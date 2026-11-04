@@ -26,7 +26,7 @@ This file is generated: edit `dashboard/app/lib/checkTypes.ts`, then run
 7. Services & processes (agent): [OS service](#agent-service), [Process](#agent-process), [Failed / stopped services](#agent-services-overview), [Scheduled task / timer](#agent-scheduled-task), [Custom script](#agent-script)
 8. Files & logs (agent): [File / folder](#agent-file), [Largest folders and files](#agent-disk-tree), [Log file pattern](#agent-log), [systemd journal](#agent-journal), [Windows Event Log](#agent-eventlog)
 9. OS & hardware (agent): [Windows performance counter](#agent-perfcounter), [VPN tunnel](#agent-vpn), [UPS (NUT / apcupsd)](#agent-ups), [Backup job (Borg / restic / Veeam)](#agent-backup)
-10. Software & security (agent): [Local user accounts](#agent-users), [Upgradable packages](#host-packages), [Installed software changed](#host-software), [Vulnerable or unsupported software](#host-vulnerable)
+10. Software & security (agent): [Local user accounts](#agent-users), [RDP sessions](#host-rdp-sessions), [Upgradable packages](#host-packages), [Installed software changed](#host-software), [Vulnerable or unsupported software](#host-vulnerable)
 11. Push & smart: [Heartbeat (cron / job check-in)](#heartbeat), [Push a value](#push-value), [Calculated value](#calculated), [Anomaly (unusual value)](#anomaly)
 
 ## Reachability & web
@@ -969,6 +969,22 @@ Type ID `agent_users`. Lists the endpoint's local accounts and alerts on new, re
 | Hold the alert status for (minutes) *(Advanced)* | number | 60 | One-time events stay failing this long so a normal 2-in-a-row alert rule still catches them. |
 | Include built-in and service accounts *(Advanced)* | on/off | — | Off by default: Linux/macOS system users (low user IDs) and Windows built-ins change with OS updates. |
 | Exclude accounts *(Advanced)* | text (several lines) | — | One per line; whole names, case ignored, * matches anything. Reusable lists for many checks: the Exclusions page. Example: `svc-backup ⏎ tmp-*`. |
+
+<a id="host-rdp-sessions"></a>
+
+### RDP sessions
+
+Type ID `host_rdp_sessions`. Who is connected to this Windows machine over Remote Desktop: each session's user, state (active or disconnected) and the computer it's from. Can flag unexpected users and sessions left disconnected.
+
+**Value:** number of sessions. Thresholds apply to it.
+
+| Setting | Kind | Default | Notes |
+|---|---|---|---|
+| Expected users | text (several lines) | — | One per line; case ignored, * matches anything, and the domain is optional. Anyone else connecting fails the check. Blank = anyone may connect. Example: `alice ⏎ CORP\admin-*`. |
+| Status for an unexpected user | choice | Down (critical) | Options: Down (critical) (`down`); Warn (`warn`). Shown only for some choices of the settings above. |
+| Warn if disconnected for over (minutes) | number | — | A disconnected session keeps the user's programs running and holds a licence. Example: `off`. |
+| Status for a long-disconnected session | choice | Warn | Options: Down (critical) (`down`); Warn (`warn`). Shown only for some choices of the settings above. |
+| Also count the local console *(Advanced)* | on/off | — | Off by default: someone at the keyboard isn't a remote session. |
 
 <a id="host-packages"></a>
 

@@ -19,7 +19,8 @@ import { api, type Group, type GroupRules, type MemberType } from "../lib/api";
 import { GroupFilterEditor } from "../components/GroupFilterEditor";
 import { PageHelp } from "../components/PageHelp";
 import { StatusGlyph } from "../components/Sidebar";
-import { Button, EmptyState, Label, Modal, inputClass } from "../components/ui";
+import { Button, EmptyState, Label, Modal, SortPicker, inputClass } from "../components/ui";
+import { useSort } from "../lib/useSort";
 import { usePageAuth } from "../components/usePageAuth";
 
 /** "2 sites, 5 endpoints" — what a group directly contains, in words. */
@@ -39,6 +40,7 @@ function contents(g: Group) {
 export default function GroupsPage() {
   const authed = usePageAuth();
   const [groups, setGroups] = useState<Group[] | null>(null);
+  const sort = useSort<Group>("groups", { name: (g) => g.name, kind: (g) => g.kind, status: (g) => g.status });
   const [creating, setCreating] = useState(false);
 
   const load = useCallback(() => api.groups().then(setGroups), []);
@@ -58,11 +60,12 @@ export default function GroupsPage() {
       <PageHelp anchor="groups">
         Your own sets of locations, sites, endpoints and checks that cut across sites — &ldquo;all printers&rdquo;, &ldquo;Windows servers&rdquo;, &ldquo;customer X&rdquo;. A manual group holds what you add; a filter group holds whatever matches its rules right now. Use a group for maintenance, bulk actions and alert rules on everything in it.
       </PageHelp>
+      {Boolean(groups?.length) && <SortPicker sort={sort} className="mb-2" options={[["name", "Name"], ["kind", "Kind"], ["status", "Status"]]} />}
       {groups && !groups.length ? (
         <EmptyState>No groups yet.</EmptyState>
       ) : (
         <ul className="space-y-2">
-          {(groups ?? []).map((g) => (
+          {sort.apply(groups ?? []).map((g) => (
             <li key={g.id} className="surface flex flex-wrap items-center gap-3 rounded-xl p-3 text-sm">
               <StatusGlyph status={g.status} />
               <Link href={`/groups/${g.id}`} className="font-medium hover:underline">

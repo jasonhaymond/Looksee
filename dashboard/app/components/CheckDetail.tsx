@@ -11,7 +11,8 @@ import { api, type Check, type CheckResult, type Site, type Endpoint } from "../
 import { typeLabel } from "../lib/checkTypes";
 import { AlertRuleManager } from "./AlertRuleManager";
 import { CheckForm } from "./CheckForm";
-import { Button, StatusBadge, relativeTime } from "./ui";
+import { Button, SortTh, StatusBadge, relativeTime } from "./ui";
+import { useSort } from "../lib/useSort";
 import { own } from "../lib/own";
 
 function CopyText({ text }: { text: string }) {
@@ -57,6 +58,49 @@ export function Remediation({ check }: { check: Check }) {
 /** One table cell's text: "—" for nothing, JSON for objects, else the value as text. */
 const cell = (v: unknown) => (v == null ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v));
 
+/**
+ * A check's list of records (sessions, interfaces, hops, containers) as a table you
+ * can sort by any column. Its columns come from the records themselves, so its
+ * sorting is remembered per set of columns.
+ */
+function DetailsTable({ rows, columns }: { rows: Record<string, unknown>[]; columns?: string[] }) {
+  // A check can name its column order. Otherwise the order comes from the records,
+  // which is arbitrary once stored: the database rearranges an object's keys.
+  const cols = columns ?? [...new Set(rows.flatMap((r) => Object.keys(r)))].slice(0, 8);
+  // Numbers and text sort as themselves; anything else as its displayed text.
+  const read = (c: string) => (r: Record<string, unknown>) => {
+    const v = own(r, c);
+    return typeof v === "number" || typeof v === "string" || typeof v === "boolean" || v == null ? v : JSON.stringify(v);
+  };
+  const sort = useSort<Record<string, unknown>>(`details.${cols.join(",")}`, Object.fromEntries(cols.map((c) => [c, read(c)])));
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left text-[var(--muted)]">
+            {cols.map((c) => (
+              <SortTh key={c} sort={sort} column={c} className="px-2 py-1 font-normal">
+                {c}
+              </SortTh>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sort.apply(rows).slice(0, 100).map((r, i) => (
+            <tr key={i} className="border-t border-[var(--border)]">
+              {cols.map((c) => (
+                <td key={c} className="px-2 py-1">
+                  {cell(own(r, c))}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function Details({ value }: { value: unknown }) {
   if (value == null) return null;
   const rows = Array.isArray(value)
@@ -65,33 +109,8 @@ export function Details({ value }: { value: unknown }) {
       ? Object.values(value as Record<string, unknown>).find((v) => Array.isArray(v) && v.length && typeof v[0] === "object")
       : null;
   if (Array.isArray(rows) && rows.length && typeof rows[0] === "object" && rows[0] !== null) {
-    const cols = [...new Set(rows.flatMap((r) => Object.keys(r as object)))].slice(0, 8);
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-left text-[var(--muted)]">
-              {cols.map((c) => (
-                <th key={c} className="px-2 py-1 font-normal">
-                  {c}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {(rows as Record<string, unknown>[]).slice(0, 100).map((r, i) => (
-              <tr key={i} className="border-t border-[var(--border)]">
-                {cols.map((c) => (
-                  <td key={c} className="px-2 py-1">
-                    {cell(own(r, c))}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
+    const named = typeof value === "object" && !Array.isArray(value) ? (value as { columns?: unknown }).columns : undefined;
+    return <DetailsTable rows={rows as Record<string, unknown>[]} columns={Array.isArray(named) ? (named as string[]) : undefined} />;
   }
   return <pre className="max-h-48 overflow-auto rounded bg-[var(--code-bg)] p-2 text-xs">{JSON.stringify(value, null, 2)}</pre>;
 }

@@ -12,7 +12,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type Channel, type ChannelTemplate, type SmtpSettings, type TemplateInfo } from "../lib/api";
 import { Tooltip } from "../components/Tooltip";
 import { PageHelp } from "../components/PageHelp";
-import { ActionMenu, Button, FilterChip, Label, Modal, inputClass, useToast } from "../components/ui";
+import { ActionMenu, Button, FilterChip, Label, Modal, SortPicker, inputClass, useToast } from "../components/ui";
+import { useSort } from "../lib/useSort";
 import { usePageAuth } from "../components/usePageAuth";
 import {
   ChannelConfigFields,
@@ -333,6 +334,7 @@ function ChannelRow({ channel, onChanged, toast }: { channel: Channel; onChanged
 export default function ChannelsPage() {
   const authed = usePageAuth();
   const [channels, setChannels] = useState<Channel[]>([]);
+  const sort = useSort<Channel>("channels", { name: (c) => c.name, type: (c) => c.type, enabled: (c) => !c.enabled });
   const [name, setName] = useState("");
   const [type, setType] = useState("email");
   const [config, setConfig] = useState<Record<string, unknown>>(defaultChannelConfigFor("email"));
@@ -379,7 +381,10 @@ export default function ChannelsPage() {
           <p className="text-sm text-[var(--muted)]">No channels yet — add one below, then pick it when adding an alert rule.</p>
         ) : (
           <ul className="space-y-2">
-            {channels.map((c) => (
+            <li>
+              <SortPicker sort={sort} options={[["name", "Name"], ["type", "Type"], ["enabled", "Enabled first"]]} />
+            </li>
+            {sort.apply(channels).map((c) => (
               <ChannelRow key={c.id} channel={c} onChanged={load} toast={toast.show} />
             ))}
           </ul>

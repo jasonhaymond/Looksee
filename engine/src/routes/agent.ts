@@ -19,7 +19,7 @@
 import { Router, type Request } from "express";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { sites, endpoints, endpointMetrics, checks, AGENT_CHECK_TYPES, REPORT_CHECK_TYPES } from "../db/schema.js";
+import { sites, endpoints, endpointMetrics, checks, AGENT_CHECK_TYPES, REPORT_CHECK_TYPES, softwareHistory } from "../db/schema.js";
 import { minAgentVersionFor, PINNABLE_CHECK_TYPES, versionAtLeast } from "../db/checkTypes.js";
 import { requireAgentAuth } from "../middleware/auth.js";
 import { recordCheckResult } from "../services/alerting.js";
@@ -32,7 +32,8 @@ import { evaluateScriptOutput } from "../services/scriptOutput.js";
 import { evaluateUserAccounts } from "../services/userAccounts.js";
 import { withExclusions } from "../services/exclusions.js";
 import { cleanWatchdogStatus, watchdogSpecFor } from "../services/watchdogAgents.js";
-import { cleanSoftware, evaluatePackages, evaluateSoftwareChange, lockfilesFrom, type SoftwareReport } from "../services/software.js";
+import { cleanSoftware, evaluatePackages, evaluateSoftwareChange, lockfilesFrom, softwareChanges, type HeldPackage, type SoftwareReport } from "../services/software.js";
+import { evaluateRdpSessions } from "../services/rdpSessions.js";
 import { own } from "../lib/own.js";
 import { describeError } from "../lib/errorDetail.js";
 
@@ -221,9 +222,12 @@ async function storeReport(agent: AgentEndpoint, host: typeof endpoints.$inferSe
   if (watchdogStatus) endpointUpdate.watchdogStatus = watchdogStatus;
   // The 5.0 agent's software report (sent only when it changed).
   const software = cleanSoftware(body.software);
+  // What changed since the previous report, for the endpoint's software history.
+  const softwareDiff = software ? softwareChanges((host?.software ?? null) as SoftwareReport | null, software, (host?.softwareHeld ?? null) as HeldPackage[] | null) : null;
   if (software) {
     endpointUpdate.software = software;
     endpointUpdate.softwareUpdatedAt = new Date();
+    endpointUpdate.softwareHeld = softwareDiff?.held ?? null;
   }
 
   const metrics = body.metrics;
@@ -235,6 +239,7 @@ async function storeReport(agent: AgentEndpoint, host: typeof endpoints.$inferSe
   }
   // The big one: inventories, snapshot and software in one row update.
   if (Object.keys(endpointUpdate).length) await db.update(endpoints).set(endpointUpdate).where(eq(endpoints.id, endpointId));
+  if (softwareDiff?.changes.length) await db.insert(softwareHistory).values(softwareDiff.changes.map((c) => ({ ...c, endpointId })));
   if (extended && host) await recordFromSnapshot(host, extended).catch(() => undefined);
 
   if (metrics && typeof metrics === "object") {
@@ -318,6 +323,10 @@ async function evaluateReportChecks(endpointId: string, metrics: Record<string, 
     // host_metric/host_reboot/host_change need the 3.x extended snapshot;
     // /config already records a "needs agent 3.0" warn for older agents.
     if (!extended) continue;
+    if (check.type === "host_rdp_sessions") {
+      await recordCheckResult(check.id, evaluateRdpSessions(extended.users, config));
+      continue;
+    }
     if (check.type === "host_metric") {
       // Excluded mounts/interfaces/devices/sensors are left out of the reading.
       const result = evaluateEndpointMetric(extended, await withExclusions(check));

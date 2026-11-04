@@ -7,10 +7,10 @@ import { initBackupScheduler } from "./services/backup.js";
 import { db } from "./db/index.js";
 import { appMeta } from "./db/schema.js";
 import { VERSION } from "./lib/version.js";
-import { logger, pruneLogs } from "./lib/logger.js";
+import { logger } from "./lib/logger.js";
 import { startReceivers } from "./services/receivers/index.js";
 import { processOpenAlerts } from "./services/alerting.js";
-import { pruneData } from "./services/retention.js";
+import { enforceFreeSpace, pruneData } from "./services/retention.js";
 
 const port = Number(process.env.PORT ?? 4100);
 
@@ -29,19 +29,25 @@ db.insert(appMeta)
     logger.error("engine", `Failed to stamp app_meta with the running version: ${err instanceof Error ? err.message : String(err)}`, "Couldn't record the running app version in the database — backup filenames may fall back to the build-time version.");
   });
 
-// Daily, off-peak-ish; exact time doesn't matter for a personal homelab tool.
-cron.schedule("30 3 * * *", () => {
-  pruneLogs().catch((err) => {
-    logger.error("engine", `Log retention prune failed: ${err instanceof Error ? err.message : String(err)}`, "Old log entries weren't cleaned up — the logs table may grow larger than usual until the next attempt.");
-  });
-});
-
-// Time-series retention (check results, host metrics, events, flows).
+// Retention periods (check results, metrics, events, flows, logs), daily at an
+// off-peak-ish time; the exact time doesn't matter for a personal homelab tool.
 cron.schedule("45 3 * * *", () => {
   pruneData().catch((err) => {
     logger.error("engine", `Data retention prune failed: ${err instanceof Error ? err.message : String(err)}`, "Old monitoring data wasn't cleaned up — the database may grow larger than usual until the next attempt.");
   });
 });
+
+// Free-space guard: rolls over the oldest data early if the disk runs low, whatever
+// the retention periods say. Often enough to catch a fast-filling disk, and it does
+// almost nothing while there's space. Also runs once at startup, since a full disk
+// may be why the engine just restarted.
+const checkFreeSpace = () => {
+  enforceFreeSpace().catch((err) => {
+    logger.error("engine", `Free-space check failed: ${err instanceof Error ? err.message : String(err)}`, "Looksee couldn't check or free up disk space this time. It will try again in 5 minutes.");
+  });
+};
+cron.schedule("*/5 * * * *", checkFreeSpace);
+checkFreeSpace();
 
 startScheduler();
 startReceivers();

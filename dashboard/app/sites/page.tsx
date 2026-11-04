@@ -9,8 +9,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type Check, type Site, type Endpoint, type Location } from "../lib/api";
+import { useSort } from "../lib/useSort";
 import { PageHelp } from "../components/PageHelp";
-import { ActionMenu, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, Label, Modal, MultiPicker, PromptDialog, StatusBadge, inputClass, useSelection, useToast } from "../components/ui";
+import { ActionMenu, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, Label, Modal, MultiPicker, PromptDialog, SortPicker, StatusBadge, inputClass, useSelection, useToast } from "../components/ui";
 import { displayStatus } from "../components/CheckDetail";
 import { collectorState } from "../components/collector";
 import { own, setOwn } from "../lib/own";
@@ -66,6 +67,8 @@ export default function SitesPage() {
     }
     return m;
   }, [sites, endpoints, checks]);
+  // Sorts the sites inside each location, from the same stats the rows show.
+  const sort = useSort<Site>("sites", { name: (e) => e.name, endpoints: (e) => stats.get(e.id)?.endpoints, checks: (e) => stats.get(e.id)?.checks, problems: (e) => (stats.get(e.id)?.counts.down ?? 0) + (stats.get(e.id)?.counts.warn ?? 0) });
 
   /**
    * Runs one bulk action on the selected sites (POST /api/sites/bulk), shows
@@ -116,6 +119,7 @@ export default function SitesPage() {
           <div className="flex items-center gap-3 px-1 text-xs text-[var(--muted)]">
             <Checkbox checked={sel.allSelected} indeterminate={sel.someSelected} onChange={(on) => sel.setMany(sites.map((e) => e.id), on)} label="Select all sites" />
             Select all sites
+            <SortPicker sort={sort} className="ml-auto" options={[["name", "Name"], ["endpoints", "Endpoints"], ["checks", "Checks"], ["problems", "Problems"]]} />
           </div>
           {sections.map(({ location, items }) => {
             const counts = sumCounts(items);
@@ -166,7 +170,7 @@ export default function SitesPage() {
                 )}
               </div>
               {items.length === 0 && <p className="px-3 py-3 text-xs text-[var(--muted)]">No sites here yet — edit the location to choose some, or set one in a site&apos;s settings.</p>}
-          {items.map((e) => {
+          {sort.apply(items).map((e) => {
             const s = stats.get(e.id)!;
             return (
               <div key={e.id} className={`flex flex-wrap items-center gap-3 border-t border-[var(--border)] px-3 py-3 text-sm first:border-t-0 ${sel.selected.has(e.id) ? "bg-[var(--accent)]/10" : ""}`}>

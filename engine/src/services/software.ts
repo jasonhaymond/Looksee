@@ -144,6 +144,78 @@ export function evaluatePackages(sw: SoftwareReport | null, config: Record<strin
 /** "name@path" key for a package, so the same name in two lock files stays separate. */
 const pkgKey = (p: SwPackage) => `${p.s}:${p.n}${p.p ? `@${p.p}` : ""}`;
 
+/** A package held back from the software history (see softwareChanges). */
+export type HeldPackage = Pick<SwPackage, "n" | "v" | "s">;
+/** One row for the software_history table. */
+export type SoftwareChange = { action: "installed" | "removed" | "updated"; name: string; source: string; fromVersion: string | null; toVersion: string | null };
+
+// A source with at least this many packages that disappears from a report is taken
+// to have failed (a package manager timing out), not to have been emptied.
+const HOLD_SOURCE_MIN_PACKAGES = 5;
+// Most rows one report can add, so a broken report can't flood the table.
+const MAX_HISTORY_ROWS_PER_REPORT = 5_000;
+
+/**
+ * Works out what the endpoint's software history should record for a new report,
+ * by comparing it with the previous one. Pure: it doesn't touch the database.
+ *
+ * Only installed software counts, not project dependencies from lock files, which
+ * change with every deploy. The first report has nothing to compare with, so it
+ * records nothing rather than calling everything newly installed.
+ *
+ * Guards against a failed collection looking like a mass uninstall: a source that
+ * vanishes from a report (when the report has errors, or the source had several
+ * packages) isn't recorded as removed. Its packages are held instead, and compared
+ * when the source comes back, so its return isn't recorded as a mass install either.
+ *
+ * @param prev the previous report, or null if this is the first
+ * @param next the new report
+ * @param held packages held back from earlier reports
+ * @returns the rows to record, and the packages to keep holding (null if none)
+ */
+export function softwareChanges(prev: SoftwareReport | null, next: SoftwareReport, held: HeldPackage[] | null): { changes: SoftwareChange[]; held: HeldPackage[] | null } {
+  const installed = (r: SoftwareReport | null): HeldPackage[] => (r?.packages ?? []).filter((p) => !p.p);
+  const before = [...installed(prev), ...(held ?? [])];
+  const after = installed(next);
+  if (!before.length) return { changes: [], held: null };
+  // An empty list is a failed collection, never a real machine.
+  if (!after.length) return { changes: [], held: before };
+
+  const sourcesAfter = new Set(after.map((p) => p.s));
+  const countBySource = new Map<string, number>();
+  for (const p of before) countBySource.set(p.s, (countBySource.get(p.s) ?? 0) + 1);
+  const hadErrors = Boolean(next.errors?.length);
+  const failed = new Set([...countBySource].filter(([s, n]) => !sourcesAfter.has(s) && (hadErrors || n >= HOLD_SOURCE_MIN_PACKAGES)).map(([s]) => s));
+  const stillHeld = before.filter((p) => failed.has(p.s));
+
+  // Name and source → versions. Windows can list one program several times, for
+  // example two Visual C++ runtimes with the same name and different versions.
+  const versions = (list: HeldPackage[]) => {
+    const m = new Map<string, { n: string; s: string; v: string[] }>();
+    for (const p of list) {
+      const key = `${p.s}:${p.n}`;
+      const entry = m.get(key) ?? { n: p.n, s: p.s, v: [] };
+      entry.v.push(p.v);
+      m.set(key, entry);
+    }
+    for (const e of m.values()) e.v.sort();
+    return m;
+  };
+  const was = versions(before.filter((p) => !failed.has(p.s)));
+  const now = versions(after);
+  const text = (v: string[]) => v.join(", ") || null;
+  const changes: SoftwareChange[] = [];
+  for (const [key, a] of now) {
+    const b = was.get(key);
+    if (!b) changes.push({ action: "installed", name: a.n, source: a.s, fromVersion: null, toVersion: text(a.v) });
+    else if (text(a.v) !== text(b.v)) changes.push({ action: "updated", name: a.n, source: a.s, fromVersion: text(b.v), toVersion: text(a.v) });
+  }
+  for (const [key, b] of was) {
+    if (!now.has(key)) changes.push({ action: "removed", name: b.n, source: b.s, fromVersion: text(b.v), toVersion: null });
+  }
+  return { changes: changes.slice(0, MAX_HISTORY_ROWS_PER_REPORT), held: stillHeld.length ? stillHeld : null };
+}
+
 /**
  * host_software — what changed since the baseline: packages added, removed,
  * or with a different version. The first report sets the baseline; a change

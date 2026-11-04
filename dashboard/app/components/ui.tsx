@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "./Tooltip";
 import { own } from "../lib/own";
 import { runInBackground } from "../lib/background";
+import type { SortControl } from "../lib/useSort";
 
 // Shared building blocks for the management pages, so every table, filter
 // bar and bulk-action flow looks and behaves the same.
@@ -636,6 +637,79 @@ export function MultiFilter({ noun, options, selected, onChange, allLabel, class
         </div>
       )}
     </div>
+  );
+}
+
+/** The arrow on a sorted header. Decorative: aria-sort or the button's label says it in words. */
+function SortArrow({ sort, column }: { sort: SortControl; column: string }) {
+  return (
+    <span aria-hidden className={sort.key === column ? "" : "opacity-0 group-hover:opacity-50"}>
+      {sort.key === column && sort.dir === "desc" ? "▼" : "▲"}
+    </span>
+  );
+}
+
+/**
+ * A table column header that sorts when clicked: ascending, descending, then back
+ * to the list's default order. It's a real button inside the header, so it works
+ * from the keyboard, and aria-sort tells screen readers the current order.
+ *
+ * @param sort the list's sorting, from useSort (lib/useSort.ts)
+ * @param column which of the list's columns this header sorts by
+ * @param className the header's usual classes
+ */
+export function SortTh({ sort, column, className = "", children }: { sort: SortControl; column: string; className?: string; children: React.ReactNode }) {
+  const aria = sort.key === column ? (sort.dir === "asc" ? "ascending" : "descending") : undefined;
+  return (
+    <th aria-sort={aria} className={className}>
+      <button type="button" onClick={() => sort.toggle(column)} className={`group inline-flex items-center gap-1 whitespace-nowrap hover:text-[var(--text)] ${sort.key === column ? "text-[var(--text)]" : ""}`}>
+        {children}
+        <SortArrow sort={sort} column={column} />
+      </button>
+    </th>
+  );
+}
+
+/**
+ * The same as SortTh for a list laid out as a grid rather than a table, whose
+ * header cells aren't real table headers.
+ */
+export function SortHead({ sort, column, children }: { sort: SortControl; column: string; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={() => sort.toggle(column)} className={`group inline-flex items-center gap-1 text-left hover:text-[var(--text)] ${sort.key === column ? "text-[var(--text)]" : ""}`}>
+      {children}
+      <SortArrow sort={sort} column={column} />
+    </button>
+  );
+}
+
+/**
+ * Sorting for a list with no column headers (cards, rows): a dropdown of what to
+ * sort by, and a button for the direction.
+ *
+ * @param sort the list's sorting, from useSort
+ * @param options [column, label] pairs
+ * @param none the dropdown's label for the list's natural order; leave out when the
+ *   list always has a sort column
+ */
+export function SortPicker({ sort, options, none = "Default order", className = "" }: { sort: SortControl; options: [string, string][]; none?: string; className?: string }) {
+  return (
+    <label className={`inline-flex items-center gap-1.5 text-xs text-[var(--muted)] ${className}`}>
+      Sort by
+      <select value={sort.key ?? ""} onChange={(e) => sort.set(e.target.value ? { key: e.target.value, dir: sort.dir } : null)} className="rounded-md border border-[var(--border)] bg-transparent px-2 py-1 text-xs text-[var(--text)]">
+        <option value="">{none}</option>
+        {options.map(([k, l]) => (
+          <option key={k} value={k}>
+            {l}
+          </option>
+        ))}
+      </select>
+      {sort.key && (
+        <button type="button" onClick={() => sort.set({ key: sort.key!, dir: sort.dir === "asc" ? "desc" : "asc" })} className="rounded-md border border-[var(--border)] px-2 py-1 text-[var(--text)]" aria-label={sort.dir === "asc" ? "Ascending. Switch to descending" : "Descending. Switch to ascending"}>
+          {sort.dir === "asc" ? "▲" : "▼"}
+        </button>
+      )}
+    </label>
   );
 }
 

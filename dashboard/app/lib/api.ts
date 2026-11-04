@@ -139,6 +139,7 @@ export type EndpointSnapshot = {
   net?: { name: string; up: boolean; speedMbps?: number; rxBytesPerSec: number; txBytesPerSec: number; addrs?: string[]; mac?: string }[];
   temps?: { sensor: string; celsius: number }[];
   smart?: { device: string; model?: string; passed?: boolean; wearPercent?: number; tempC?: number }[];
+  smartProblem?: string;
   raid?: { name: string; kind: string; healthy: boolean; state?: string }[];
   updates?: { total: number; security: number } | null;
   pendingReboot?: boolean;
@@ -146,7 +147,7 @@ export type EndpointSnapshot = {
   encryption?: { enabled: boolean; detail?: string } | null;
   defender?: { enabled: boolean; realtime: boolean; signatureAgeDays: number } | null;
   time?: { offsetMs?: number; synced?: boolean } | null;
-  users?: { count: number; sessions: { user: string; terminal?: string; host?: string }[] };
+  users?: { count: number; detail?: boolean; sessions: EndpointSession[] };
   listening?: { port: number; proto: string; process?: string }[];
   availableContainers?: string[];
 };
@@ -520,6 +521,34 @@ export type SecurityEvent = { id: string; kind: string; severity: string; ip: st
 export type SecurityRule = { id: string; name: string; enabled: boolean; kinds: string[]; threshold: number; windowMinutes: number; perIp: boolean; notify: boolean; blockMinutes: number | null; cooldownMinutes: number; lastFiredAt: string | null };
 export type IpBlock = { id: string; ip: string; reason: string | null; until: string | null; createdAt: string };
 export type TrustedIp = { id: string; ip: string; firstSeenAt: string; lastSeenAt: string };
+/** One signed-in user on an endpoint. State and the rest come from Windows agents 5.4+. */
+export type EndpointSession = { user: string; terminal?: string; host?: string; started?: number; id?: number; state?: string; kind?: string; clientName?: string; idleSeconds?: number; disconnectedAt?: number };
+/** An endpoint's installed software and the history of changes to it. */
+export type EndpointSoftware = {
+  updatedAt: string | null;
+  collectedAt: number | null;
+  errors: string[];
+  packages: { name: string; version: string; source: string; path: string | null }[];
+  history: { id: string; action: string; name: string; source: string; fromVersion: string | null; toVersion: string | null; detectedAt: string }[];
+};
+/** Everything the Data retention page shows. */
+export type RetentionStatus = {
+  rolloverEnabled: boolean;
+  minFreeMode: string;
+  minFreeGb: number;
+  minFreePercent: number;
+  minKeepHours: number;
+  storagePath: string | null;
+  effectivePath: string;
+  disk: { freeBytes: number; totalBytes: number } | null;
+  diskError: string | null;
+  limitBytes: number | null;
+  reusableBytes: number;
+  databaseBytes: number;
+  lastRolloverAt: string | null;
+  lastRolloverMessage: string | null;
+  kinds: { key: string; label: string; help: string; rollover: boolean; days: number; saved: number | null; defaultDays: number; minDays: number; bytes: number; oldest: string | null }[];
+};
 export type SessionRow = { id: string; ip: string | null; userAgent: string | null; createdAt: string; lastSeenAt: string | null; expiresAt: string; current: boolean };
 export type DiscoveryScan = { id: string; cidr: string; siteId: string | null; status: "queued" | "running" | "done" | "error"; results: DiscoveredDevice[]; error: string | null; startedAt: string; finishedAt: string | null };
 
@@ -619,6 +648,10 @@ export const api = {
   applySuggestions: (id: string, keys: string[], opts: { alertRule?: AlertRulePayload | null; overrides?: Record<string, { name?: string; intervalSeconds?: number }> } = {}) => request<{ created: number }>(`/api/endpoints/${id}/suggestions/apply`, json({ keys, ...opts })),
   endpointInventory: (id: string) => request<EndpointInventory>(`/api/endpoints/${id}/inventory`),
   endpointAddresses: (id: string) => request<AddressRow[]>(`/api/endpoints/${id}/addresses`),
+  endpointSoftware: (id: string) => request<EndpointSoftware>(`/api/endpoints/${id}/software`),
+  retention: () => request<RetentionStatus>("/api/retention"),
+  saveRetention: (body: Record<string, unknown>) => request<RetentionStatus>("/api/retention", { method: "PATCH", body: JSON.stringify(body) }),
+  runRetention: () => request<{ outcome: { action: string; message: string }; status: RetentionStatus }>("/api/retention/run", { method: "POST" }),
   wakeEndpoint: (id: string) => request<{ sent: boolean; viaCollector?: boolean }>(`/api/endpoints/${id}/wake`, { method: "POST" }),
   bulkEndpoints: (ids: string[], action: string, params: Record<string, unknown> = {}) => request<BulkResult>("/api/endpoints/bulk", json({ ids, action, ...params })),
   endpointMetrics: (endpointId: string, limit = 30, since?: string) => request<EndpointMetric[]>(`/api/endpoints/${endpointId}/metrics${qs({ limit, since })}`),

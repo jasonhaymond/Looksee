@@ -142,7 +142,10 @@ type Extended struct {
 	Encryption        *Toggle        `json:"encryption,omitempty"`
 	FailedLogins      *int           `json:"failedLogins,omitempty"`
 	Smart             []SmartDisk    `json:"smart,omitempty"`
-	Raid              []RaidArray    `json:"raid,omitempty"`
+	// Why SMART data couldn't be read, shown on the check instead of a bare
+	// "not reported" (permission denied, no drives found, …).
+	SmartProblem string      `json:"smartProblem,omitempty"`
+	Raid         []RaidArray `json:"raid,omitempty"`
 }
 
 // Counters from the previous Collect, for turning cumulative counters into

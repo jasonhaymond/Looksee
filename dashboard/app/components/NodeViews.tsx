@@ -16,7 +16,8 @@ import { useEffect, useState } from "react";
 import { api, type Group, type MemberType, type Status, type TreeCheck } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
 import { StatusGlyph } from "./Sidebar";
-import { Button, Label, Modal, inputClass, useToast } from "./ui";
+import { Button, Label, Modal, SortTh, inputClass, useToast } from "./ui";
+import { useSort } from "../lib/useSort";
 
 /** One step of a breadcrumb trail: a label and, except for the last, a link. */
 export type Crumb = { label: string; href?: string };
@@ -73,20 +74,37 @@ export type CheckRow = TreeCheck & { endpoint?: string | null; site?: string | n
  * @param showWhere whether to show the endpoint/site columns
  */
 export function ChecksTable({ checks, showWhere = false, empty = "No checks." }: { checks: CheckRow[]; showWhere?: boolean; empty?: string }) {
+  // How bad a check is, worst first, with disabled checks after everything else.
+  const rank = (c: CheckRow) => (c.enabled ? (new Map([["down", 0], ["warn", 1], ["unknown", 2], ["up", 3]]).get(c.status ?? "unknown") ?? 2) : 4);
+  const sort = useSort<CheckRow>("nodeChecks", { status: rank, name: (c) => c.name, type: (c) => typeLabel(c.type), endpoint: (c) => c.endpoint, site: (c) => c.site });
   if (!checks.length) return <p className="text-sm text-[var(--muted)]">{empty}</p>;
-  // Worst first, so problems are at the top; then by name.
-  const rank: Record<string, number> = { down: 0, warn: 1, unknown: 2, up: 3 };
-  const sorted = [...checks].sort((a, b) => (a.enabled === b.enabled ? 0 : a.enabled ? -1 : 1) || (rank[a.status ?? "unknown"] ?? 2) - (rank[b.status ?? "unknown"] ?? 2) || a.name.localeCompare(b.name));
+  // Problems at the top until a column is chosen; then by name.
+  const worstFirst = [...checks].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+  const sorted = sort.apply(worstFirst);
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-[var(--muted)]">
-            <th className="py-1 pr-2 font-normal">Status</th>
-            <th className="py-1 pr-2 font-normal">Check</th>
-            <th className="py-1 pr-2 font-normal">Type</th>
-            {showWhere && <th className="py-1 pr-2 font-normal">Endpoint</th>}
-            {showWhere && <th className="py-1 font-normal">Site</th>}
+            <SortTh sort={sort} column="status" className="py-1 pr-2 font-normal">
+              Status
+            </SortTh>
+            <SortTh sort={sort} column="name" className="py-1 pr-2 font-normal">
+              Check
+            </SortTh>
+            <SortTh sort={sort} column="type" className="py-1 pr-2 font-normal">
+              Type
+            </SortTh>
+            {showWhere && (
+              <SortTh sort={sort} column="endpoint" className="py-1 pr-2 font-normal">
+                Endpoint
+              </SortTh>
+            )}
+            {showWhere && (
+              <SortTh sort={sort} column="site" className="py-1 font-normal">
+                Site
+              </SortTh>
+            )}
           </tr>
         </thead>
         <tbody>

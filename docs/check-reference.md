@@ -815,7 +815,7 @@ rollout holds them back anyway); `updates.phased` counts them on their own.
 | Interfaces | `ip -s link` | `netstat -ib` | `Get-NetAdapterStatistics` |
 | Listening ports | `ss -tlnp` | `lsof -iTCP -sTCP:LISTEN` | `Get-NetTCPConnection -State Listen` |
 | Temperatures | `sensors` | `sudo powermetrics --samplers smc -n1` | `Get-CimInstance -Namespace root/wmi MSAcpi_ThermalZoneTemperature` |
-| SMART | `sudo smartctl -H -A /dev/sda` | `smartctl -H disk0` | `Get-PhysicalDisk \| Get-StorageReliabilityCounter` |
+| SMART | `sudo smartctl -H -A /dev/sda` | `smartctl -H disk0` | `smartctl -H /dev/sda`, or `Get-PhysicalDisk \| Get-StorageReliabilityCounter` |
 | RAID / ZFS | `cat /proc/mdstat`, `zpool status -x` | `diskutil appleRAID list` | `Get-StoragePool` |
 | Updates | `apt list --upgradable` / `dnf check-update` | `softwareupdate -l` | Settings → Windows Update |
 | Reboot pending | `ls /var/run/reboot-required` | — | `Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'` |
@@ -1117,10 +1117,13 @@ matching text. **Agent** (Linux).
 **What it watches:** new events by log, event ID, level, source and message text.
 **Agent** (Windows).
 
-**How it works:** queries `Get-WinEvent` from the last record it saw, so each event is
-counted once. Useful IDs: 41 and 6008 (unexpected shutdown), 7031/7034 (service crashed),
-7/11/51/153 (disk errors), 4625 (failed logon, *Security* log), 1074 (who restarted it),
-and 372/805 in *Microsoft-Windows-PrintService/Operational* (failed print jobs).
+**How it works:** queries the log with `wevtutil`, Windows' built-in event log tool, from
+the end of its last successful read, so each event is counted once. If a read fails or
+times out the check says **unknown** and the next run covers the missed time, so a slow
+moment doesn't raise a false alarm or lose an event. Useful IDs: 41 and 6008 (unexpected
+shutdown), 1001 (blue screen, source *BugCheck*), 7031/7034 (service crashed), 7/11/51/153
+(disk errors), 4625 (failed logon, *Security* log), 1074 (who restarted it), and 372/805 in
+*Microsoft-Windows-PrintService/Operational* (failed print jobs).
 
 **Value:** new matching events.
 
@@ -1129,6 +1132,7 @@ and 372/805 in *Microsoft-Windows-PrintService/Operational* (failed print jobs).
 ```powershell
 Get-WinEvent -FilterHashtable @{LogName='System'; Id=41,6008; StartTime=(Get-Date).AddDays(-1)}
 Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2} -MaxEvents 20
+wevtutil qe System "/q:*[System[(EventID=41 or EventID=6008)]]" /c:5 /rd:true /f:text
 ```
 
 ## OS & hardware (agent)
@@ -1198,6 +1202,33 @@ RPM, Alpine (apk) and Arch (pacman) packages, Windows programs (the registry's U
 keys), macOS apps, global npm and pip packages, the Node.js/Python/PHP runtimes, and any
 lock files you list. The agent sends the list when it changes, and at least once a day.
 *Local user accounts* is its own check, below.
+
+<a id="host_rdp_sessions"></a>
+
+### RDP sessions
+
+**What it watches:** who is connected to a Windows machine over Remote Desktop: each
+session's user, state (active or disconnected), the computer it's from, how long it's been
+idle and when the user signed in. Can flag a user who isn't expected, which is how a stolen
+account being used for remote access shows up, and sessions left disconnected too long.
+**Report** (Windows agent 5.4+; other systems report *unknown*).
+
+**How it works:** the agent lists sessions through the Windows session API (the source of
+Task Manager's Users tab) every minute and includes them in its report; the engine judges
+them. Someone signed in at the keyboard isn't counted unless you turn on **Also count the
+local console**. A disconnected session counts as RDP unless Windows says it's the console:
+once disconnected it has no connection type left, so a console user who switched away can
+show here too. **Expected users** matches ignoring case and with or without the domain
+(`alice` also matches `CORP\alice`), and `*` matches anything.
+
+**Value:** the number of sessions; thresholds apply, so *Warn above 2* flags a busy server.
+
+**Check it yourself:**
+
+```powershell
+quser
+qwinsta
+```
 
 <a id="agent_users"></a>
 

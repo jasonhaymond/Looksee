@@ -407,6 +407,10 @@ func collectPackages(lockfiles []string) ([]Package, []string) {
 ConvertTo-Json -Compress -InputObject @(Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and -not $_.SystemComponent } | ForEach-Object { [pscustomobject]@{ n = [string]$_.DisplayName; v = [string]$_.DisplayVersion } })`, nil, 2*time.Minute)
 		if ok {
 			pkgs = append(pkgs, ParseWindowsUninstall(out)...)
+		} else {
+			// Said out loud, so the engine's software history doesn't read an
+			// empty list as every program having been uninstalled.
+			errs = append(errs, "installed programs: the registry read failed or timed out")
 		}
 	case "darwin":
 		if res, err := execx.Run(3*time.Minute, nil, "system_profiler", "SPApplicationsDataType", "-json", "-detailLevel", "mini"); err == nil {

@@ -7,7 +7,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type MetricDef, type OidInfo, type WalkRow } from "../lib/api";
 import { CATEGORIES, CHECK_TYPES, TYPE_BY_KEY, defaultConfigFor, normalizeConfig, validateConfig, type Field } from "../lib/checkTypes";
-import { AlertOptions, Button, Label, Modal, MultiPicker, alertRulePayload, emptyAlertOptions, inputClass, type AlertOptionsValue, type PickItem } from "./ui";
+import { AlertOptions, Button, Label, Modal, MultiPicker, SortTh, alertRulePayload, emptyAlertOptions, inputClass, type AlertOptionsValue, type PickItem } from "./ui";
+import { useSort } from "../lib/useSort";
 import { Tooltip } from "./Tooltip";
 import { own } from "../lib/own";
 
@@ -391,6 +392,7 @@ function SnmpWalkDialog({ config, siteId, checkId, onPick, onAddExtra, onClose }
   }
 
   const q = filter.trim().toLowerCase();
+  const walkSort = useSort<NonNullable<typeof rows>[number]>("snmpWalk", { oid: (r) => r.oid, name: (r) => r.name, type: (r) => r.type, value: (r) => r.display ?? r.value });
   const shown = (rows ?? []).filter((r) => !q || `${r.oid} ${r.name ?? ""} ${r.description ?? ""} ${r.type} ${r.value} ${r.display ?? ""}`.toLowerCase().includes(q));
   return (
     <Modal title={`SNMP walk — ${String(config.host ?? "")}`} onClose={onClose} wide>
@@ -432,15 +434,23 @@ function SnmpWalkDialog({ config, siteId, checkId, onPick, onAddExtra, onClose }
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-[var(--panel-2)] text-left text-[var(--muted)]">
                   <tr>
-                    <th className="px-2 py-1 font-normal">OID</th>
-                    <th className="px-2 py-1 font-normal">Name</th>
-                    <th className="px-2 py-1 font-normal">Type</th>
-                    <th className="px-2 py-1 font-normal">Value</th>
+                    <SortTh sort={walkSort} column="oid" className="px-2 py-1 font-normal">
+                      OID
+                    </SortTh>
+                    <SortTh sort={walkSort} column="name" className="px-2 py-1 font-normal">
+                      Name
+                    </SortTh>
+                    <SortTh sort={walkSort} column="type" className="px-2 py-1 font-normal">
+                      Type
+                    </SortTh>
+                    <SortTh sort={walkSort} column="value" className="px-2 py-1 font-normal">
+                      Value
+                    </SortTh>
                     <th className="px-2 py-1 font-normal" aria-label="Add to Extra OIDs" />
                   </tr>
                 </thead>
                 <tbody>
-                  {shown.slice(0, 2000).map((r) => (
+                  {walkSort.apply(shown).slice(0, 2000).map((r) => (
                     <tr key={r.oid} onClick={() => onPick(r)} className="cursor-pointer border-t border-[var(--border)] hover:bg-[var(--accent)]/10">
                       <td className="px-2 py-1 font-mono">{r.oid}</td>
                       <td className="px-2 py-1 font-mono" title={r.description ? `${r.mib}: ${r.description}` : undefined}>

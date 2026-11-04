@@ -8,12 +8,14 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { api, type Check, type StatusPage } from "../lib/api";
 import { PageHelp } from "../components/PageHelp";
-import { Button, EmptyState, Label, Modal, inputClass } from "../components/ui";
+import { Button, EmptyState, Label, Modal, SortPicker, inputClass } from "../components/ui";
+import { useSort } from "../lib/useSort";
 import { usePageAuth } from "../components/usePageAuth";
 
 export default function StatusPagesAdmin() {
   const authed = usePageAuth();
   const [pages, setPages] = useState<StatusPage[]>([]);
+  const sort = useSort<StatusPage>("statusPages", { title: (p) => p.title, slug: (p) => p.slug, checks: (p) => p.checkIds.length, published: (p) => !p.published });
   const [checks, setChecks] = useState<Check[]>([]);
   const [editing, setEditing] = useState<StatusPage | "new" | null>(null);
   const load = useCallback(() =>
@@ -39,7 +41,10 @@ export default function StatusPagesAdmin() {
         <EmptyState>No status pages yet.</EmptyState>
       ) : (
         <ul className="space-y-2">
-          {pages.map((p) => (
+          <li>
+            <SortPicker sort={sort} options={[["title", "Title"], ["slug", "Address"], ["checks", "Number of checks"], ["published", "Published first"]]} />
+          </li>
+          {sort.apply(pages).map((p) => (
             <li key={p.id} className="flex flex-wrap items-center gap-3 rounded-xl surface p-3 text-sm">
               <div className="flex-1">
                 <div className="font-medium">

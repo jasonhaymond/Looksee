@@ -4,14 +4,16 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type Site, type SlaRow } from "../lib/api";
 import { typeLabel } from "../lib/checkTypes";
 import { PageHelp } from "../components/PageHelp";
-import { Button, EmptyState, inputClass } from "../components/ui";
+import { Button, EmptyState, SortTh, inputClass } from "../components/ui";
+import { useSort, type SortState } from "../lib/useSort";
 import { usePageAuth } from "../components/usePageAuth";
 
-type SortKey = "name" | "uptimePercent" | "downtimeMinutes" | "incidents" | "avgLatencyMs";
+// Worst uptime first until another column is chosen.
+const WORST_FIRST: SortState = { key: "uptimePercent", dir: "asc" };
 
 const minutes = (m: number) => (m >= 120 ? `${(m / 60).toFixed(1)} h` : `${m} min`);
 
@@ -22,7 +24,7 @@ export default function ReportsPage() {
   const [sites, setSites] = useState<Site[]>([]);
   const [rows, setRows] = useState<SlaRow[] | null>(null);
   const [target, setTarget] = useState("99.9");
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "uptimePercent", dir: 1 });
+  const sort = useSort<SlaRow>("sla", { name: (r) => r.name, uptimePercent: (r) => r.uptimePercent, downtimeMinutes: (r) => r.downtimeMinutes, degradedMinutes: (r) => r.degradedMinutes, maintenanceMinutes: (r) => r.maintenanceMinutes, incidents: (r) => r.incidents, avgLatencyMs: (r) => r.avgLatencyMs }, WORST_FIRST);
 
   useEffect(() => {
     if (!authed) return;
@@ -34,25 +36,16 @@ export default function ReportsPage() {
     api.slaReport(days, siteId || undefined).then((r) => setRows(r.checks));
   }, [authed, days, siteId]);
 
-  const sorted = useMemo(
-    () =>
-      [...(rows ?? [])].sort((a, b) => {
-        const av = a[sort.key] ?? -1;
-        const bv = b[sort.key] ?? -1;
-        return (typeof av === "string" ? av.localeCompare(String(bv)) : Number(av) - Number(bv)) * sort.dir;
-      }),
-    [rows, sort]
-  );
+  const sorted = sort.apply(rows ?? []);
   const goal = Number(target);
   const measured = (rows ?? []).filter((r) => r.uptimePercent != null);
   const overall = measured.length ? measured.reduce((a, r) => a + (r.uptimePercent ?? 0), 0) / measured.length : null;
   const missing = measured.filter((r) => (r.uptimePercent ?? 100) < goal).length;
 
-  const th = (key: SortKey, label: string) => (
-    <th className="cursor-pointer px-2 py-2 text-left font-normal hover:text-[var(--text)]" onClick={() => setSort((s) => ({ key, dir: s.key === key ? ((-s.dir) as 1 | -1) : 1 }))}>
+  const th = (key: string, label: string) => (
+    <SortTh sort={sort} column={key} className="px-2 py-2 text-left font-normal">
       {label}
-      {sort.key === key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
-    </th>
+    </SortTh>
   );
 
   if (!authed) return null;
@@ -133,8 +126,8 @@ export default function ReportsPage() {
                 {th("name", "Check")}
                 {th("uptimePercent", "Uptime")}
                 {th("downtimeMinutes", "Downtime")}
-                <th className="px-2 py-2 text-left font-normal">Degraded</th>
-                <th className="px-2 py-2 text-left font-normal">Maintenance</th>
+                {th("degradedMinutes", "Degraded")}
+                {th("maintenanceMinutes", "Maintenance")}
                 {th("incidents", "Incidents")}
                 {th("avgLatencyMs", "Avg response")}
               </tr>

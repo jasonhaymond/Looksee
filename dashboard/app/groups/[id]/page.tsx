@@ -19,16 +19,21 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSort } from "../../lib/useSort";
 import { api, ApiError, type Channel, type GroupDetail, type GroupRules, type MemberType, type Site, type Endpoint, type Check, type Location, type Tree } from "../../lib/api";
 import { GroupFilterEditor } from "../../components/GroupFilterEditor";
 import { Breadcrumbs, ChecksTable, SummaryLine, type CheckRow } from "../../components/NodeViews";
 import { StatusGlyph } from "../../components/Sidebar";
-import { AlertOptions, Button, ConfirmDialog, Label, Modal, MultiPicker, PromptDialog, alertRulePayload, emptyAlertOptions, inputClass, useToast, type AlertOptionsValue, type PickItem } from "../../components/ui";
+import { AlertOptions, Button, ConfirmDialog, Label, Modal, MultiPicker, PromptDialog, SortPicker, alertRulePayload, emptyAlertOptions, inputClass, useToast, type AlertOptionsValue, type PickItem } from "../../components/ui";
 import { usePageAuth } from "../../components/usePageAuth";
 
 /** The page. */
+/** One member of a group as listed on its page. */
+type MemberRow = { type: MemberType; id: string; name: string; href: string; status: string | null; sub: string };
+
 export default function GroupPage() {
   const authed = usePageAuth();
+  const memberSort = useSort<MemberRow>("groupMembers", { name: (x) => x.name, type: (x) => x.type, status: (x) => x.status });
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
   const [detail, setDetail] = useState<GroupDetail | null>(null);
@@ -177,13 +182,16 @@ export default function GroupPage() {
           <p className="text-sm text-[var(--muted)]">{g.kind === "filter" ? "Nothing matches the rules right now." : "Empty — add members here, or use “Add to group” on any location, site, endpoint or check page."}</p>
         ) : (
           <ul className="space-y-1 text-sm">
-            {(
+            <li className="mb-1">
+              <SortPicker sort={memberSort} options={[["name", "Name"], ["type", "Type"], ["status", "Status"]]} />
+            </li>
+            {memberSort.apply(
               [
                 ...m.locations.map((x) => ({ type: "location" as const, id: x.id, name: x.name, href: `/locations/${x.id}`, status: null, sub: "location" })),
                 ...m.sites.map((x) => ({ type: "site" as const, id: x.id, name: x.name, href: `/sites/${x.id}`, status: x.status, sub: "site" })),
                 ...m.endpoints.map((x) => ({ type: "endpoint" as const, id: x.id, name: x.name, href: `/endpoints/${x.id}`, status: x.status, sub: ["endpoint", x.site, x.os].filter(Boolean).join(" · ") })),
                 ...m.checks.map((x) => ({ type: "check" as const, id: x.id, name: x.name, href: `/checks/${x.id}`, status: x.enabled ? x.status : "disabled", sub: ["check", x.endpoint ?? x.site].filter(Boolean).join(" · ") })),
-              ]
+              ] as MemberRow[]
             ).map((x) => (
               <li key={`${x.type}:${x.id}`} className="flex items-center gap-2">
                 <StatusGlyph status={x.status} />

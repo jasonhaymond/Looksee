@@ -1,4 +1,3 @@
-import { lt } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { logs } from "../db/schema.js";
 
@@ -41,12 +40,3 @@ function error(source: string, message: string, human: string, metadata?: Metada
 }
 
 export const logger = { debug, info, warn, error };
-
-// Keeps the logs table from growing unbounded — mirrors the retention
-// pattern the Borg backup pruning already uses in this codebase, just
-// time-based instead of count-based. Called on a daily cron from index.ts.
-export async function pruneLogs(): Promise<void> {
-  const retentionDays = Number(process.env.LOOKSEE_LOG_RETENTION_DAYS ?? 30);
-  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-  await db.delete(logs).where(lt(logs.createdAt, cutoff));
-}

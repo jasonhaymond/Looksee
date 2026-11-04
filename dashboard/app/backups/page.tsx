@@ -10,6 +10,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type BackupSettings, type BackupRun, type Archive, type CurrentOperation } from "../lib/api";
+import { useSort } from "../lib/useSort";
+import { SortPicker } from "../components/ui";
 import { RestoreForm } from "./RestoreForm";
 import { Tooltip } from "../components/Tooltip";
 import { PageHelp } from "../components/PageHelp";
@@ -26,6 +28,8 @@ export default function BackupsPage() {
   const [currentOp, setCurrentOp] = useState<CurrentOperation>(null);
   const [runs, setRuns] = useState<BackupRun[]>([]);
   const [archives, setArchives] = useState<Archive[]>([]);
+  const archiveSort = useSort<Archive>("backupArchives", { time: (a) => new Date(a.time), name: (a) => a.name });
+  const runSort = useSort<BackupRun>("backupRuns", { started: (r) => new Date(r.startedAt), status: (r) => r.status, kind: (r) => r.kind, archive: (r) => r.archiveName });
   const [sshKey, setSshKey] = useState<string | null>(null);
 
   const [repoUrl, setRepoUrl] = useState("");
@@ -221,7 +225,10 @@ export default function BackupsPage() {
           <p className="text-sm text-[var(--muted)]">No archives yet.</p>
         ) : (
           <ul className="space-y-2">
-            {archives.map((a) => (
+            <li>
+              <SortPicker sort={archiveSort} options={[["time", "Time"], ["name", "Name"]]} />
+            </li>
+            {archiveSort.apply(archives).map((a) => (
               <li key={a.name} className="rounded-md border border-[var(--border)] p-2 text-sm">
                 <div className="flex items-center justify-between">
                   <span>{a.name}</span>
@@ -240,7 +247,10 @@ export default function BackupsPage() {
           <p className="text-sm text-[var(--muted)]">No runs yet.</p>
         ) : (
           <ul className="space-y-1 text-xs">
-            {runs.map((r) => (
+            <li className="mb-1">
+              <SortPicker sort={runSort} options={[["started", "Started"], ["status", "Status"], ["kind", "Kind"], ["archive", "Archive"]]} />
+            </li>
+            {runSort.apply(runs).map((r) => (
               <li key={r.id} className="flex items-center gap-2">
                 <span
                   className="h-1.5 w-1.5 rounded-full"

@@ -18,7 +18,8 @@ import { displayStatus, Details, Remediation } from "../../components/CheckDetai
 import { RecoveryUrl, ResolveButton } from "../../components/CheckRecovery";
 import { ExclusionsApplied } from "../../components/ExclusionsApplied";
 import { LineChart, StatusStrip } from "../../components/Charts";
-import { Button, EmptyState, Label, Modal, StatusBadge, inputClass, relativeTime, useToast } from "../../components/ui";
+import { Button, EmptyState, Label, Modal, SortTh, StatusBadge, inputClass, relativeTime, useToast } from "../../components/ui";
+import { useSort } from "../../lib/useSort";
 import { pollEvery } from "../../lib/poll";
 import { useNow } from "../../lib/useNow";
 
@@ -97,7 +98,8 @@ export default function CheckPage() {
   const def = check ? TYPE_BY_KEY.get(check.type) : undefined;
   const unit = def?.value?.unit ?? "";
   const latestDetails = useMemo(() => results?.find((r) => r.details != null)?.details, [results]);
-  const shownResults = (results ?? []).filter((r) => !onlyProblems || r.status !== "up");
+  const resultSort = useSort<CheckResult>("checkResults", { time: (r) => new Date(r.checkedAt), status: (r) => r.status, value: (r) => r.value, ms: (r) => r.latencyMs, message: (r) => r.message });
+  const shownResults = resultSort.apply((results ?? []).filter((r) => !onlyProblems || r.status !== "up"));
 
   if (missing)
     return (
@@ -268,11 +270,21 @@ export default function CheckPage() {
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-[var(--panel)] text-left text-[var(--muted)]">
                   <tr>
-                    <th className="py-1 pr-2 font-normal">Time</th>
-                    <th className="pr-2 font-normal">Status</th>
-                    <th className="pr-2 font-normal">Value</th>
-                    <th className="pr-2 font-normal">ms</th>
-                    <th className="pr-2 font-normal">Message</th>
+                    <SortTh sort={resultSort} column="time" className="py-1 pr-2 font-normal">
+                      Time
+                    </SortTh>
+                    <SortTh sort={resultSort} column="status" className="pr-2 font-normal">
+                      Status
+                    </SortTh>
+                    <SortTh sort={resultSort} column="value" className="pr-2 font-normal">
+                      Value
+                    </SortTh>
+                    <SortTh sort={resultSort} column="ms" className="pr-2 font-normal">
+                      ms
+                    </SortTh>
+                    <SortTh sort={resultSort} column="message" className="pr-2 font-normal">
+                      Message
+                    </SortTh>
                     <th className="font-normal">
                       <span className="sr-only">Statistics</span>
                     </th>

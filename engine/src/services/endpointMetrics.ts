@@ -11,6 +11,7 @@
 import crypto from "node:crypto";
 import { applyThresholds, type MeasuredResult, type Status } from "./thresholds.js";
 import { excludeItems, nameExcluded } from "./probes/exclude.js";
+import type { ReportedUsers } from "./rdpSessions.js";
 
 // Shape of the 3.x agent's `metrics.extended` (agent/internal/metrics).
 // Every field is optional: a platform or permission may not provide it.
@@ -32,7 +33,7 @@ export type Snapshot = {
   net?: { name: string; rxBytesPerSec?: number; txBytesPerSec?: number; rxErrorsPerSec?: number; txErrorsPerSec?: number; rxDropsPerSec?: number; txDropsPerSec?: number; up?: boolean; speedMbps?: number; mac?: string; addrs?: string[] }[];
   tcp?: Record<string, number>;
   listening?: { port: number; proto: string; address?: string; process?: string }[];
-  users?: { count?: number; sessions?: { user: string; terminal?: string; host?: string; started?: number }[] };
+  users?: ReportedUsers;
   pendingReboot?: boolean | null;
   time?: { offsetMs?: number | null; synced?: boolean | null; server?: string };
   updates?: { total?: number; security?: number; phased?: number; checkedAt?: number } | null;
@@ -41,6 +42,8 @@ export type Snapshot = {
   encryption?: { enabled?: boolean; detail?: string } | null;
   failedLogins?: number | null;
   smart?: { device: string; model?: string; passed?: boolean; reallocated?: number; pending?: number; wearPercent?: number; tempC?: number }[] | null;
+  // Why the agent couldn't read SMART (agent 5.4+), e.g. "Permission denied".
+  smartProblem?: string;
   raid?: { name: string; kind: string; healthy: boolean; state?: string; detail?: string }[] | null;
 };
 
@@ -167,7 +170,10 @@ export function evaluateEndpointMetric(snapshot: Snapshot, config: Record<string
   const excluded = def.instance && !def.instanceRequired ? excludeItems(config.exclude, true) : [];
   const readings = def.read(snapshot, instance)?.filter((r) => !nameExcluded(r.label, excluded)) ?? null;
   if (readings == null || readings.length === 0) {
-    return { status: "unknown", latencyMs: null, message: instance && def.instance ? `No ${def.instance} matching "${instance}" on this endpoint` : `${def.label} isn't reported by this endpoint${def.platforms ? ` (${def.platforms})` : ""}` };
+    // A SMART metric with nothing to show: pass on the agent's own reason when it
+    // gave one (no disk access, no drives found), which says what to fix.
+    const reason = def.key.startsWith("smart.") ? snapshot.smartProblem : undefined;
+    return { status: "unknown", latencyMs: null, message: instance && def.instance && !reason ? `No ${def.instance} matching "${instance}" on this endpoint` : reason ? `${def.label} isn't available: ${reason}` : `${def.label} isn't reported by this endpoint${def.platforms ? ` (${def.platforms})` : ""}` };
   }
 
   if (def.kind === "boolean") {

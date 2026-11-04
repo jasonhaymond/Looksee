@@ -12,7 +12,8 @@ import crypto from "node:crypto";
 import { and, desc, eq, gte, inArray, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { queueCollectorJob, siteCollectorFor } from "../services/sites.js";
-import { endpoints, endpointMetrics, checks, sites, maintenanceWindows } from "../db/schema.js";
+import { endpoints, endpointMetrics, checks, sites, maintenanceWindows, softwareHistory } from "../db/schema.js";
+import type { SoftwareReport } from "../services/software.js";
 import { requireAuth } from "../middleware/auth.js";
 import { sendWakeOnLan } from "../services/probes/protocols.js";
 import { suggestChecks } from "../services/suggestions.js";
@@ -93,6 +94,25 @@ endpointsRouter.get("/:id/inventory", async (req, res) => {
     // Older agents only send names.
     processNames: host.availableProcesses ?? null,
     serviceNames: host.availableServices ?? null,
+  });
+});
+
+// Installed software the agent last reported, and the history of changes to it
+// (newest first), for the endpoint's Software tab. Separate from the endpoint's
+// other details because a machine can have thousands of packages.
+endpointsRouter.get("/:id/software", async (req, res) => {
+  const host = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
+  if (!host) {
+    res.status(404).json({ error: "Endpoint not found" });
+    return;
+  }
+  const report = (host.software ?? null) as SoftwareReport | null;
+  res.json({
+    updatedAt: host.softwareUpdatedAt,
+    collectedAt: report?.collectedAt ?? null,
+    errors: report?.errors ?? [],
+    packages: (report?.packages ?? []).map((p) => ({ name: p.n, version: p.v, source: p.s, path: p.p ?? null })),
+    history: await db.select().from(softwareHistory).where(eq(softwareHistory.endpointId, host.id)).orderBy(desc(softwareHistory.detectedAt)).limit(2000),
   });
 });
 

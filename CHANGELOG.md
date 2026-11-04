@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [5.4.0] - 2026-11-04
+
+Data retention, RDP sessions, software history and sorting everywhere, plus reliable
+event log and SMART checks. Engine, dashboard and agent move to 5.4.0 together.
+Includes a database migration; see the deployment guide's *Upgrading to 5.4*.
+
+### Added
+
+- **Data retention page** (System → Data retention): how long to keep each kind of data, and
+  a guard that stops the disk filling up. Every 5 minutes it checks free space on the disk
+  holding the database; below the limit (**3 GB free** by default, or set a number of GB or a
+  percentage) it rolls over the oldest data even if its retention period hasn't run out,
+  least important first: flows, metrics, traps and syslog, logs, software history, then check
+  results. The last 24 hours (configurable) and the security audit log are never rolled over, and the
+  audit log's period can't be set below 30 days on the page.
+  The page shows the disk, the database, each kind of data's size, and the last rollover.
+  Periods set in `.env` still apply until set here.
+- **RDP sessions check** (`host_rdp_sessions`, Windows agent 5.4): each Remote Desktop
+  session's user, state and source computer, with optional **Expected users** and a warning
+  for sessions left disconnected. A Windows endpoint's Overview tab shows the same list.
+- **Software history**: the endpoint's new **Software** tab lists every program or package
+  installed, removed or updated, and everything installed now. A package manager that fails
+  to answer isn't recorded as an uninstall.
+- **Sorting on every list**: click a column heading on any table, including processes and
+  services, or use the **Sort by** dropdown on lists without headings. Each list remembers
+  its order in your browser. Blank values stay last, and numbers inside names and IP
+  addresses sort properly (server2 before server10).
+
+### Fixed
+
+- **Event log checks ("disk errors", blue screens, unexpected shutdowns) gave inconsistent
+  results and PowerShell timeouts.** They now read logs with Windows' `wevtutil`, which
+  starts in milliseconds. A failed read used to skip that stretch of time, losing any event in
+  it, and counted as down; it now reports unknown and the next run covers the missed time.
+  The per-minute failed-logon count moved off PowerShell too, and PowerShell scripts now wait
+  their turn (two at a time) instead of slowing each other into timeouts when an agent starts.
+- **SMART checks said "isn't reported" although `smartctl` works by hand.** The agent now
+  finds `smartctl` in its usual install folders when it isn't on the service's PATH, retries
+  a drive with smartctl's own detection (and as SATA over USB) when the scan's device type
+  gives no data, falls back to Windows' counters if smartctl reads nothing, and no longer
+  loses every drive on Windows when one can't report reliability counters. The check now shows
+  the agent's reason, such as *Permission denied* with what to do. On Linux that's the usual cause:
+  `sudo smartctl` works by hand, while the agent is an unprivileged user. Agents installed
+  before 5.0 or with `--minimal` need the privileged drop-in, which updating an agent
+  doesn't add (agent README → Privileges). Last good data is kept for
+  2 hours through a failed read rather than the check flapping to unknown. The session and
+  command-runner code also can't hang past its timeout any more if a child process holds the
+  output open.
+
+### Changed
+
+- Sessions on Windows come from the Windows session API rather than `quser`, so they work in
+  any display language. Migration 0028 adds `software_history`, `retention_settings`,
+  `endpoints.software_held` and time indexes on `check_results`, `endpoint_metrics` and
+  `logs`. Agent dependency: `golang.org/x/sys` is now used directly (it was already in the
+  build).
+- Patch and minor dependency updates: `next` 16.4.5, `nodemailer` 10.3.1, `ws` 8.22.1,
+  `mongodb` 7.8.0, `imapflow` 2.10.2, `express-rate-limit` 8.7.3, `gopsutil` 4.26.10,
+  `go-winio` 0.6.4 and smaller ones.
+
 ## [5.3.0] - 2026-10-30
 
 Calmer timeouts, faster bulk actions, and better filters. Engine, dashboard and agent
