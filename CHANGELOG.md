@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [5.5.0] - 2026-11-04
+
+### Added
+
+- **Memory detail for memory that isn't in any process.** Agents now report system commit
+  (used and total), kernel nonpaged and paged pools, private memory across all processes,
+  memory not in processes, swap / page file size, and pages read and written per second.
+  It's on the endpoint's Overview, with the Processes tab gaining a sortable Private column.
+  New Endpoint metrics can check each one. Windows and Linux; macOS reports memory percent
+  and swap only. Needs the updated agent.
+- Memory checks, including the simple Memory usage check, carry the whole memory table in
+  their details, and a failing one says where the memory is in its message, including the
+  largest process.
+- Suggested checks offer system commit on Windows.
+- The endpoint page warns when an agent isn't running as a service, and on Windows when it
+  also has no administrator rights, because some readings are then missing or wrong. The
+  agent logs the same warning when it starts. Needs the updated agent.
+
+### Changed
+
+- The "Swap used" metric is now called "Swap / page file used". Existing checks keep working.
+
+### Fixed
+
+- A check's page no longer runs off the side of a phone screen once it has results.
+
 ## [5.4.0] - 2026-11-04
 
 Data retention, RDP sessions, software history and sorting everywhere, plus reliable

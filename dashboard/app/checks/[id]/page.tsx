@@ -227,7 +227,7 @@ export default function CheckPage() {
       </div>
 
       {tab === "history" && (
-        <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           <section className="surface rounded-xl p-3">
             <h2 className="mb-2 text-sm font-medium">Incidents in range</h2>
             {stats?.incidents.length ? (

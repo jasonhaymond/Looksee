@@ -7,7 +7,8 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { api, type AddressRow, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type EndpointSession, type EndpointSoftware, type Suggestion } from "../lib/api";
+import { cleanMemory } from "../lib/memoryDetail";
+import { api, type AddressRow, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type EndpointSession, type EndpointSnapshot, type EndpointSoftware, type Suggestion } from "../lib/api";
 import { useSort, type SortState } from "../lib/useSort";
 import { typeLabel } from "../lib/checkTypes";
 import { AlertOptions, Button, FilterChip, Label, MultiPicker, SortPicker, SortTh, StatusBadge, alertRulePayload, emptyAlertOptions, formatBytes, inputClass, relativeTime, useToast } from "./ui";
@@ -202,6 +203,50 @@ function SessionsTable({ sessions }: { sessions: EndpointSession[] }) {
   );
 }
 
+/**
+ * Where an endpoint's memory is: commit, kernel pools, what processes hold, what
+ * they don't, swap and paging. Only shows rows the agent reported.
+ * @param mem the memory section of the agent's latest report
+ * @param os the endpoint's operating system, for what to call swap and the pools
+ */
+function MemoryDetail({ mem: reported, os }: { mem: NonNullable<EndpointSnapshot["mem"]>; os: string | null }) {
+  const mem = cleanMemory(reported);
+  const windows = /windows/i.test(os ?? "");
+  const ofTotal = (used?: number, total?: number) => (used != null && total ? `${formatBytes(used)} of ${formatBytes(total)} (${Math.round((used / total) * 100)}%)` : null);
+  const rows: [string, string | null, string?][] = [
+    ["Physical memory", ofTotal(mem.total - mem.available, mem.total)],
+    ["System commit", ofTotal(mem.commitUsed, mem.commitLimit), windows ? "Promised to programs and the system, against RAM plus page file. Programs start failing at 100%." : "Promised to programs. Linux usually doesn't enforce this limit, so above 100% can be normal."],
+    ["Kernel nonpaged pool", mem.kernelNonpaged != null ? formatBytes(mem.kernelNonpaged) : null, windows ? "Kernel and driver memory that must stay in RAM. Steady growth usually means a driver leak." : "Closest Linux equivalent: unreclaimable slab, page tables and kernel stacks."],
+    ["Kernel paged pool", mem.kernelPaged != null ? formatBytes(mem.kernelPaged) : null, windows ? "Kernel memory that can move to disk." : "Closest Linux equivalent: reclaimable slab."],
+    ["Process private", mem.processPrivate != null ? formatBytes(mem.processPrivate) : null, "Memory held by processes and services for themselves, added up."],
+    ["Not in processes", mem.nonProcess != null ? formatBytes(mem.nonProcess) : null, "Memory in use that no process or service holds: kernel, drivers, shared memory."],
+    [windows ? "Page file" : "Swap", mem.swapTotal ? ofTotal(mem.swapUsed ?? 0, mem.swapTotal) : "None"],
+    ["Paging (read / written per sec)", mem.pagesInPerSec != null && mem.pagesOutPerSec != null ? `${Math.round(mem.pagesInPerSec)} / ${Math.round(mem.pagesOutPerSec)}` : null, "Pages moved between RAM and disk. Sustained writes mean real memory pressure."],
+  ];
+  return (
+    <div>
+      <div className="mb-1 text-xs text-[var(--muted)]">Memory detail</div>
+      <div className="grid grid-cols-1 gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
+        {rows
+          .filter(([, value]) => value != null)
+          .map(([label, value, help]) => (
+            <div key={label} className="flex justify-between gap-3 border-b border-[var(--border)] py-0.5" title={help}>
+              <span className="text-[var(--muted)]">{label}</span>
+              <span className="text-right">{value}</span>
+            </div>
+          ))}
+      </div>
+      {!!mem.topPrivate?.length && (
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          Largest private memory: {mem.topPrivate.map((p) => `${p.name} ${formatBytes(p.bytes)}`).join(", ")}
+        </p>
+      )}
+      {!!mem.privateUnread && <p className="mt-1 text-xs text-[var(--muted)]">{mem.privateUnread} processes couldn&apos;t be read, so their memory counts as not in processes.</p>}
+      {mem.commitLimit == null && mem.processPrivate == null && <p className="mt-1 text-xs text-[var(--muted)]">Commit, kernel pool and process detail need agent 5.5 or later on Windows or Linux.</p>}
+    </div>
+  );
+}
+
 function Overview({ detail }: { detail: EndpointDetail }) {
   const s = detail.lastSnapshot;
   if (!s) return <p className="text-sm text-[var(--muted)]">No 3.x agent report yet. Install or update the agent (Agent tab) to see live detail here.</p>;
@@ -227,6 +272,7 @@ function Overview({ detail }: { detail: EndpointDetail }) {
         </div>
       </div>
 
+      {s.mem && <MemoryDetail mem={s.mem} os={detail.os} />}
       {s.disks && s.disks.length > 0 && <FilesystemsTable disks={s.disks} />}
       {s.net && s.net.length > 0 && <InterfacesTable net={s.net} />}
       {s.users?.detail && s.users.sessions?.length > 0 && <SessionsTable sessions={s.users.sessions} />}
@@ -580,7 +626,7 @@ function InventoryTab({ host, kind }: { host: Endpoint; kind: "processes" | "ser
   const [inv, setInv] = useState<EndpointInventory | null>(null);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
-  const procSort = useSort<NonNullable<EndpointInventory["processes"]>[number]>("endpointProcesses", { name: (p) => p.name, pid: (p) => p.pid, user: (p) => p.user, cpu: (p) => p.cpuPercent, memory: (p) => p.memoryMb, command: (p) => p.command }, MOST_MEMORY);
+  const procSort = useSort<NonNullable<EndpointInventory["processes"]>[number]>("endpointProcesses", { name: (p) => p.name, pid: (p) => p.pid, user: (p) => p.user, cpu: (p) => p.cpuPercent, memory: (p) => p.memoryMb, private: (p) => p.privateMb, command: (p) => p.command }, MOST_MEMORY);
   const svcSort = useSort<NonNullable<EndpointInventory["services"]>[number]>("endpointServices", { name: (s) => s.displayName ?? s.name, state: (s) => s.state, starts: (s) => s.startType });
   useEffect(() => {
     api.endpointInventory(host.id).then(setInv);
@@ -617,6 +663,9 @@ function InventoryTab({ host, kind }: { host: Endpoint; kind: "processes" | "ser
                 <SortTh sort={procSort} column="memory" className="px-2 py-1 text-right font-normal">
                   Memory
                 </SortTh>
+                <SortTh sort={procSort} column="private" className="px-2 py-1 text-right font-normal">
+                  Private
+                </SortTh>
                 <SortTh sort={procSort} column="command" className="px-2 py-1 font-normal">
                   Command
                 </SortTh>
@@ -630,6 +679,7 @@ function InventoryTab({ host, kind }: { host: Endpoint; kind: "processes" | "ser
                   <td className="px-2 py-1">{p.user}</td>
                   <td className="px-2 py-1 text-right">{p.cpuPercent?.toFixed(1)}</td>
                   <td className="px-2 py-1 text-right">{p.memoryMb != null ? `${Math.round(p.memoryMb)} MB` : ""}</td>
+                  <td className="px-2 py-1 text-right">{p.privateMb != null ? `${Math.round(p.privateMb)} MB` : ""}</td>
                   <td className="max-w-md truncate px-2 py-1 font-mono text-[var(--muted)]" title={p.command}>
                     {p.command}
                   </td>

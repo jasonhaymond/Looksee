@@ -20,6 +20,7 @@ import { Breadcrumbs, GroupChips, SummaryLine, type Crumb } from "../../componen
 import { relativeTime } from "../../components/ui";
 import { usePageAuth } from "../../components/usePageAuth";
 import { pollEvery } from "../../lib/poll";
+import { agentRunNotice } from "../../lib/agentRun";
 
 /** The page: loads the endpoint and what its panel needs. */
 export default function EndpointPage() {
@@ -78,6 +79,7 @@ export default function EndpointPage() {
   // Status summary from the tree, so it matches the sidebar.
   const node = tree ? [...tree.locations.flatMap((l) => l.sites), ...tree.unassignedSites].flatMap((s) => s.endpoints).find((e) => e.id === endpoint.id) : undefined;
   const state = endpointState(endpoint);
+  const runNotice = agentRunNotice(endpoint.lastSnapshot?.agentRun, endpoint.os);
 
   return (
     <main className="mx-auto max-w-6xl space-y-3 p-4 sm:p-6">
@@ -93,6 +95,7 @@ export default function EndpointPage() {
         {endpoint.lastReportError && (
           <p className="mt-1 text-xs text-[var(--warn)]">Warning: part of this agent&apos;s last report couldn&apos;t be stored — details on the Agent tab.</p>
         )}
+        {runNotice && <p className="mt-2 rounded-md border border-[var(--warn)]/40 bg-[var(--warn)]/10 p-2 text-xs">{runNotice}</p>}
         <div className="mt-2">
           <GroupChips type="endpoint" id={endpoint.id} />
         </div>

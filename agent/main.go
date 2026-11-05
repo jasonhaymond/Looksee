@@ -115,6 +115,10 @@ func main() {
 	}
 	interval := time.Duration(cfg.IntervalSeconds) * time.Second
 	log.Printf("looksee-agent %s starting on %s/%s, reporting to %s every %s", version, runtime.GOOS, runtime.GOARCH, cfg.EngineURL, interval)
+	// Tells whoever started it by hand straight away; the endpoint page says it too.
+	if warning := metrics.CurrentRunMode().Warning(runtime.GOOS); warning != "" {
+		log.Printf("WARNING: %s", warning)
+	}
 
 	for cycle := 0; ; cycle++ {
 		a.runOnce(cycle)

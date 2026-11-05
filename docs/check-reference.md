@@ -817,6 +817,7 @@ rollout holds them back anyway); `updates.phased` counts them on their own.
 | Temperatures | `sensors` | `sudo powermetrics --samplers smc -n1` | `Get-CimInstance -Namespace root/wmi MSAcpi_ThermalZoneTemperature` |
 | SMART | `sudo smartctl -H -A /dev/sda` | `smartctl -H disk0` | `smartctl -H /dev/sda`, or `Get-PhysicalDisk \| Get-StorageReliabilityCounter` |
 | RAID / ZFS | `cat /proc/mdstat`, `zpool status -x` | `diskutil appleRAID list` | `Get-StoragePool` |
+| Memory detail | `grep -E 'Committed_AS\|CommitLimit\|SUnreclaim\|SReclaimable\|PageTables\|KernelStack' /proc/meminfo`, `swapon --show`, `vmstat 1` (si/so columns) | — | `Get-Counter '\Memory\Committed Bytes','\Memory\Commit Limit','\Memory\Pool Nonpaged Bytes','\Memory\Pages Output/sec','\Paging File(_Total)\% Usage'`; RAMMap for memory outside processes |
 | Updates | `apt list --upgradable` / `dnf check-update` | `softwareupdate -l` | Settings → Windows Update |
 | Reboot pending | `ls /var/run/reboot-required` | — | `Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'` |
 | Clock | `timedatectl` / `chronyc tracking` | `sntp -d time.apple.com` | `w32tm /query /status` |
@@ -825,12 +826,34 @@ rollout holds them back anyway); `updates.phased` counts them on their own.
 | Defender | — | — | `Get-MpComputerStatus \| select RealTimeProtectionEnabled,AntivirusSignatureAge` |
 | Failed logins | `journalctl -u ssh --since -1h \| grep Failed` | `log show --last 1h --predicate 'eventMessage contains "authentication failure"'` | Security log event 4625 |
 
+**Memory detail (Windows, Linux; agent 5.5+):** for memory that doesn't show up against any
+process. Every memory metric's result carries the full table under Latest details, and a
+failing one adds a short summary to its message, including the largest process.
+
+| Metric | Windows | Linux |
+|---|---|---|
+| System commit used, total, % | Commit charge and limit (RAM plus page file). Programs start failing at 100%. | `Committed_AS` and `CommitLimit`. Usually not enforced, so above 100% can be normal. |
+| Kernel nonpaged pool | Nonpaged pool | Unreclaimable slab, page tables and kernel stacks |
+| Kernel paged pool | Paged pool | Reclaimable slab |
+| Process private memory | Private bytes of every process, added up | `RssAnon` plus `VmSwap` of every process, added up |
+| Memory not in processes | Commit minus process private memory | RAM and swap in use minus process private memory |
+| Swap / page file used, total, % | Page file | Swap |
+| Pages read from / written to disk per sec | `Pages Input/sec`, `Pages Output/sec` | `pswpin`, `pswpout` |
+
+Services count as processes, because every service runs inside one. "Not in processes" is
+kernel and driver memory plus shared memory. It's an estimate, so a steadily rising figure
+matters more than any single reading. On Linux, tmpfs and other shared memory count as not
+in processes too, an agent inside a container only sees that container's processes, and
+the Overview says if any process couldn't be read. macOS reports memory percent and swap
+only.
+
 <a id="host_cpu"></a><a id="host_memory"></a><a id="host_disk"></a>
 
 ### CPU / memory / disk usage (simple)
 
 Older single-number checks kept for existing setups; **Endpoint metric** covers them in more
-detail. Same commands as above.
+detail. Same commands as above. With agent 5.5+ the memory check also shows the memory
+detail above in its results, and a failing one adds the short summary to its message.
 
 <a id="disk_forecast"></a>
 

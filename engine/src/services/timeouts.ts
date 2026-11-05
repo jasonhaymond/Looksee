@@ -32,7 +32,9 @@ const TIMEOUT_PATTERN = /timed ?out|\btimeout\b|ETIMEDOUT|deadline exceeded|\bno
 // Types whose message is someone else's text (a script's output, a log or
 // event line, a pushed value) or whose "no answer" is the very thing being
 // watched (heartbeats) — a timeout-sounding word there is not a probe
-// timeout, so their result is never softened.
+// timeout, so their result is never softened. Memory and metric checks are judged
+// from a report rather than a probe, and their message can name a process, so a
+// process called "timeout" mustn't soften a real memory alert.
 const EXEMPT_TYPES = new Set([
   "agent_script",
   "agent_log",
@@ -45,6 +47,8 @@ const EXEMPT_TYPES = new Set([
   "agent_heartbeat",
   "calculated",
   "anomaly",
+  "host_memory",
+  "host_metric",
 ]);
 
 /** True when a result message describes a probe getting no answer in time. */

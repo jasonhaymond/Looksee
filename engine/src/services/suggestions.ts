@@ -94,6 +94,9 @@ export function suggestChecks(host: EndpointLike, existing: ExistingCheck[]): Su
   add("unexpected reboot", "host_reboot", { holdMinutes: 15, severity: "warn" }, "Flags any reboot so an unplanned one doesn't go unnoticed.");
   if (s.cpu) add("CPU", "host_metric", { metric: "cpu.percent", warnAbove: 85, criticalAbove: 97 }, "Sustained CPU saturation.");
   if (s.mem) add("memory", "host_metric", { metric: "mem.percent", warnAbove: 90, criticalAbove: 97 }, "Memory pressure before the OOM killer acts.");
+  // Windows only: Linux usually doesn't enforce its commit limit, so a threshold
+  // there would alert on healthy machines.
+  if (isWindows && s.mem?.commitLimit) add("system commit", "host_metric", { metric: "mem.commit_percent", warnAbove: 85, criticalAbove: 95 }, "Programs start failing when commit reaches its limit, even with RAM free.");
   if (s.mem?.swapTotal) add("swap", "host_metric", { metric: "swap.percent", warnAbove: 50, criticalAbove: 85 }, "Heavy swapping slows everything on the endpoint.");
   if (s.load?.l5 != null && !isWindows) add("load (5 min)", "host_metric", { metric: "load.5", warnAbove: 1.5, criticalAbove: 3 }, "Run-queue length per core.");
   if (s.cpu?.steal != null && s.cpu.steal > 0) add("CPU steal", "host_metric", { metric: "cpu.steal", warnAbove: 10, criticalAbove: 25 }, "This looks like a VM; steal shows an oversubscribed hypervisor.");

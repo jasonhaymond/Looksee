@@ -57,6 +57,23 @@ type Mem struct {
 	SwapUsed         uint64   `json:"swapUsed"`
 	SwapPercent      float64  `json:"swapPercent"`
 	PageFaultsPerSec *float64 `json:"pageFaultsPerSec,omitempty"`
+
+	// Detail filled in by fillMemDetail (memdetail.go), all in bytes. Left out
+	// where the system doesn't provide it.
+	CommitUsed     *uint64 `json:"commitUsed,omitempty"`
+	CommitLimit    *uint64 `json:"commitLimit,omitempty"`
+	KernelNonpaged *uint64 `json:"kernelNonpaged,omitempty"`
+	KernelPaged    *uint64 `json:"kernelPaged,omitempty"`
+	// Private memory across all processes, the biggest names, and how many
+	// processes couldn't be read (their memory then shows as outside processes).
+	ProcessPrivate *uint64          `json:"processPrivate,omitempty"`
+	TopPrivate     []ProcessPrivate `json:"topPrivate,omitempty"`
+	PrivateUnread  int              `json:"privateUnread,omitempty"`
+	// Memory in use that no process holds: kernel, drivers, shared memory.
+	NonProcess *uint64 `json:"nonProcess,omitempty"`
+	// Pages per second moved between RAM and disk because of memory pressure.
+	PagesInPerSec  *float64 `json:"pagesInPerSec,omitempty"`
+	PagesOutPerSec *float64 `json:"pagesOutPerSec,omitempty"`
 }
 
 type Procs struct {
@@ -146,6 +163,8 @@ type Extended struct {
 	// "not reported" (permission denied, no drives found, …).
 	SmartProblem string      `json:"smartProblem,omitempty"`
 	Raid         []RaidArray `json:"raid,omitempty"`
+	// How this agent was started, for the endpoint page's warning (runmode.go).
+	AgentRun *RunMode `json:"agentRun,omitempty"`
 }
 
 // Counters from the previous Collect, for turning cumulative counters into
@@ -159,6 +178,8 @@ type prevState struct {
 	ctxt       uint64
 	intr       uint64
 	pgmajfault uint64
+	pswpin     uint64
+	pswpout    uint64
 }
 
 type Collector struct {
@@ -201,7 +222,8 @@ func fp(f float64) *float64    { v := round2(f); return &v }
 func (c *Collector) Collect() Snapshot {
 	now := time.Now()
 	snap := Snapshot{}
-	ext := &Extended{}
+	run := CurrentRunMode()
+	ext := &Extended{AgentRun: &run}
 	prev := c.prev
 	next := &prevState{at: now, diskIO: map[string]disk.IOCountersStat{}, netIO: map[string]gnet.IOCountersStat{}}
 	elapsed := 0.0
@@ -249,6 +271,8 @@ func (c *Collector) Collect() Snapshot {
 		if sw, err := mem.SwapMemory(); err == nil {
 			ext.Mem.SwapTotal, ext.Mem.SwapUsed, ext.Mem.SwapPercent = sw.Total, sw.Used, round2(sw.UsedPercent)
 		}
+		fillMemDetail(ext.Mem, vm)
+		ext.Mem.PagesInPerSec, ext.Mem.PagesOutPerSec = pagingRates()
 	}
 
 	if info, err := host.Info(); err == nil {
@@ -262,6 +286,9 @@ func (c *Collector) Collect() Snapshot {
 		ctxt, intr := readProcStat()
 		pgmaj := readVmstat("pgmajfault")
 		next.ctxt, next.intr, next.pgmajfault = ctxt, intr, pgmaj
+		// Pages swapped in and out since boot; the difference between reports is
+		// the paging rate. Ordinary file reads aren't counted here.
+		next.pswpin, next.pswpout = readVmstat("pswpin"), readVmstat("pswpout")
 		if prev != nil && elapsed > 0 {
 			if ctxt >= prev.ctxt {
 				ext.CtxSwitchesPerSec = fp(float64(ctxt-prev.ctxt) / elapsed)
@@ -271,6 +298,10 @@ func (c *Collector) Collect() Snapshot {
 			}
 			if ext.Mem != nil && pgmaj >= prev.pgmajfault {
 				ext.Mem.PageFaultsPerSec = fp(float64(pgmaj-prev.pgmajfault) / elapsed)
+			}
+			if ext.Mem != nil && next.pswpin >= prev.pswpin && next.pswpout >= prev.pswpout {
+				ext.Mem.PagesInPerSec = fp(float64(next.pswpin-prev.pswpin) / elapsed)
+				ext.Mem.PagesOutPerSec = fp(float64(next.pswpout-prev.pswpout) / elapsed)
 			}
 		}
 		ext.FDs = readFileNr()

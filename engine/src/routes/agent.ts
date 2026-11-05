@@ -24,7 +24,7 @@ import { minAgentVersionFor, PINNABLE_CHECK_TYPES, versionAtLeast } from "../db/
 import { requireAgentAuth } from "../middleware/auth.js";
 import { recordCheckResult } from "../services/alerting.js";
 import { applyThresholds, type Status } from "../services/thresholds.js";
-import { evaluateChange, evaluateEndpointMetric, evaluateReboot, type Snapshot } from "../services/endpointMetrics.js";
+import { evaluateChange, evaluateEndpointMetric, evaluateReboot, memoryBreakdown, memorySummary, type Snapshot } from "../services/endpointMetrics.js";
 import { logger } from "../lib/logger.js";
 import { collectorManifest } from "../services/sites.js";
 import { recordFromSnapshot } from "../services/addresses.js";
@@ -208,7 +208,7 @@ async function storeReport(agent: AgentEndpoint, host: typeof endpoints.$inferSe
   if (Array.isArray(body.availableProcesses)) endpointUpdate.availableProcesses = body.availableProcesses.map(String);
   if (Array.isArray(body.availableServices)) endpointUpdate.availableServices = body.availableServices.map(String);
   if (body.inventory && typeof body.inventory === "object") endpointUpdate.inventory = body.inventory;
-  const procs = cleanInventory(body.processInventory, ["pid", "name", "user", "cpuPercent", "memoryMb", "command", "started"]);
+  const procs = cleanInventory(body.processInventory, ["pid", "name", "user", "cpuPercent", "memoryMb", "privateMb", "command", "started"]);
   const svcs = cleanInventory(body.serviceInventory, ["name", "displayName", "state", "startType", "description"]);
   if (procs) endpointUpdate.processInventory = procs;
   if (svcs) endpointUpdate.serviceInventory = svcs;
@@ -306,7 +306,12 @@ async function evaluateReportChecks(endpointId: string, metrics: Record<string, 
       let status: Status = "up";
       if (criticalPercent != null && value >= criticalPercent) status = "down";
       else if (warnPercent != null && value >= warnPercent) status = "warn";
-      await recordCheckResult(check.id, { status, message: status !== "up" ? `${Math.round(value * 10) / 10}%` : null, value });
+      // The memory check also names where the memory is, so the alert itself
+      // shows whether a process or the kernel is holding it.
+      const summary = check.type === "host_memory" && extended ? memorySummary(extended) : "";
+      const percent = `${Math.round(value * 10) / 10}%${summary ? ` — ${summary}` : ""}`;
+      const details = check.type === "host_memory" && extended ? memoryBreakdown(extended) : undefined;
+      await recordCheckResult(check.id, { status, message: status !== "up" ? percent : null, value, details });
       continue;
     }
     // Software checks use the software report (merged exclusions apply).

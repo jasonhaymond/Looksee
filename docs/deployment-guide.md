@@ -19,7 +19,7 @@ adjust package manager commands for another distro.
 5. [Firewall](#5-firewall)
 6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
 7. [Backups](#7-backups)
-8. [Updating](#8-updating) — including [Upgrading to 5.3](#upgrading-to-53), [Upgrading to 5.2](#upgrading-to-52), [Upgrading to 5.0](#upgrading-to-50), [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
+8. [Updating](#8-updating) — including [Upgrading to 5.5](#upgrading-to-55), [Upgrading to 5.4](#upgrading-to-54), [Upgrading to 5.3](#upgrading-to-53), [Upgrading to 5.2](#upgrading-to-52), [Upgrading to 5.0](#upgrading-to-50), [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
 9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Security notes](#11-security-notes)
@@ -353,6 +353,30 @@ You can run the same checks by hand at any time:
 
 **Check:** every line reads `PASS` and the last line is `RESULT: PASS`; the full report
 is saved under `~/Looksee/security-reports/`.
+
+### Upgrading to 5.5
+
+`npm run update` handles it. There's no database migration, so nothing existing changes.
+The new memory detail and the "not running as a service" warning need each agent updated
+too.
+
+After updating:
+
+1. On one endpoint, open the **Agent** tab and update the agent. Try one or two Windows
+   endpoints first, because Windows Defender can flag unsigned agent builds.
+2. Open that endpoint's **Overview**. **Success looks like:** the **Memory detail** section
+   shows **System commit** and **Not in processes**. On Windows, compare it with this
+   command:
+
+   ```powershell
+   Get-Counter '\Memory\Committed Bytes','\Memory\Commit Limit','\Memory\Pool Nonpaged Bytes'
+   ```
+
+3. Check the page has no warning above the tabs saying the agent isn't running as a
+   service. An agent installed the normal way shouldn't show one. If it does, install the
+   agent from the **Agent** tab.
+4. Update the remaining agents. Until then, those endpoints show the shorter memory section
+   and their new memory checks read as not reported.
 
 ### Upgrading to 5.4
 

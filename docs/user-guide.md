@@ -654,6 +654,11 @@ from inside the machine.
 - **Suggested checks** — suggestions and templates; see
   [Suggested checks and templates](#suggested-checks).
 - **Processes** and **Services** — see below.
+- **Warning above the tabs** — appears when the agent isn't running as a service (agent
+  5.5+), which means it was started by hand and stops when its window or session closes.
+  On Windows it also says if the agent has no administrator rights, because some readings
+  are then missing or wrong. To clear it, install the agent from the **Agent** tab. A Linux
+  agent running as a service without root is normal and gets no warning.
 - **IP history** — see [MAC addresses and IP changes](#mac-addresses-and-ip-changes).
 - **Agent** — version, **Update agent** (it updates itself on its next check-in), and
   regenerating the install command.
@@ -671,7 +676,7 @@ move to a site (their checks move too), add to a group, add or remove tags, or d
 
 Agent 4.0+ keeps a full inventory of each endpoint, refreshed about every 5 minutes:
 
-- **Processes** — every running process with PID, user, CPU %, memory and command line.
+- **Processes** — every running process with PID, user, CPU %, memory, private memory (what only that process holds; Windows and Linux, agent 5.5+) and command line.
   Search, and click any column heading to sort. Most memory comes first until you do.
 - **Services** — every systemd unit (Linux), Windows service, or launchd job (macOS)
   with its state and start type. Filter to *running*, *not running*, or **automatic but
@@ -737,7 +742,7 @@ An endpoint's **Suggested checks** tab recommends checks from everything the age
 — running services, processes, installed packages, listening ports — and leaves out
 what's already monitored there. Grouped:
 
-- **Health & resources** — CPU, memory, swap, load, each real disk (usage, inodes,
+- **Health & resources** — CPU, memory, system commit (Windows), swap, load, each real disk (usage, inodes,
   read-only, forecast), each physical interface, SMART, RAID/ZFS, updates, reboot
   pending, clock, firewall, encryption, Defender, temperatures, battery.
 - **Services & software** — every well-known server service that's running and set to

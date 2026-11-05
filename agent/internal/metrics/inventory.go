@@ -31,8 +31,10 @@ type ProcessInfo struct {
 	User       string  `json:"user,omitempty"`
 	CPUPercent float64 `json:"cpuPercent"`
 	MemoryMB   float64 `json:"memoryMb"`
-	Command    string  `json:"command,omitempty"`
-	Started    int64   `json:"started,omitempty"`
+	// Memory only this process holds (see processPrivateMB); nil where unavailable.
+	PrivateMB *float64 `json:"privateMb,omitempty"`
+	Command   string   `json:"command,omitempty"`
+	Started   int64    `json:"started,omitempty"`
 }
 
 // ServiceInfo is one registered OS service: systemd unit, Windows service,
@@ -82,6 +84,7 @@ func ListProcesses() ([]ProcessInfo, error) {
 	}
 	out := make([]ProcessInfo, 0, len(procs))
 	userDeadline := time.Now().Add(processUserBudget)
+	private := privateByPID()
 	for _, p := range procs {
 		name, err := p.Name()
 		if err != nil || name == "" {
@@ -97,6 +100,9 @@ func ListProcesses() ([]ProcessInfo, error) {
 		if mem, err := p.MemoryInfo(); err == nil && mem != nil {
 			info.MemoryMB = round2(float64(mem.RSS) / 1024 / 1024)
 		}
+		// Outside the block above: a protected process can refuse MemoryInfo, yet its
+		// private memory is still known.
+		info.PrivateMB = processPrivateMB(p.Pid, private)
 		if cmd, err := p.Cmdline(); err == nil {
 			cmd = RedactCommand(cmd)
 			if len(cmd) > maxCommandLen {

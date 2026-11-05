@@ -76,12 +76,15 @@ export function remediationFor(input: Input): string[] {
     const metric = String(cfg.metric ?? "");
     if (metric.startsWith("disk")) add(["Free space: find large files (du -xh --max-depth=1 / | sort -h, or WinDirStat), clear old logs/backups, or grow the volume."]);
     if (metric.startsWith("cpu") || metric.startsWith("load")) add(["Find the busy process: top / htop (Linux) or Task Manager → Details (Windows) — or the endpoint's Processes tab."]);
+    if (metric === "mem.kernel_nonpaged_mb" || metric === "mem.kernel_paged_mb" || metric === "mem.non_process_gb") add(["Memory outside processes usually means a driver leak. Windows: find the pool tag with poolmon or RAMMap, then update that driver. Linux: check slabtop and /proc/meminfo."]);
+    if (metric.startsWith("mem.commit")) add(["Commit near its limit: find the largest process by Private on the Processes tab, then restart it, or enlarge the page file or add RAM."]);
     if (metric.startsWith("mem") || metric.startsWith("swap")) add(["Find what's using memory (the endpoint's Processes tab, sorted by memory); restart a leaking service or add RAM."]);
     if (metric.startsWith("smart") || metric.startsWith("raid")) add(["Back up now and plan to replace the failing drive; check smartctl -a <device> or the RAID controller's status."]);
     if (metric.startsWith("updates") || metric.startsWith("reboot")) add(["Install updates (apt upgrade / Windows Update) and reboot in a maintenance window."]);
     if (metric.startsWith("time")) add(["Check the time service: timedatectl / w32tm /query /status, and that NTP (UDP 123) is reachable."]);
   }
   if (input.type === "snmp" && String(cfg.preset ?? "").startsWith("printer")) add(["Check the printer's front panel or web page for the exact error."]);
+  if (input.type === "host_memory") add(["Check where the memory is in the message above. If most is in processes, sort the endpoint's Processes tab by Private and restart a leaking service. If most is not in processes, suspect a driver leak: on Windows use poolmon or RAMMap; on Linux check slabtop and /proc/meminfo."]);
   add(TYPE_HINTS[input.type] ?? []);
   if (!out.length) add(["Run the check again (Run now) and compare with its history to see when it started failing."]);
   return out.slice(0, 5);

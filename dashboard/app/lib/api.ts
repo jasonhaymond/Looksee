@@ -18,6 +18,7 @@
 // lastCheckedAt, ...) stay ISO strings; pages format those with `new
 // Date(x).toLocaleString()`, which is already local.
 
+import type { AgentRun } from "./agentRun";
 import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
 import { browserTimeZone, localizeResponse } from "./localTime";
 
@@ -126,14 +127,33 @@ export type Endpoint = {
 };
 export type WatchdogSetting = { enabled: boolean; afterMinutes: number; emailTo: string[]; channelIds: string[]; testRequestedAt?: string | null };
 export type WatchdogStatus = { alerting?: boolean; unreachableSince?: string; lastAlertAt?: string; lastRecoveryAt?: string; lastTestAt?: string; lastTestId?: string; lastError?: string; lastErrorAt?: string };
-export type ProcessInfo = { pid: number; name: string; user?: string; cpuPercent?: number; memoryMb?: number; command?: string; started?: number };
+export type ProcessInfo = { pid: number; name: string; user?: string; cpuPercent?: number; memoryMb?: number; privateMb?: number; command?: string; started?: number };
 export type ServiceInfo = { name: string; displayName?: string; state: string; startType?: string };
 export type EndpointInventory = { processes: ProcessInfo[] | null; services: ServiceInfo[] | null; scripts: string[] | null; containers: string[] | null; updatedAt: string | null; processNames: string[] | null; serviceNames: string[] | null };
 export type AddressRow = { id: string; mac: string; ip: string; source: string; firstSeenAt: string; lastSeenAt: string };
 export type EndpointSnapshot = {
+  agentRun?: AgentRun;
   cpu?: { percent?: number; iowait?: number; steal?: number; perCore?: number[] };
   load?: { l1: number; l5: number; l15: number; cores: number };
-  mem?: { total: number; available: number; percent: number; swapTotal: number; swapPercent: number };
+  mem?: {
+    total: number;
+    available: number;
+    percent: number;
+    swapTotal: number;
+    swapUsed?: number;
+    swapPercent: number;
+    // Detail from agent 5.5+, in bytes; missing where the system doesn't provide it.
+    commitUsed?: number;
+    commitLimit?: number;
+    kernelNonpaged?: number;
+    kernelPaged?: number;
+    processPrivate?: number;
+    topPrivate?: { name: string; bytes: number }[];
+    privateUnread?: number;
+    nonProcess?: number;
+    pagesInPerSec?: number;
+    pagesOutPerSec?: number;
+  };
   uptimeSeconds?: number;
   disks?: { mount: string; fstype?: string; total: number; free: number; percent: number; readOnly?: boolean; stale?: boolean; inodesPercent?: number }[];
   net?: { name: string; up: boolean; speedMbps?: number; rxBytesPerSec: number; txBytesPerSec: number; addrs?: string[]; mac?: string }[];
