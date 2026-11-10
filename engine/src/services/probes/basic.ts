@@ -198,6 +198,9 @@ function daysUntil(dateStr: string) {
 // defaults don't refuse to even try.
 function acceptsLegacyTls(host: string, port: number): Promise<string | null> {
   return new Promise((resolve) => {
+    // Verification is off on purpose: this only asks whether the server will
+    // agree to TLS 1.0/1.1, whatever its certificate. No data is sent.
+    // nosemgrep: problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification -- probe must reach servers with any certificate; nothing is trusted from this connection
     const socket = tls.connect({ host, port, servername: net.isIP(host) ? undefined : host, rejectUnauthorized: false, minVersion: "TLSv1", maxVersion: "TLSv1.1", ciphers: "DEFAULT@SECLEVEL=0", timeout: 5000 }, () => {
       const proto = socket.getProtocol();
       socket.destroy();
@@ -224,6 +227,10 @@ export function probeSslCert(config: Config): Promise<ProbeOutcome> {
   const timeout = Math.min(60, Math.max(1, numOr(config, "timeoutSeconds", 5))) * 1000;
   const start = Date.now();
   return new Promise((resolve) => {
+    // Verification is off on purpose so expired, self-signed or mismatched
+    // certificates can still be read and reported on; the check then judges
+    // the certificate itself. Nothing but the handshake happens on this connection.
+    // nosemgrep: problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification -- TLS check must inspect invalid certificates; it validates them itself
     const socket = tls.connect({ host, port, servername: serverName || undefined, rejectUnauthorized: false, timeout }, async () => {
       const latencyMs = Date.now() - start;
       const cert = socket.getPeerCertificate(true);

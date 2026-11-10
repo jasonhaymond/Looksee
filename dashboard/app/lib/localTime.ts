@@ -13,6 +13,10 @@
 // fixes messages stored before this change, since nothing in the database is
 // touched.
 //
+// It also holds small zone helpers used by forms: the browser's own zone
+// name, and converting a datetime-local field to and from an exact instant
+// in a chosen zone (the Maintenance dialog's "your time" or UTC).
+//
 // Security note: this only rewrites display text. It never changes check
 // configuration or anything else the dashboard might send back to the engine
 // (see DISPLAY_TEXT_KEYS), so it can't corrupt saved settings.
@@ -113,6 +117,44 @@ export function localizeResponse<T>(value: T): T {
     return v;
   };
   return walk(value, null) as T;
+}
+
+/**
+ * What a wall clock in a zone reads at an instant, in the form a
+ * datetime-local input expects ("2026-10-13T14:05", no zone). Used to fill
+ * the Maintenance dialog's start/end fields in the zone the window uses
+ * (your own or UTC).
+ *
+ * @param d the instant
+ * @param tz an IANA zone name, e.g. "UTC" or "America/Chicago"
+ * @returns "YYYY-MM-DDTHH:MM"
+ */
+export function toZonedInput(d: Date, tz: string): string {
+  // formatToParts splits the formatted date into labeled pieces, so nothing
+  // depends on how a locale orders them; hourCycle "h23" gives 00–23.
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d);
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
+/**
+ * The instant a datetime-local value ("2026-10-13T14:05") means when read
+ * on a given zone's wall clock — the reverse of toZonedInput.
+ *
+ * Method: read the value as if it were UTC, see what the zone's clock shows
+ * at that instant, and shift by the difference; a second pass corrects for
+ * an offset that changed in between (daylight saving).
+ *
+ * @param value a datetime-local value
+ * @param tz an IANA zone name
+ * @returns the instant, or an invalid Date if the value isn't a date
+ */
+export function fromZonedInput(value: string, tz: string): Date {
+  const target = new Date(`${value}:00Z`).getTime();
+  if (Number.isNaN(target)) return new Date(NaN);
+  let t = target;
+  for (let pass = 0; pass < 2; pass++) t += target - new Date(`${toZonedInput(new Date(t), tz)}:00Z`).getTime();
+  return new Date(t);
 }
 
 /**

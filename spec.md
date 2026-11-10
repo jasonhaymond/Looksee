@@ -180,6 +180,24 @@ if a real use case shows up.
 - Engine-side command checks (rejected — see CLAUDE.md: scripts run only from
   `script_dir`).
 
+### Next: major dependency upgrades (deferred from 5.6, 2026-11-09)
+
+- [ ] TypeScript 7, Vitest 5, bcryptjs 3, dotenv 18, web-push 4, marked 18,
+  @types/node 26 — each read for breaking changes; clears the two dev-only advisories
+  accepted in `security-accepted-risks.json` (review by 2027-01-08).
+
+### Built for 5.6 (requested 2026-11-09, not yet released)
+
+- [x] **Edit maintenance windows** — an Edit button on every window opens the schedule
+  dialog with its settings (`PATCH /api/maintenance/:id`, which checks the result is still
+  a complete schedule).
+- [x] **More maintenance schedule options** — daily, weekly, monthly on a date or on a
+  weekday ("2nd Tuesday", "last Friday"), every N days/weeks/months, an optional date
+  range, durations up to 31 days, and times in your zone or UTC (one-time windows too).
+  Migration 0029.
+- [x] **Group member picker hides existing members** — the Add members list leaves out
+  the group's current direct members.
+
 ### Built for 5.4 (requested 2026-11-04)
 
 - [x] **Event log checks no longer time out** — `wevtutil` instead of PowerShell; a failed

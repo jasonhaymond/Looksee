@@ -819,7 +819,8 @@ they also appear at the bottom of the sidebar tree with their status.
 
 1. Click **+ New group**, enter a name (and optionally a description) and choose a kind:
    - **Manual — I'll pick the members.** Any mix of locations, sites, endpoints and
-     checks. Add members on the group's page (**Add members**), or with **Add to group**
+     checks. Add members on the group's page (**Add members**, which lists only things
+     not already in the group), or with **Add to group**
      on any location, site, endpoint or check page, or **Actions → Add to group…** on
      the Checks and Endpoints lists. A member that's a location, site or endpoint brings
      everything under it.
@@ -1196,22 +1197,47 @@ an alert rule.
 recording results, but no alerts are sent and SLA reports leave that time out.
 
 1. Click **+ Schedule maintenance** and name it.
-2. Choose **One time** (start and end) or **Every week** (days, start time, duration in
-   minutes). Times are in your own time zone: a weekly window remembers the zone of the
-   browser that scheduled it, so "Sunday 02:00" stays 02:00 where you are whatever the
-   server's clock is set to. A weekly window from another zone shows that zone's name
-   next to its time; one created before 4.2 says *(server's time)*.
-3. Choose what it applies to: everything, chosen sites, chosen endpoints (including
+2. Choose how it **Repeats**:
+
+   | Choice | You set | Example |
+   |---|---|---|
+   | One time | Start and end date/time | Disk swap, Nov 20 15:00–17:00 |
+   | Every day | Start time and length | Nightly backups 01:00 for 2 hours |
+   | Every week | Days, start time, length | Sun and Wed at 23:30 for 90 minutes |
+   | Every month, on a date | Day of the month (1st–31st, or Last day) | The 1st at 00:00 |
+   | Every month, on a weekday | Which week (1st–4th, or last) and weekday | Patch Tuesday: 2nd Tue at 02:00 |
+
+   For a repeating window you can also set:
+   - **Every … days/weeks/months**: 2 or more skips the ones in between (every 2 weeks,
+     every 3 months), counted from the start date.
+   - **Starting on** and **Ending on**: no occurrence starts before or after these dates.
+     Leave both empty to repeat indefinitely. *Every 2 or more* needs a start date, and
+     today is used if you leave it empty.
+   - **Lasts**: in minutes, hours or days, up to 31 days.
+
+   Days 29–31 fall on the last day of shorter months, so "the 31st" still happens in
+   February.
+3. Choose the **Time zone** the times are in: **Your time** (your browser's zone) or
+   **UTC**. A repeating window keeps that zone, so "Sunday 02:00" stays 02:00 there,
+   whatever the server's clock is set to. A window from another zone shows that zone's
+   name next to its time. One created before 4.2 says *(server's time)*.
+4. Choose what it applies to: everything, chosen sites, chosen endpoints (including
    checks their agents run), chosen [groups](#groups) (whatever is in them while the
    window runs), or chosen checks.
-4. Click **Schedule**. While active it's marked **active now**, and affected checks show
-   **MAINTENANCE**.
+5. Click **Schedule**. While active it's marked **active now**, and affected checks show
+   **MAINTENANCE**. A repeating window shows when it next starts (**Next:**, in your
+   local time).
+
+To change a window, click its **Edit** button. The same dialog opens with the window's
+settings; change anything and click **Save**. Switching a window between one-time and
+repeating replaces its old timing. In the edit dialog, **On** switches an ended or
+turned-off window back on.
 
 For an unplanned job, use the **Maintenance…** bulk action on the Checks, Endpoints or
 Sites page, a group's **Maintenance…**, or a location's **Maintenance for this
-location…** — it starts a window
-right now for N minutes. **End now** closes a one-time window early; weekly windows can
-be turned off and on.
+location…**. It starts a window right now for N minutes, which you can then edit here
+like any other. **End now** closes a one-time window early; repeating windows can be
+turned off and on.
 
 ## SLA reports
 

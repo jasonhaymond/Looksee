@@ -564,8 +564,8 @@ export const alertEvents = pgTable("alert_events", {
 }, (t) => [index("alert_events_rule_idx").on(t.alertRuleId, t.triggeredAt)]);
 
 // L1. Either a one-off window (startsAt..endsAt, two absolute instants) or a
-// weekly recurrence (daysOfWeek + startTime + durationMinutes, read on the
-// wall clock of timeZone — see services/maintenance.ts). scope "all" ignores
+// repeating one (recurrence + startTime + durationMinutes, read on the wall
+// clock of timeZone — see services/maintenance.ts). scope "all" ignores
 // targetIds; otherwise targetIds lists site, endpoint or check IDs (or group IDs).
 export const maintenanceWindows = pgTable("maintenance_windows", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -574,13 +574,33 @@ export const maintenanceWindows = pgTable("maintenance_windows", {
   targetIds: jsonb("target_ids").$type<string[]>().notNull().default([]),
   startsAt: timestamp("starts_at", { withTimezone: true }),
   endsAt: timestamp("ends_at", { withTimezone: true }),
+  // How a repeating window repeats: "daily", "weekly", "monthly_day" (e.g.
+  // the 15th) or "monthly_weekday" (e.g. the 2nd Tuesday). Null on a one-off
+  // window, and on weekly windows saved before 5.6 (they have daysOfWeek and
+  // are read as "weekly").
+  recurrence: text("recurrence"),
+  // Every N days/weeks/months, counted from startDate (1 = every time).
+  repeatEvery: integer("repeat_every").notNull().default(1),
+  // Weekdays (0 = Sunday … 6 = Saturday) for "weekly" and "monthly_weekday".
   daysOfWeek: jsonb("days_of_week").$type<number[]>(),
+  // "monthly_day": day of the month, 1–31 (a short month uses its last
+  // day), or -1 for the last day of every month.
+  dayOfMonth: integer("day_of_month"),
+  // "monthly_weekday": which occurrence of the weekday, 1–4, or -1 for the last.
+  weekOfMonth: integer("week_of_month"),
+  // Wall-clock start time "HH:MM" and length of each occurrence.
   startTime: text("start_time"),
   durationMinutes: integer("duration_minutes"),
-  // IANA zone of the browser that saved a weekly window (e.g.
-  // "America/Los_Angeles"), so "Sunday 02:00" means 02:00 there. Null for
-  // windows saved before zones were recorded: they use the server's zone,
-  // as they always did.
+  // Optional date range ("YYYY-MM-DD" in timeZone) a repeating window is
+  // limited to: no occurrence starts before startDate or after endDate.
+  // startDate is also where "every N" counting begins.
+  startDate: text("start_date"),
+  endDate: text("end_date"),
+  // IANA zone a repeating window's times are read in (e.g.
+  // "America/Los_Angeles", or "UTC"), so "Sunday 02:00" means 02:00 there.
+  // On a one-off window it only records which zone the times were entered
+  // in, for display. Null for windows saved before zones were recorded: they
+  // use the server's zone, as they always did.
   timeZone: text("time_zone"),
   enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

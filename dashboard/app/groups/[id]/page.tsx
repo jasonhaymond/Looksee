@@ -261,7 +261,14 @@ export default function GroupPage() {
         />
       )}
       {dialog === "alert" && <AlertRuleDialog count={checkIds.length} onClose={() => setDialog(null)} onSubmit={(p) => (setDialog(null), bulk("add_alert_rule", p, "Added an alert rule to"))} />}
-      {dialog === "add" && <AddMembersDialog groupId={g.id} onClose={() => setDialog(null)} onDone={() => (setDialog(null), load())} />}
+      {dialog === "add" && (
+        <AddMembersDialog
+          groupId={g.id}
+          existing={new Set([...m.locations, ...m.sites, ...m.endpoints, ...m.checks].map((x) => x.id))}
+          onClose={() => setDialog(null)}
+          onDone={() => (setDialog(null), load())}
+        />
+      )}
       {toast.node}
     </main>
   );
@@ -297,9 +304,16 @@ function AlertRuleDialog({ count, onClose, onSubmit }: { count: number; onClose:
 
 /**
  * Picks locations, sites, endpoints and checks to add to a manual group,
- * searching across all of them.
+ * searching across all of them. Things already directly in the group are
+ * left out of the list, so only new members can be picked.
+ *
+ * @param groupId the group being added to
+ * @param existing IDs of the group's current direct members (IDs are unique
+ *        across kinds, so one set covers locations, sites, endpoints and checks)
+ * @param onClose called when the dialog is cancelled
+ * @param onDone called after the members are added
  */
-function AddMembersDialog({ groupId, onClose, onDone }: { groupId: string; onClose: () => void; onDone: () => void }) {
+function AddMembersDialog({ groupId, existing, onClose, onDone }: { groupId: string; existing: Set<string>; onClose: () => void; onDone: () => void }) {
   const [kind, setKind] = useState<MemberType>("endpoint");
   const [data, setData] = useState<{ locations: Location[]; sites: Site[]; endpoints: Endpoint[]; checks: Check[] } | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
@@ -309,16 +323,20 @@ function AddMembersDialog({ groupId, onClose, onDone }: { groupId: string; onClo
     Promise.all([api.locations(), api.sites(), api.endpoints(), api.checks()]).then(([locations, sites, endpoints, checks]) => setData({ locations, sites, endpoints, checks }));
   }, []);
 
-  // The picker's items for the chosen kind, grouped by site where that helps.
+  // The picker's items for the chosen kind, grouped by site where that
+  // helps, minus anything already a direct member of this group.
   const items: PickItem[] = useMemo(() => {
     if (!data) return [];
     const siteName = new Map(data.sites.map((s) => [s.id, s.name]));
-    if (kind === "location") return data.locations.map((l) => ({ id: l.id, label: l.name }));
-    if (kind === "site") return data.sites.map((s) => ({ id: s.id, label: s.name, sub: s.description ?? undefined }));
-    if (kind === "endpoint") return data.endpoints.map((e) => ({ id: e.id, label: e.name, sub: [e.hostname, e.os].filter(Boolean).join(" · ") || undefined, group: siteName.get(e.siteId) }));
-    const epName = new Map(data.endpoints.map((e) => [e.id, e.name]));
-    return data.checks.map((c) => ({ id: c.id, label: c.name, sub: c.endpointId ? epName.get(c.endpointId) : undefined, group: siteName.get(c.siteId) }));
-  }, [data, kind]);
+    const all: PickItem[] = (() => {
+      if (kind === "location") return data.locations.map((l) => ({ id: l.id, label: l.name }));
+      if (kind === "site") return data.sites.map((s) => ({ id: s.id, label: s.name, sub: s.description ?? undefined }));
+      if (kind === "endpoint") return data.endpoints.map((e) => ({ id: e.id, label: e.name, sub: [e.hostname, e.os].filter(Boolean).join(" · ") || undefined, group: siteName.get(e.siteId) }));
+      const epName = new Map(data.endpoints.map((e) => [e.id, e.name]));
+      return data.checks.map((c) => ({ id: c.id, label: c.name, sub: c.endpointId ? epName.get(c.endpointId) : undefined, group: siteName.get(c.siteId) }));
+    })();
+    return all.filter((x) => !existing.has(x.id));
+  }, [data, kind, existing]);
 
   async function save() {
     setError(null);
@@ -350,6 +368,8 @@ function AddMembersDialog({ groupId, onClose, onDone }: { groupId: string; onClo
           </select>
         </Label>
         <MultiPicker items={items} selected={picked} onChange={setPicked} placeholder="Search…" groupLabel="Site" height="max-h-72" />
+        {/* Says why something might be missing from the list. */}
+        {existing.size > 0 && <p className="text-xs text-[var(--muted)]">Items already in this group aren&apos;t listed.</p>}
         {error && <p className="text-[var(--down)]">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>

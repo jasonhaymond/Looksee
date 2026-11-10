@@ -380,16 +380,30 @@ export type MaintenanceWindow = {
   // What the window covers; targetIds lists IDs of that kind (group IDs for "group").
   scope: "all" | "site" | "endpoint" | "check" | "group";
   targetIds: string[];
+  // One-off windows: two exact instants. Null on a repeating window.
   startsAt: string | null;
   endsAt: string | null;
+  // Repeating windows: how they repeat (null on a one-off; weekly windows
+  // saved before 5.6 may have null here but days of the week set).
+  recurrence?: "daily" | "weekly" | "monthly_day" | "monthly_weekday" | null;
+  // Every N days/weeks/months, counted from startDate.
+  repeatEvery?: number;
   daysOfWeek: number[] | null;
+  // monthly_day: 1–31, or -1 = last day. monthly_weekday: 1–4, or -1 = last.
+  dayOfMonth?: number | null;
+  weekOfMonth?: number | null;
   startTime: string | null;
   durationMinutes: number | null;
-  // The zone a weekly window's startTime is read in (the browser that saved
-  // it); null = the server's zone, for windows saved before this existed.
+  // Optional date range ("YYYY-MM-DD") a repeating window is limited to.
+  startDate?: string | null;
+  endDate?: string | null;
+  // The zone the times are in (the browser's, or "UTC"); null = the
+  // server's zone, for windows saved before this existed.
   timeZone?: string | null;
   enabled: boolean;
+  // Worked out by the engine: running right now, and when it next starts.
   active: boolean;
+  next?: string | null;
 };
 export type StatusPage = { id: string; slug: string; title: string; description: string | null; checkIds: string[]; published: boolean };
 

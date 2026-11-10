@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [5.6.0] - 2026-11-09
+
+### Added
+
+- **Edit maintenance windows.** Every window on the Maintenance page has an **Edit**
+  button that opens the same dialog used to schedule it: change its name, times, repeat,
+  what it applies to, or switch it back on. Windows started from a group, a location or a
+  multi-selection can be edited too.
+- **More ways to schedule maintenance:** every day, every week, every month on a date
+  (e.g. the 15th, or the last day), or every month on a weekday (e.g. the 2nd Tuesday or
+  the last Friday); every N days/weeks/months; an optional start and end date; a length in
+  minutes, hours or days (up to 31 days); and times entered in your own time zone or in
+  UTC, for one-time windows too. Each repeating window shows when it next starts.
+  Migration `0029` adds the new columns; existing weekly windows keep running unchanged.
+
+### Changed
+
+- A group's **Add members** list leaves out things already in the group.
+- Dependencies: patch and minor updates applied in the engine and dashboard (including
+  Next.js 16.4.6, nodemailer 10.4, imapflow 2.11, @simplewebauthn/server 14.1, ws
+  8.22.2). Major upgrades (TypeScript 7, Vitest 5, bcryptjs 3, dotenv 18,
+  web-push 4, marked 18, @types/node 26) are deferred to their own release; the
+  dashboard stays on ESLint 9, which is all `eslint-config-next` supports.
+- `agent/uninstall-windows.ps1` writes its messages with `Write-Output` (so they can be
+  captured) and is plain ASCII; behavior is unchanged.
+
+### Security
+
+- The TLS check's two deliberate unverified connections (needed to read and report on
+  expired or self-signed certificates) are marked as reviewed in the code, with the reason.
+- Two moderate advisories in development-only tooling (esbuild via drizzle-kit, minimatch
+  via eslint) are recorded as accepted risks until 2027-01-08; neither ships to production.
+
+### Fixed
+
+- A maintenance window's duration, start time and dates are now validated: a non-number
+  duration, a time like 25:00 or an impossible date is refused instead of being stored.
+  Editing a window is refused if the result wouldn't be a complete schedule, and changing
+  a window between one-time and repeating clears the other kind's settings.
+- A repeating window longer than a week now stays active to its end (it used to stop
+  being recognised after 7 days).
+
 ## [5.5.0] - 2026-11-04
 
 ### Added

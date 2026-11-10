@@ -3,7 +3,7 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v5.5.0 — 65 check types across the engine and agent (reachability, web,
+**Status**: v5.6.0 — 65 check types across the engine and agent (reachability, web,
 real-browser, DNS/DNSSEC, DNS zone history, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
 app integrations, SNMP with an OID dictionary, calculations and reusable templates,
 interface tables, printers, traps/syslog, Redfish/IPMI, Proxmox, VMware, Hyper-V,
@@ -25,7 +25,7 @@ and both an outbound watchdog and watchdog agents for Looksee's own outages). Bu
 verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md) for exactly what was
 tested how).
 
-**Current version: v5.5.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#550---2026-11-04).
+**Current version: v5.6.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#560---2026-11-09).
 5.0 renames what 4.x called endpoints to **sites** and hosts to **endpoints** (in the
 database too), adds the sidebar tree, groups, exclusions, recovery options, watchdog
 agents, software and vulnerability checks, SNMP templates and calculations, and role
@@ -98,6 +98,11 @@ cd engine && npm run lint    # ESLint (also dashboard: npm run lint)
 
 ESLint is pinned to 9.x in the dashboard: the React, import and accessibility plugins
 bundled by `eslint-config-next` only support up to ESLint 9. The engine uses ESLint 10.
+
+Not yet on their latest major version (deferred from 5.6.0 to a dedicated upgrade release,
+tracked in [`spec.md`](spec.md)): TypeScript 7, Vitest 5, bcryptjs 3, dotenv 18,
+web-push 4, marked 18 and @types/node 26. Each needs its breaking changes read and
+migrated rather than a blind bump.
 
 ## Security gate and releasing
 

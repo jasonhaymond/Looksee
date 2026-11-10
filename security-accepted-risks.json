@@ -1,4 +1,21 @@
 {
   "_comment": "Dependency advisories the developer has explicitly accepted, read by scripts/security-check.sh (via scripts/lib/security-parse.mjs). An entry only applies to development-only dependencies — a production advisory always fails the gate — and only until its reviewBy date, after which the gate fails again and the advisory must be re-reviewed. Adding or extending an entry is a security decision: it must be approved by the developer and recorded in the release's security report. JSON has no comment syntax, hence this field.",
-  "accepted": []
+  "accepted": [
+    {
+      "id": "GHSA-67mh-4wv8-2f99",
+      "package": "esbuild",
+      "reason": "Development only (an old esbuild pulled in by drizzle-kit for schema authoring); the issue affects esbuild's dev server, which Looksee never runs. Cleared by the planned major dependency upgrade release after 5.6.0.",
+      "acceptedBy": "Jason Haymond",
+      "acceptedOn": "2026-11-09",
+      "reviewBy": "2027-01-08"
+    },
+    {
+      "id": "GHSA-g3hv-75wg-m249",
+      "package": "minimatch",
+      "reason": "Development only (eslint / typescript-eslint tooling), run only on the developer machine against the repository's own files. Cleared by the planned major dependency upgrade release after 5.6.0.",
+      "acceptedBy": "Jason Haymond",
+      "acceptedOn": "2026-11-09",
+      "reviewBy": "2027-01-08"
+    }
+  ]
 }
