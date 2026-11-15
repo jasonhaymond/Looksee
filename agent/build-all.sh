@@ -43,7 +43,7 @@ if command -v go >/dev/null 2>&1; then
     build_one "$goos" "$goarch" "looksee-agent-${goos}-${goarch}"
   done
 else
-  echo "No local Go toolchain found — building inside golang:1.27 via Docker instead."
+  echo "No local Go toolchain found — building inside golang:1.27.4 via Docker instead."
   build_cmd=""
   for target in "${TARGETS[@]}"; do
     read -r goos goarch <<< "$target"
@@ -52,6 +52,9 @@ else
     build_cmd+="CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -ldflags \"$LDFLAGS\" -o bin/looksee-agent-${goos}-${goarch}${ext} . && "
   done
   build_cmd+="echo done"
+  # The image is pinned to an exact Go release (the same one go.mod names as
+  # its toolchain), so a server with an older cached golang:1.27 image can't
+  # build agents with a Go that has known security holes.
   # Run as the invoking user (not the container's root) so bin/ stays owned
   # by whoever runs updates, with a persistent module/build cache so repeat
   # builds (every update.sh run) don't re-download dependencies.
@@ -59,7 +62,7 @@ else
   mkdir -p "$CACHE_DIR"
   docker run --rm --user "$(id -u):$(id -g)" \
     -e HOME=/tmp -e GOCACHE=/cache/build -e GOMODCACHE=/cache/mod -e GOFLAGS=-buildvcs=false \
-    -v "$CACHE_DIR:/cache" -v "$SCRIPT_DIR:/agent" -w /agent golang:1.27 sh -c "$build_cmd"
+    -v "$CACHE_DIR:/cache" -v "$SCRIPT_DIR:/agent" -w /agent golang:1.27.4 sh -c "$build_cmd"
 fi
 
 # Authenticode-sign the Windows binaries when signing is configured

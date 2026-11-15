@@ -22,7 +22,13 @@ export default function ReportsPage() {
   const [days, setDays] = useState(30);
   const [siteId, setSiteId] = useState("");
   const [sites, setSites] = useState<Site[]>([]);
-  const [rows, setRows] = useState<SlaRow[] | null>(null);
+  // The latest report and the period/site it was fetched for. Rows only show
+  // while they match the current choice, so changing the period blanks the
+  // table ("loading") without resetting state inside the effect, and a slow
+  // answer for an old choice can never replace the current one.
+  const [report, setReport] = useState<{ key: string; rows: SlaRow[] } | null>(null);
+  const reportKey = `${days}|${siteId}`;
+  const rows = report?.key === reportKey ? report.rows : null;
   const [target, setTarget] = useState("99.9");
   const sort = useSort<SlaRow>("sla", { name: (r) => r.name, uptimePercent: (r) => r.uptimePercent, downtimeMinutes: (r) => r.downtimeMinutes, degradedMinutes: (r) => r.degradedMinutes, maintenanceMinutes: (r) => r.maintenanceMinutes, incidents: (r) => r.incidents, avgLatencyMs: (r) => r.avgLatencyMs }, WORST_FIRST);
 
@@ -32,8 +38,8 @@ export default function ReportsPage() {
   }, [authed]);
   useEffect(() => {
     if (!authed) return;
-    setRows(null);
-    api.slaReport(days, siteId || undefined).then((r) => setRows(r.checks));
+    const key = `${days}|${siteId}`;
+    api.slaReport(days, siteId || undefined).then((r) => setReport({ key, rows: r.checks }));
   }, [authed, days, siteId]);
 
   const sorted = sort.apply(rows ?? []);

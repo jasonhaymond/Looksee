@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [5.7.0] - 2026-11-14
+
+### Added
+
+- **Edit settings on many checks at once.** On the Checks page, select checks and choose
+  **Actions → Edit settings…** (or, on a check's page, **Settings → Edit on several
+  endpoints…**) to change the same kind of check on many endpoints together. Every setting
+  shows what the chosen checks have now, and can be kept as each check has it, changed to
+  one value on all, or cleared back to its default; this includes thresholds, timeouts
+  before down, interval and retry interval. Exclusions get their own editor: every item
+  the chosen checks ignore is listed with how many have it, so one item can be removed
+  everywhere, or new ones added, without overwriting each check's other items. Engine:
+  new `edit_settings` bulk action on `POST /api/checks/bulk`.
+
+### Changed
+
+- Patch and minor dependency updates in the engine: eslint 10.15, mongodb 7.9,
+  nodemailer 10.5, puppeteer-core 25.17, re2js 2.10, ws 8.23.
+
+### Fixed
+
+- **SLA reports:** changing the period or site while a report is still loading can no
+  longer show the older report's figures under the new choice.
+- **Bulk actions on checks** answer a malformed check ID with a clear error (400)
+  instead of a server error.
+
+### Security
+
+- **Agents are built with Go 1.27.4**, which fixes a crash in the Go HTTP library
+  (GO-2026-6859). `agent/go.mod` names the exact Go release (a machine with an
+  older Go downloads it automatically), and `agent/build-all.sh` and the security gate
+  use the matching `golang:1.27.4` image instead of whatever `golang:1.27` happens to
+  be cached. Agents update to 5.7.0 through the usual Update agent button.
+
 ## [5.6.0] - 2026-11-09
 
 ### Added

@@ -30,6 +30,7 @@ two-factor, IP restriction, attack alerts), [windows-agent-security.md](windows-
    - [Finding and filtering checks](#finding-and-filtering-checks)
    - [Working with many checks at once](#working-with-many-checks-at-once)
    - [Duplicating checks](#duplicating-checks)
+   - [Changing settings on many checks at once](#changing-settings-on-many-checks-at-once)
    - [A check's page: history, charts and incidents](#a-checks-page-history-charts-and-incidents)
    - [Leaving results out of statistics](#leaving-results-out-of-statistics)
    - [Resolving and recovery](#resolving-and-recovery)
@@ -256,6 +257,7 @@ On the Checks page:
 | Organize | Add tags… / Remove tags… | Comma-separated tags |
 | Organize | Move to site… / Set endpoint… | Re-home the checks |
 | Organize | Add to group… | Put them in a [group](#groups) (or start a new one) |
+| Settings | Edit settings… | Change any setting, or add/remove exclusion items, on the same kind of check everywhere — see [Changing settings on many checks at once](#changing-settings-on-many-checks-at-once) |
 | Organize | Duplicate… | Copy them — see [Duplicating checks](#duplicating-checks) |
 | Schedule | Run from… | Run ping/TCP/HTTP/DNS/TLS checks from the engine or a chosen agent |
 | Schedule | Interval… / Retry interval… | Change how often they run (retry: how often while failing; 0 clears) |
@@ -288,6 +290,45 @@ Select checks, then **Actions → Duplicate…** and choose where the copies go:
 
 Copies stay **enabled** and keep each original's **alert rules** (with their channels)
 and **dependencies**, so they start monitoring and alerting straight away.
+
+### Changing settings on many checks at once
+
+The same check often runs on many endpoints — a **Failed / stopped services** check on
+every PC, a disk check on every server. **Edit settings…** changes one or more of its
+settings on all of them in one go, without overwriting what you didn't touch.
+
+1. On the **Checks** page, select the checks (filtering by **kind** first makes this
+   easy), then **Actions → Edit settings…**. Or, from one check's page, open the
+   **Settings** tab and click **Edit on several endpoints…**.
+2. Settings belong to a kind of check, so one kind is edited at a time. If your
+   selection mixes kinds, choose which under **Kind of check to edit**; the others
+   aren't changed.
+3. The list at the top shows which checks will change. Tick more checks of the same kind
+   (from other endpoints or sites) to include them, or untick some to leave them out.
+4. **Exclusions** (for kinds that have them) list every item any of the chosen checks
+   ignores, with **on N of M** — how many of them have it.
+   - Tick an item to **remove** it from every chosen check that has it.
+   - Type items in **Add to every chosen check** (one per line) to add them.
+
+   Each check keeps its other items. Reusable lists from the
+   [Exclusions](#exclusions) page aren't changed here and keep applying on their own.
+5. Every other setting (including thresholds, the timeouts-before-down count, the
+   interval and the retry interval) shows **Now:** what the chosen checks have — the
+   same value on all, *not set on any*, or how many different values. For each one you
+   want to change, pick:
+   - **Change on all to…** — enter one new value for all of them;
+   - **Clear on all (use default)** — remove it, so each check uses the default;
+   - **Turn on / Turn off for all** — for yes/no settings.
+
+   Leave the rest on **Keep each check's own**. Passwords and keys are write-only: you
+   can replace or clear them, but never see them.
+6. Check the **this will change** summary at the bottom, then click **Apply to N
+   check(s)**. It runs in the background like the other bulk actions; a message says
+   how many changed and names any that were skipped.
+
+**Check:** open one of the checks. Its **Settings** tab shows the new values, and its
+page shows **Ignoring N items** with the exclusions now in use. Agent checks pick up
+the change on the agent's next configuration refresh (about a minute).
 
 ### A check's page: history, charts and incidents
 
@@ -854,7 +895,9 @@ purpose. Exclusions make checks ignore them.
 **Inside one check:** most checks that look at several items have an **Exclude …**
 field under Advanced (mounts, interfaces, disk devices, sensors, services, containers,
 VMs, packages, user accounts, SNMP rows/values, event IDs, message texts), one item per
-line.
+line. To add or remove an item on the same kind of check on many endpoints at once, use
+**Edit settings…** — see
+[Changing settings on many checks at once](#changing-settings-on-many-checks-at-once).
 
 **Reusable lists:** **Alerting → Exclusions** holds lists you write once and apply to
 many checks.

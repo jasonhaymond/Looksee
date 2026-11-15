@@ -58,7 +58,9 @@ cd "$REPO_ROOT" || exit 2
 SEMGREP_IMAGE="semgrep/semgrep:1.180.0"
 GITLEAKS_IMAGE="zricethezav/gitleaks:v8.30.1"
 SHELLCHECK_IMAGE="koalaman/shellcheck-alpine:v0.11.0"
-GO_IMAGE="golang:1.27"
+# Go: the exact release go.mod names as its toolchain, so govulncheck judges
+# the standard library the agent is really built with.
+GO_IMAGE="golang:1.27.4"
 
 # Prints the "Usage:" block from the header comment above.
 usage() {

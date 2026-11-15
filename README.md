@@ -3,7 +3,7 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v5.6.0 — 65 check types across the engine and agent (reachability, web,
+**Status**: v5.7.0 — 65 check types across the engine and agent (reachability, web,
 real-browser, DNS/DNSSEC, DNS zone history, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
 app integrations, SNMP with an OID dictionary, calculations and reusable templates,
 interface tables, printers, traps/syslog, Redfish/IPMI, Proxmox, VMware, Hyper-V,
@@ -25,7 +25,7 @@ and both an outbound watchdog and watchdog agents for Looksee's own outages). Bu
 verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md) for exactly what was
 tested how).
 
-**Current version: v5.6.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#560---2026-11-09).
+**Current version: v5.7.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#570---2026-11-14).
 5.0 renames what 4.x called endpoints to **sites** and hosts to **endpoints** (in the
 database too), adds the sidebar tree, groups, exclusions, recovery options, watchdog
 agents, software and vulnerability checks, SNMP templates and calculations, and role
@@ -174,7 +174,7 @@ Backups section for exactly what's been proven vs. still needs a first real run.
 - [`CLAUDE.md`](CLAUDE.md) — locked project-specific decisions
 - [`docs/deployment-guide.md`](docs/deployment-guide.md) — first deployment and updating
 - [`docs/migration-guide.md`](docs/migration-guide.md) — moving an existing deployment to a new server
-- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: the Location → Site → Endpoint layout and sidebar, checks (adding to many endpoints, browsing what the agent found, duplicating, check pages, resolving and recovery, statistics exclusions, SNMP calculations, software and security checks), endpoints and inventory, suggestions and templates, sites and locations, groups, exclusions, SNMP templates, multiple sites, discovery, heartbeats, channels and templates, alerting and alert history, maintenance, reports, traps/syslog, top talkers, status pages, dashboards, security, watchdog and watchdog agents, themes
+- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: the Location → Site → Endpoint layout and sidebar, checks (adding to many endpoints, browsing what the agent found, duplicating, editing settings and exclusions on many at once, check pages, resolving and recovery, statistics exclusions, SNMP calculations, software and security checks), endpoints and inventory, suggestions and templates, sites and locations, groups, exclusions, SNMP templates, multiple sites, discovery, heartbeats, channels and templates, alerting and alert history, maintenance, reports, traps/syslog, top talkers, status pages, dashboards, security, watchdog and watchdog agents, themes
 - [`docs/check-reference.md`](docs/check-reference.md) — every check type: what it watches, how it works, its value, and how to check the same thing by hand
 - [`docs/check-settings.md`](docs/check-settings.md) — every setting of every check type, with defaults (generated from the check form)
 - [`docs/plans/check-expansion.md`](docs/plans/check-expansion.md) — recommendations for further checks and templates (not built)

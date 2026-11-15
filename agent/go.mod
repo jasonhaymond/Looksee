@@ -2,6 +2,13 @@ module looksee-agent
 
 go 1.26.0
 
+// The Go release the agent is built with. A machine whose own Go is older
+// downloads this one automatically, so every agent build carries the
+// standard-library security fixes it contains (net/http GO-2026-6859 is
+// fixed in 1.27.4). Keep in step with the golang image in build-all.sh and
+// scripts/security-check.sh.
+toolchain go1.27.4
+
 require (
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/shirou/gopsutil/v4 v4.26.10

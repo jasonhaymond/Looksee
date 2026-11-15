@@ -163,7 +163,20 @@ function InventoryInput({ field, value, onChange, items, multi, picked, onPick, 
   );
 }
 
-function FieldInput({ field, value, onChange, items, checks, editing, multi, picked, onPick, endpointName }: { field: Field; value: unknown; onChange: (v: unknown) => void; items: PickItem[]; checks: Check[]; editing: boolean; multi: boolean; picked: string[]; onPick: (ids: string[]) => void; endpointName?: string }) {
+/**
+ * One setting's input, chosen by the field's kind (checkbox, select, text,
+ * number, textarea, write-only secret, check picker, or a text box with an
+ * agent-inventory "Browse" list). Also used by BulkSettingsDialog, so a
+ * setting looks the same whether one check or many are being edited.
+ *
+ * @param field the setting's description from lib/checkTypes.ts
+ * @param value its current value; onChange receives the new one
+ * @param items agent-discovered names for "Browse" (empty = plain input)
+ * @param checks the checks a "checkref" field may point at
+ * @param editing true when editing a saved check (secret placeholder text)
+ * @param multi/picked/onPick picking several inventory items while creating
+ */
+export function FieldInput({ field, value, onChange, items, checks, editing, multi, picked, onPick, endpointName }: { field: Field; value: unknown; onChange: (v: unknown) => void; items: PickItem[]; checks: Check[]; editing: boolean; multi: boolean; picked: string[]; onPick: (ids: string[]) => void; endpointName?: string }) {
   const str = value == null ? "" : String(value);
   switch (field.kind) {
     case "checkbox":

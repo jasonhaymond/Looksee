@@ -2,6 +2,9 @@
 // every enabled reusable exclusion list (table `exclusion_lists`) that applies
 // to it.
 //
+// Also edits a check's own items for the Checks page's bulk "Edit settings"
+// (editOwnExclude, called by routes/checks.ts).
+//
 // Where this sits: called just before a check runs or is handed out —
 // scheduler.ts (engine-run checks), routes/agent.ts (agent checks, and the
 // agent-reported host_metric checks), routes/collector.ts (site collector
@@ -88,6 +91,42 @@ export async function exclusionsFor(check: CheckLike): Promise<ExclusionItem[]> 
     seen.add(key);
     return true;
   });
+}
+
+/**
+ * A check's own `exclude` setting with items added and/or removed — the
+ * Checks page's "Edit settings" on many checks at once. Only the check's own
+ * items change; reusable exclusion lists are untouched (they're edited on the
+ * Exclusions page and apply by themselves).
+ *
+ * Items are compared ignoring upper/lower case, the same way they match: an
+ * item already present isn't added twice, and removing "VETH*" removes
+ * "veth*". The result is one item per line (what the check form writes), at
+ * most 1000 items of at most 300 characters each — the same bounds as an
+ * exclusion list.
+ *
+ * @param check the check (its type and config decide how commas are read)
+ * @param add items to add (kept in the order given, after existing ones)
+ * @param remove items to take out
+ * @returns the new `exclude` text, or undefined when no items are left
+ */
+export function editOwnExclude(check: CheckLike, add: string[], remove: string[]): string | undefined {
+  const config = (check.config as Record<string, unknown>) ?? {};
+  // Name items (mounts, services…) may be comma-separated in older settings;
+  // message texts never are, because a message can contain a comma.
+  const kinds = kindsOf(check);
+  const splitCommas = kinds.length ? own(EXCLUSION_KINDS, kinds[0])?.match === "name" : true;
+  const drop = new Set(remove.map((r) => r.trim().toLowerCase()).filter(Boolean));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of [...excludeItems(config.exclude, splitCommas), ...add]) {
+    const item = raw.trim().slice(0, 300);
+    const key = item.toLowerCase();
+    if (!item || drop.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out.length ? out.slice(0, 1000).join("\n") : undefined;
 }
 
 /**

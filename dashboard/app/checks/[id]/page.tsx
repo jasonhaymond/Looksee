@@ -17,6 +17,7 @@ import { AlertRuleManager } from "../../components/AlertRuleManager";
 import { displayStatus, Details, Remediation } from "../../components/CheckDetail";
 import { RecoveryUrl, ResolveButton } from "../../components/CheckRecovery";
 import { ExclusionsApplied } from "../../components/ExclusionsApplied";
+import { BulkSettingsDialog } from "../../components/BulkSettingsDialog";
 import { LineChart, StatusStrip } from "../../components/Charts";
 import { Button, EmptyState, Label, Modal, SortTh, StatusBadge, inputClass, relativeTime, useToast } from "../../components/ui";
 import { useSort } from "../../lib/useSort";
@@ -57,6 +58,8 @@ export default function CheckPage() {
   const [onlyProblems, setOnlyProblems] = useState(false);
   // Whether the "Exclude a time range" dialog is open.
   const [excludeRange, setExcludeRange] = useState(false);
+  // Whether "Edit on several endpoints" (the same kind of check elsewhere) is open.
+  const [bulkEdit, setBulkEdit] = useState(false);
   const [tab, setTab] = useState<"history" | "edit" | "alerts">("history");
   const [ctx, setCtx] = useState<{ sites: Site[]; endpoints: Endpoint[]; checks: Check[]; channels: Channel[] } | null>(null);
   const [running, setRunning] = useState(false);
@@ -327,6 +330,13 @@ export default function CheckPage() {
 
       {tab === "edit" && ctx && (
         <div className="surface rounded-xl p-3">
+          {/* The same change on this kind of check on other endpoints too (components/BulkSettingsDialog.tsx). */}
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--muted)]">
+            <span>Editing this one check.</span>
+            <Button className="text-xs" onClick={() => setBulkEdit(true)}>
+              Edit on several endpoints…
+            </Button>
+          </div>
           <CheckForm type={check.type} check={check} sites={ctx.sites} endpoints={ctx.endpoints} checks={ctx.checks} onSaved={() => (loadCheck(), setTab("history"), toast.show("Saved."))} onCancel={() => setTab("history")} />
         </div>
       )}
@@ -336,6 +346,20 @@ export default function CheckPage() {
         </div>
       )}
       {toast.node}
+      {bulkEdit && ctx && (
+        <BulkSettingsDialog
+          initial={[ctx.checks.find((c) => c.id === check.id) ?? check]}
+          checks={ctx.checks}
+          sites={ctx.sites}
+          endpoints={ctx.endpoints}
+          onClose={() => setBulkEdit(false)}
+          onSubmit={async (ids, params) => {
+            const res = await api.bulkChecks(ids, "edit_settings", params);
+            toast.show(res.errors.length ? `Changed settings on ${res.affected}; ${res.errors.length} skipped: ${res.errors[0].error}` : `Changed settings on ${res.affected} check(s).`, res.errors.length ? "error" : undefined);
+            loadCheck();
+          }}
+        />
+      )}
       {excludeRange && check && <ExcludeRangeDialog checkId={check.id} onClose={() => setExcludeRange(false)} onDone={() => (setExcludeRange(false), loadHistory())} />}
     </main>
   );

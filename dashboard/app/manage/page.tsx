@@ -1,5 +1,6 @@
 // The Checks page (/manage): every check, grouped and filtered, with bulk
-// actions (run, enable, maintenance, resolve, alert rules, add to group) and
+// actions (run, enable, maintenance, resolve, alert rules, add to group, edit
+// the settings and exclusions of the same kind of check on many endpoints) and
 // the inline detail. "use client" makes this a React component that runs in
 // the browser; the engine refuses every call without a session.
 //
@@ -21,6 +22,7 @@ import { PageHelp } from "../components/PageHelp";
 import { CheckForm, TypePicker } from "../components/CheckForm";
 import { CheckDetail, displayStatus } from "../components/CheckDetail";
 import { AddToGroupDialog } from "../components/NodeViews";
+import { BulkSettingsDialog } from "../components/BulkSettingsDialog";
 import { AlertOptions, BulkBar, Button, Checkbox, ConfirmDialog, EmptyState, FilterChip, Modal, MultiFilter, MultiPicker, PromptDialog, SortHead, SortPicker, StatusBadge, Tags, alertRulePayload, availableOnly, emptyAlertOptions, inputClass, relativeTime, useSelection, useToast, type BulkAction, type FilterOption } from "../components/ui";
 import { runInBackground } from "../lib/background";
 import { pollEvery } from "../lib/poll";
@@ -42,6 +44,7 @@ type Dialog =
   | { kind: "dependencies" }
   | { kind: "duplicate" }
   | { kind: "group" }
+  | { kind: "settings" }
   | null;
 
 /** A saved grouping choice, or undefined when what's stored isn't one. */
@@ -211,10 +214,11 @@ export default function ChecksPage() {
    * shows how many were affected (and the first error, if any were
    * skipped), and reloads. The selection is read when the action starts —
    * it usually runs in the background after its dialog closes — and cleared
-   * straight away for delete, whose checks are gone.
+   * straight away for delete, whose checks are gone. `only` replaces the
+   * selection with the dialog's own list (Edit settings may add or drop checks).
    */
-  async function bulk(action: string, params: Record<string, unknown> = {}, verb = "Updated") {
-    const ids = sel.ids;
+  async function bulk(action: string, params: Record<string, unknown> = {}, verb = "Updated", only?: string[]) {
+    const ids = only ?? sel.ids;
     if (action === "delete") sel.clear();
     const res = await api.bulkChecks(ids, action, params);
     if (res.errors.length) toast.show(`${verb} ${res.affected}; ${res.errors.length} skipped: ${res.errors[0].error}`, "error");
@@ -237,6 +241,7 @@ export default function ChecksPage() {
     { group: "Alerts", key: "alert", label: "Add alert rule…", run: () => setDialog({ kind: "alertRule" }) },
     { group: "Alerts", key: "noalert", label: "Remove alert rules", run: () => bulkNow("Remove alert rules from", "clear_alert_rules", "Removed alert rules from") },
     { group: "Alerts", key: "deps", label: "Depends on…", run: () => setDialog({ kind: "dependencies" }) },
+    { group: "Settings", key: "settings", label: "Edit settings…", hint: "Change settings and exclusions on the same kind of check everywhere", run: () => setDialog({ kind: "settings" }) },
     { group: "Organize", key: "tags", label: "Add tags…", run: () => prompt({ title: "Add tags", label: "Tags (comma-separated)", action: "add_tags", param: "tags", asList: true }) },
     { group: "Organize", key: "untag", label: "Remove tags…", run: () => prompt({ title: "Remove tags", label: "Tags (comma-separated)", action: "remove_tags", param: "tags", asList: true }) },
     { group: "Organize", key: "move", label: "Move to site…", run: () => prompt({ title: "Move to site", label: "Site", options: siteOptions, action: "move", param: "siteId" }) },
@@ -537,6 +542,16 @@ export default function ChecksPage() {
           endpoints={endpoints}
           onClose={() => setDialog(null)}
           onSubmit={(params) => bulk("duplicate", params, "Created copies:")}
+        />
+      )}
+      {dialog?.kind === "settings" && (
+        <BulkSettingsDialog
+          initial={checks.filter((c) => sel.selected.has(c.id))}
+          checks={checks}
+          sites={sites}
+          endpoints={endpoints}
+          onClose={() => setDialog(null)}
+          onSubmit={(ids, params) => bulk("edit_settings", params, "Changed settings on", ids)}
         />
       )}
       {dialog?.kind === "dependencies" && (

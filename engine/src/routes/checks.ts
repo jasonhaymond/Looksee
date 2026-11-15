@@ -1,7 +1,9 @@
 // API routes for checks: list, create (one or many targets at once), edit,
 // delete, bulk actions, run now, results and statistics, resolve, recovery
 // URLs, excluding results from statistics, what a check ignores, and the SNMP
-// walk browser with its OID dictionary.
+// walk browser with its OID dictionary. Bulk actions include editing the
+// settings (and own exclusion items) of the same kind of check on many
+// endpoints at once ("edit_settings").
 //
 // Security: every route requires a signed-in session; check secrets are
 // write-only (lib/secrets.ts); IDs are checked before they reach the database;
@@ -14,7 +16,7 @@ import { db } from "../db/index.js";
 import { checks, checkResults, checkDependencies, alertRules, maintenanceWindows, endpoints, sites } from "../db/schema.js";
 import { CHECK_TYPE_META, COLLECTOR_CHECK_TYPES, isCheckType, ENDPOINT_SCOPED_CHECK_TYPES, PINNABLE_CHECK_TYPES } from "../db/checkTypes.js";
 import { requireAuth } from "../middleware/auth.js";
-import { maskCheck, mergeSecrets } from "../lib/secrets.js";
+import { MASK, SECRET_KEYS, maskCheck, mergeSecrets } from "../lib/secrets.js";
 import { runOneCheck } from "../services/scheduler.js";
 import { queueCollectorJob, runsOnCollector, siteCollectorFor } from "../services/sites.js";
 import { browseSnmp } from "../services/probes/snmp.js";
@@ -26,8 +28,9 @@ import { remediationFor } from "../services/remediation.js";
 import { resolveCheck } from "../services/alerting.js";
 import { logger } from "../lib/logger.js";
 import { alertEvents } from "../db/schema.js";
-import { exclusionsFor } from "../services/exclusions.js";
-import { own } from "../lib/own.js";
+import { editOwnExclude, exclusionsFor } from "../services/exclusions.js";
+import { excludeItems } from "../services/probes/exclude.js";
+import { deleteOwn, own, setOwn } from "../lib/own.js";
 import { isUuid } from "../lib/ids.js";
 
 export const checksRouter = Router();
@@ -505,14 +508,72 @@ checksRouter.get("/:id/results", async (req, res) => {
   res.json(rows);
 });
 
+// A setting name a bulk edit may change: starts with a letter, then letters,
+// digits or underscores, at most 64 characters — e.g. "exclude",
+// "timeoutSeconds", "warn_above". This refuses anything that isn't a plain
+// name, including JavaScript's object-machinery names ("__proto__" starts
+// with an underscore; "constructor"/"prototype" are blocked by setOwn too).
+const SETTING_KEY = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+type SettingsEdit = {
+  set: Record<string, unknown>;
+  unset: string[];
+  excludeAdd: string[];
+  excludeRemove: string[];
+  intervalSeconds?: number;
+  retryIntervalSeconds?: number | null;
+};
+
+/**
+ * Validates the body of the bulk "edit_settings" action: which settings to
+ * set to a new value (`set`), which to remove so the check falls back to its
+ * default (`unset`), exclusion items to add or remove (`excludeAdd`,
+ * `excludeRemove`, lists or one-per-line text), and optionally the check
+ * interval and retry interval (retry: null clears it).
+ *
+ * Bounds keep one request from storing unbounded data: at most 200 setting
+ * names, 64 KB of new values, 1000 exclusion items each way.
+ *
+ * @param body the JSON request body
+ * @returns the parsed edit, or `error` (a message for a 400 response)
+ */
+function parseSettingsEdit(body: Record<string, unknown>): { edit?: SettingsEdit; error?: string } {
+  const rawSet = body.set && typeof body.set === "object" && !Array.isArray(body.set) ? (body.set as Record<string, unknown>) : {};
+  const setKeys = Object.keys(rawSet);
+  const unset = Array.isArray(body.unset) ? [...new Set(body.unset.map(String))] : [];
+  if (setKeys.length + unset.length > 200) return { error: "At most 200 settings can be changed at once" };
+  const bad = [...setKeys, ...unset].find((k) => !SETTING_KEY.test(k));
+  if (bad !== undefined) return { error: `Not a setting name: ${bad.slice(0, 64)}` };
+  if (JSON.stringify(rawSet).length > 65_536) return { error: "The new settings are too large" };
+  const set: Record<string, unknown> = {};
+  // A secret sent back as the mask (••••••••) means "keep each check's own" —
+  // it's never stored over the real value (lib/secrets.ts).
+  // Object.entries only yields the body's own data (never inherited
+  // properties); every name was checked against SETTING_KEY above.
+  for (const [k, v] of Object.entries(rawSet)) if (!(SECRET_KEYS.has(k) && v === MASK)) setOwn(set, k, v);
+  const items = (v: unknown) => excludeItems(v).map((i) => i.slice(0, 300));
+  const edit: SettingsEdit = { set, unset, excludeAdd: items(body.excludeAdd), excludeRemove: items(body.excludeRemove) };
+  if (body.intervalSeconds !== undefined) {
+    const n = Number(body.intervalSeconds);
+    if (!Number.isFinite(n) || n < 5) return { error: "intervalSeconds must be at least 5" };
+    edit.intervalSeconds = Math.round(n);
+  }
+  if (body.retryIntervalSeconds !== undefined) edit.retryIntervalSeconds = intOrNull(body.retryIntervalSeconds) || null;
+  const nothing = !setKeys.length && !unset.length && !edit.excludeAdd.length && !edit.excludeRemove.length && edit.intervalSeconds === undefined && edit.retryIntervalSeconds === undefined;
+  if (nothing) return { error: "Nothing to change" };
+  return { edit };
+}
+
 // One request applies an action to many checks — the management table's
 // multi-select. Every action is a plain loop over the same single-check
 // rules above, so batch and one-at-a-time behave identically.
 checksRouter.post("/bulk", async (req, res) => {
-  const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+  // Only well-formed check IDs (8-4-4-4-12 hex digits); anything else would
+  // make the database query fail with a server error instead of a clear answer.
+  const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter((id: string) => isUuid(id)) : [];
   const action = String(req.body?.action ?? "");
   if (!ids.length) {
-    res.status(400).json({ error: "ids is required" });
+    res.status(400).json({ error: "ids is required (check IDs)" });
     return;
   }
   const rows = await db.query.checks.findMany({ where: inArray(checks.id, ids) });
@@ -668,6 +729,59 @@ checksRouter.post("/bulk", async (req, res) => {
         await setDependencies(c.id, parents);
         affected++;
       }
+      break;
+    }
+    case "edit_settings": {
+      // The same check on many endpoints (or sites) at once: set, clear or
+      // keep each setting, and add/remove exclusion items, on every chosen
+      // check of one type. Settings are per type, so a check of any other
+      // type in the selection is skipped (reported), never half-edited.
+      const type = String(req.body?.type ?? "");
+      if (!isCheckType(type)) {
+        res.status(400).json({ error: "type must be the check type being edited" });
+        return;
+      }
+      const { edit, error } = parseSettingsEdit(req.body ?? {});
+      if (!edit) {
+        res.status(400).json({ error });
+        return;
+      }
+      for (const c of rows) {
+        if (c.type !== type) {
+          errors.push({ id: c.id, error: `${c.name}: a different kind of check — skipped` });
+          continue;
+        }
+        const interval = edit.intervalSeconds ?? c.intervalSeconds;
+        const err = validate(c.type, c.endpointId, c.probeEndpointId, interval);
+        if (err) {
+          errors.push({ id: c.id, error: `${c.name}: ${err}` });
+          continue;
+        }
+        // A fresh copy of this check's settings, changed in order: clear,
+        // then set, then exclusion items added/removed. own/setOwn/deleteOwn
+        // only ever touch the object's own data (lib/own.ts).
+        const config: Record<string, unknown> = { ...((c.config as Record<string, unknown>) ?? {}) };
+        for (const k of edit.unset) deleteOwn(config, k);
+        for (const [k, v] of Object.entries(edit.set)) setOwn(config, k, v);
+        if (edit.excludeAdd.length || edit.excludeRemove.length) {
+          const next = editOwnExclude({ id: c.id, type: c.type, config }, edit.excludeAdd, edit.excludeRemove);
+          if (next === undefined) deleteOwn(config, "exclude");
+          else setOwn(config, "exclude", next);
+        }
+        const configChanged = JSON.stringify(config) !== JSON.stringify(c.config ?? {});
+        const updates: Partial<typeof checks.$inferInsert> = {};
+        // Changing what a check measures invalidates its baselines/counters,
+        // exactly like a single edit (PATCH /:id).
+        if (configChanged) Object.assign(updates, { config, state: {} });
+        if (edit.intervalSeconds !== undefined) updates.intervalSeconds = interval;
+        if (edit.retryIntervalSeconds !== undefined) updates.retryIntervalSeconds = edit.retryIntervalSeconds;
+        if (!Object.keys(updates).length) continue;
+        await db.update(checks).set(updates).where(eq(checks.id, c.id));
+        affected++;
+      }
+      // Setting names only — values may be credentials and are never logged.
+      const what = [...Object.keys(edit.set), ...edit.unset.map((k) => `-${k}`), ...(edit.excludeAdd.length ? [`+${edit.excludeAdd.length} exclusion(s)`] : []), ...(edit.excludeRemove.length ? [`-${edit.excludeRemove.length} exclusion(s)`] : [])];
+      logger.info("checks", `Bulk settings edit on ${affected} ${type} check(s): ${what.join(", ") || "interval"}`, "Settings were changed on several checks at once.");
       break;
     }
     case "maintenance": {
