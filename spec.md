@@ -27,7 +27,7 @@ doc as decisions change rather than letting it drift from reality.
 - Multi-tenant / role-based access — single admin user only.
 - A generic metric query language or custom dashboard-per-widget scripting.
 - Network auto-discovery/scanning — checks are added explicitly. (Added as an on-demand Discovery page in 3.0.)
-- A native mobile app — the web dashboard is installable as a PWA instead.
+- A native mobile app — the web dashboard is installable as a PWA instead. (Built in 5.8 as an Android app with native screens and direct-connection notifications; see `mobile/README.md`.)
 
 ## Architecture
 
@@ -169,7 +169,7 @@ if a real use case shows up.
 
 ## Deferred / future ideas
 
-- Native mobile app (if PWA + Web Push proves insufficient).
+- ~~Native mobile app~~ — built in 5.8 for Android (`mobile/`, design in `docs/plans/v5.8-android-app.md`). An iOS version would need Apple push (APNs), since iOS doesn't allow a background connection like Android's; not planned.
 - SMS alert channel (needs a provider choice).
 - SNMPv3 traps (v1/v2c traps are received today).
 - Kubernetes monitoring (explicitly out of scope for 3.0).

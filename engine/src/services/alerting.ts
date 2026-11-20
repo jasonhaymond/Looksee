@@ -13,7 +13,7 @@ import { db } from "../db/index.js";
 import { checks, checkResults, alertRules, alertRuleChannels, alertEvents, notificationChannels, checkDependencies, endpoints, sites, locations } from "../db/schema.js";
 import { sendEmail } from "./notifications/email.js";
 import { sendWebhook } from "./notifications/webhook.js";
-import { sendWebPush } from "./notifications/webpush.js";
+import { sendNotifications } from "./notifications/push.js";
 import { sendSlack, sendTeams, sendTelegram } from "./notifications/chat.js";
 import { dashboardUrl, formatDuration, renderFor, type AlertContext, type AlertEvent, type Templates } from "./notifications/templates.js";
 import { remediationFor } from "./remediation.js";
@@ -271,7 +271,15 @@ export async function deliver(channel: typeof notificationChannels.$inferSelect,
 export async function deliverText(channel: typeof notificationChannels.$inferSelect, title: string, body: string, url?: string, status?: string, vars: Record<string, unknown> = {}) {
   if (channel.type === "email") await sendEmail(channel.config, body, title);
   else if (channel.type === "webhook") await sendWebhook(channel.config, body, { ...vars, title, url });
-  else if (channel.type === "web_push") await sendWebPush(channel.config, body, title, url);
+  // "Notifications": every browser with push on and every phone with the
+  // Android app. The phone uses status for how loud the notification is,
+  // and checkId to open that check when it's tapped.
+  else if (channel.type === "web_push")
+    await sendNotifications(title, body, url, {
+      status: status ?? (typeof vars.status === "string" ? vars.status : undefined),
+      event: typeof vars.event === "string" ? vars.event : undefined,
+      checkId: typeof vars.checkId === "string" ? vars.checkId : undefined,
+    });
   else if (channel.type === "telegram") await sendTelegram(channel.config, title, body);
   else if (channel.type === "slack") await sendSlack(channel.config, title, body);
   else if (channel.type === "teams") await sendTeams(channel.config, title, body, { url, status });

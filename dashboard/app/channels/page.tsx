@@ -1,5 +1,5 @@
 // The Channels page (/channels): notification channels (email, webhook, web
-// push, Slack, Teams, Telegram…), their message templates with a live preview,
+// push, Slack, Teams, Telegram, Notifications to browsers and the Android app…), their message templates with a live preview,
 // send-a-test, and the SMTP server settings.
 //
 // Channel secrets and the SMTP password are write-only. "use client" makes
@@ -372,7 +372,7 @@ export default function ChannelsPage() {
   return (
     <main className="mx-auto max-w-4xl p-4 sm:p-6">
       <h2 className="mb-3 text-lg font-medium">Notification channels</h2>
-      <PageHelp anchor="channels">Channels are where alerts go: email, Slack, Teams, Telegram, push, or any webhook. A check&apos;s alert rules decide when; each channel&apos;s templates decide what the message says.</PageHelp>
+      <PageHelp anchor="channels">Channels are where alerts go: email, Slack, Teams, Telegram, any webhook, or Notifications (browsers and the Looksee Android app). A check&apos;s alert rules decide when; each channel&apos;s templates decide what the message says.</PageHelp>
 
       <SmtpSettingsSection />
 

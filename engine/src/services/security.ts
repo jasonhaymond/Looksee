@@ -41,6 +41,10 @@ export const SECURITY_EVENT_KINDS: Record<string, { label: string; severity: "in
   scan_probe: { label: "Scanner/exploit probe (e.g. /.env, /wp-login.php)", severity: "warn" },
   bad_agent_key: { label: "Agent/collector request with an invalid key", severity: "warn" },
   bad_push_token: { label: "Heartbeat URL with an unknown token", severity: "info" },
+  // The Android app's notification stream (services/appStream.ts).
+  bad_app_token: { label: "App notification connection with an invalid phone token", severity: "warn" },
+  app_device_added: { label: "Phone registered for app notifications", severity: "warn" },
+  app_device_removed: { label: "Phone removed from app notifications", severity: "info" },
   rate_limited: { label: "Rate limit hit", severity: "warn" },
   settings_changed: { label: "Security settings changed", severity: "warn" },
 };
@@ -49,6 +53,7 @@ export const DEFAULT_RULES: Omit<typeof securityRules.$inferInsert, "id">[] = [
   { name: "Password guessing", kinds: ["login_failed", "totp_failed"], threshold: 5, windowMinutes: 10, perIp: true, notify: true, blockMinutes: 60, cooldownMinutes: 60 },
   { name: "Vulnerability scanner", kinds: ["scan_probe"], threshold: 3, windowMinutes: 10, perIp: true, notify: true, blockMinutes: 1440, cooldownMinutes: 360 },
   { name: "Agent key guessing", kinds: ["bad_agent_key"], threshold: 10, windowMinutes: 10, perIp: true, notify: true, blockMinutes: 60, cooldownMinutes: 60 },
+  { name: "App token guessing", kinds: ["bad_app_token"], threshold: 10, windowMinutes: 10, perIp: true, notify: true, blockMinutes: 60, cooldownMinutes: 60 },
   { name: "Heartbeat token guessing", kinds: ["bad_push_token"], threshold: 30, windowMinutes: 10, perIp: true, notify: true, blockMinutes: 60, cooldownMinutes: 60 },
   { name: "Sign-in from a new IP", kinds: ["login_new_ip"], threshold: 1, windowMinutes: 1, perIp: true, notify: true, blockMinutes: null, cooldownMinutes: 0 },
   { name: "Lockout or password change", kinds: ["login_locked", "password_changed", "recovery_code_used"], threshold: 1, windowMinutes: 1, perIp: false, notify: true, blockMinutes: null, cooldownMinutes: 0 },

@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [5.8.0] - 2026-11-20
+
+### Added
+
+- **Looksee for Android** (`mobile/`): a native app with the same management as the
+  dashboard — overview, alerts, the location/site/endpoint tree, checks (search,
+  filters, create and edit every check type, history, results, run now, pause/resume,
+  mark recovered, maintenance, duplicate, delete, alert rules), bulk actions on many
+  checks (including editing settings and exclusions on many), groups, maintenance
+  windows, exclusion lists, channels, discovery, suggested checks and templates, events,
+  top talkers, SLA reports, the engine log, backups, data retention, the outbound
+  watchdog, SMTP, SNMP templates, status pages, and security. Light and dark themes.
+  Sign-in uses the same password and required two-factor code as the dashboard.
+- **Alert notifications on the phone without a third-party push service.** A native
+  Android foreground service keeps a connection to the engine (`/api/app/stream`,
+  WebSocket) and shows alerts with the app closed and after a restart; notifications a
+  phone missed while offline (last 24 hours) arrive when it reconnects, and after 10
+  minutes without a connection the phone says it can't reach Looksee. Down alerts,
+  warnings and recoveries are separate Android notification categories; tapping one
+  opens the check.
+- **One Notifications channel for browsers and phones.** The browser push channel type
+  is now called **Notifications** and also reaches every phone signed in to the Android
+  app, so a single channel sends to both; existing push channels start reaching phones
+  as soon as one signs in. When setting up an alert rule (on a check, when creating
+  checks, in discovery and in bulk actions), **Notifications** can be ticked directly;
+  the first time, that creates the channel. "Send test" says when nothing would
+  receive it (no browser with push on and no phone signed in).
+- **Phones on the Security page**: each phone signed in to the app, whether it's
+  connected, a test notification, and **Remove** (its connection closes at once).
+- The security gate also covers the app: ESLint with the security rules, typecheck,
+  `npm audit`, and Semgrep over its TypeScript and Kotlin.
+
+### Changed
+
+- The engine accepts a session token in an `Authorization: Bearer` header as well as
+  the session cookie (the app has no cookie jar of its own); `client: "app"` on the
+  second sign-in step returns the token instead of setting a cookie.
+- The dashboard's API client can be pointed at another address and sign requests with
+  a token (`configureApi`), so the app uses the same client.
+
+### Security
+
+- A phone's notification token can only receive and acknowledge that phone's own
+  notifications. Only its SHA-256 hash is stored; on the phone it's encrypted with the
+  Android Keystore. Wrong tokens are recorded as security events, and a new built-in
+  rule, **App token guessing** (10 in 10 minutes from one address), notifies and blocks
+  the address for an hour; migration 0030 adds it on existing servers. Registering a
+  phone is recorded and sends a security notification. The stream applies the same IP
+  blocks and allowlist as every other request, caps messages from a phone at 64 KB, and
+  allows at most 5 connections per phone.
+- Release builds of the app refuse plain-HTTP connections; the session token is kept in
+  encrypted storage and the app's data is excluded from Android backups.
+
+### Upgrading
+
+- Migration 0030 is additive (two tables, one security rule), so
+  rolling the code back to 5.7 needs no database restore. The reverse proxy must pass
+  WebSockets on `/api/app/stream`: Caddy does with no changes. See
+  [Upgrading to 5.8](docs/deployment-guide.md#upgrading-to-58).
+
 ## [5.7.0] - 2026-11-14
 
 ### Added

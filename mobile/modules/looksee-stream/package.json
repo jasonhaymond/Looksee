@@ -1,0 +1,7 @@
+{
+  "name": "looksee-stream",
+  "version": "1.0.0",
+  "description": "Looksee's Android notification service: keeps the connection to the Looksee engine open and shows its alerts. Local Expo module, not published.",
+  "main": "index.ts",
+  "private": true
+}

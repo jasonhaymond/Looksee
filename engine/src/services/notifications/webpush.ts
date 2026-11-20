@@ -1,3 +1,12 @@
+// Browser push (Web Push): sends an alert to every browser that turned on
+// push in the dashboard ("Enable push notifications"). Part of the
+// "Notifications" channel, which also reaches the Android app
+// (services/notifications/push.ts sends to both).
+//
+// Security: messages are signed with the server's VAPID key pair from .env
+// (the private key never leaves the engine); each subscription's keys encrypt
+// the message so only that browser can read it.
+
 import webpush from "web-push";
 import { db } from "../../db/index.js";
 import { webPushSubscriptions } from "../../db/schema.js";
@@ -6,6 +15,7 @@ import { logger } from "../../lib/logger.js";
 
 let configured = false;
 
+/** Loads the VAPID keys once. Throws when they aren't set in .env. */
 function ensureConfigured() {
   if (configured) return;
   const publicKey = process.env.VAPID_PUBLIC_KEY;
@@ -17,14 +27,20 @@ function ensureConfigured() {
   configured = true;
 }
 
-// Sends to every saved subscription (single-admin-user app, so "every
-// subscription" effectively means "every browser/device Jason has signed
-// in on and granted permission") — a subscription that's gone stale
-// (uninstalled PWA, cleared site data) fails with 404/410, which we treat
-// as a cue to delete it rather than a real error.
-export async function sendWebPush(_config: unknown, message: string, title = "Looksee alert", url?: string) {
-  ensureConfigured();
+/**
+ * Sends to every saved subscription (single-admin-user app, so "every
+ * subscription" means every browser/device the admin turned push on in). A
+ * subscription that's gone stale (uninstalled PWA, cleared site data) fails
+ * with 404/410, which is a cue to delete it rather than a real error.
+ *
+ * In: the message body, title and the link it opens.
+ * Out: how many browsers it was sent to (0 when none have push turned on; the
+ * VAPID keys are only needed when there is at least one).
+ */
+export async function sendWebPush(message: string, title = "Looksee alert", url?: string): Promise<number> {
   const subscriptions = await db.query.webPushSubscriptions.findMany();
+  if (!subscriptions.length) return 0;
+  ensureConfigured();
   const payload = JSON.stringify({ title, body: message, url });
 
   await Promise.all(
@@ -50,4 +66,5 @@ export async function sendWebPush(_config: unknown, message: string, title = "Lo
       }
     })
   );
+  return subscriptions.length;
 }

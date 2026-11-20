@@ -1,5 +1,6 @@
-// The Security page (/security): sign-in and 2FA policy, IP allowlist and
-// blocks, security events and the rules that act on them. "use client" makes
+// The Security page (/security): sign-in and 2FA policy, sessions, phones
+// signed in to the Android app, IP allowlist and blocks, security events and
+// the rules that act on them. "use client" makes
 // this a React component that runs in the browser; the engine refuses every
 // call without a session.
 
@@ -8,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import qrcode from "qrcode-generator";
 import { startRegistration } from "@simplewebauthn/browser";
-import { api, type Passkey, type Channel, type IpBlock, type SecurityEvent, type SecurityOverview, type SecurityRule, type SessionRow, type TrustedIp } from "../lib/api";
+import { api, type AppDevice, type Passkey, type Channel, type IpBlock, type SecurityEvent, type SecurityOverview, type SecurityRule, type SessionRow, type TrustedIp } from "../lib/api";
 import { PageHelp } from "../components/PageHelp";
 import { ActionMenu, Button, FilterChip, Label, Modal, SortTh, inputClass, relativeTime, useToast } from "../components/ui";
 import { useSort } from "../lib/useSort";
@@ -153,6 +154,7 @@ function AccountCard({ overview, toast, reload }: { overview: SecurityOverview; 
         </form>
       </div>
       <PasskeysSection toast={toast} />
+      <AppDevicesSection toast={toast} />
       <div className="mt-4">
         <div className="mb-1 flex items-center justify-between">
           <h3 className="text-sm font-medium">Signed-in sessions</h3>
@@ -241,6 +243,63 @@ function AccountCard({ overview, toast, reload }: { overview: SecurityOverview; 
 
 // Passkeys / security keys as an alternative second step at sign-in. The
 // authenticator app stays as the fallback, so two-factor never gets weaker.
+/**
+ * Phones signed in to the Looksee Android app for notifications: name,
+ * version, whether connected now, and Remove (its notification token stops
+ * working and its connection closes at once — use it for a lost phone).
+ * Removing doesn't end the phone's management session; that's in the
+ * sessions list below ("Looksee app: …").
+ */
+function AppDevicesSection({ toast }: { toast: (m: string, k?: "info" | "error") => void }) {
+  const [devices, setDevices] = useState<AppDevice[]>([]);
+  const load = useCallback(() => api.appDevices().then(setDevices), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  return (
+    <div className="mt-4">
+      <h3 className="mb-1 text-sm font-medium">Phones with the Looksee app</h3>
+      <p className="mb-2 text-xs text-[var(--muted)]">These receive alerts from &ldquo;Android app&rdquo; channels. Remove a lost phone here, and sign out its session in the list below.</p>
+      {devices.length === 0 ? (
+        <p className="text-xs text-[var(--muted)]">None yet.</p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {devices.map((d) => (
+            <li key={d.id} className="flex flex-wrap items-center gap-x-3 border-t border-[var(--border)] py-1.5">
+              <span className="font-medium">{d.name}</span>
+              <span className={`text-xs ${d.connected ? "text-[var(--up)]" : "text-[var(--muted)]"}`}>{d.connected ? "connected now" : `last connected ${relativeTime(d.lastConnectedAt)}`}</span>
+              <span className="text-xs text-[var(--muted)]">
+                {[d.appVersion && `app ${d.appVersion}`, d.platform, d.lastIp, `added ${new Date(d.createdAt).toLocaleDateString()}`].filter(Boolean).join(" · ")}
+              </span>
+              <span className="flex-1" />
+              <button className="text-xs underline" onClick={async () => {
+                try {
+                  const r = await api.testAppDevice(d.id);
+                  toast(r.connected ? `Test sent to “${d.name}”.` : `“${d.name}” isn't connected; it gets the test when it reconnects.`);
+                } catch (err) {
+                  toast(err instanceof Error ? err.message : "Test failed", "error");
+                }
+              }}>
+                Send test
+              </button>
+              <button
+                className="text-xs text-[var(--down)] underline"
+                onClick={async () => {
+                  if (!confirm(`Remove “${d.name}”? It stops receiving Looksee notifications at once.`)) return;
+                  await api.removeAppDevice(d.id);
+                  load();
+                }}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function PasskeysSection({ toast }: { toast: (m: string, k?: "info" | "error") => void }) {
   const [keys, setKeys] = useState<Passkey[]>([]);
   const [adding, setAdding] = useState(false);

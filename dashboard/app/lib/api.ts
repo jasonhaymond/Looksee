@@ -5,11 +5,13 @@
 // Where this sits: every page and component imports `api` from here (e.g.
 // `api.checks()` → GET /api/checks) instead of calling fetch() itself, so the
 // engine's address, cookies, error handling and response clean-up live in one
-// place. The routes themselves are in engine/src/routes/.
+// place. The routes themselves are in engine/src/routes/. The Android app
+// (mobile/) imports this same file and calls configureApi() with the server
+// address the user typed and its session token, so both use one API client.
 //
-// Security: requests carry the session cookie (`credentials: "include"`); the
-// engine decides what each request may do — nothing here is a security
-// boundary. Secrets the engine never returns (channel tokens, passwords)
+// Security: requests carry the session cookie (`credentials: "include"`), or
+// in the app a bearer session token; the engine decides what each request may
+// do — nothing here is a security boundary. Secrets the engine never returns (channel tokens, passwords)
 // simply don't appear in these types.
 //
 // Time zones: every response passes through localizeResponse
@@ -27,6 +29,33 @@ import { browserTimeZone, localizeResponse } from "./localTime";
 // rebuild. In production it's the same origin as the dashboard (Caddy routes
 // /api/* to the engine).
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4100";
+
+/**
+ * Where requests go and how they're signed in. The dashboard uses the
+ * defaults (the built-in address, and the browser's cookie); the Android app
+ * replaces them through configureApi.
+ * - baseUrl: the engine's address, without a trailing slash.
+ * - token: returns the app's session token (sent as "Authorization: Bearer"),
+ *   or null to rely on the cookie.
+ * - onUnauthorized: called on any 401, so the app can show its sign-in screen.
+ */
+type ApiTransport = { baseUrl: string; token: () => string | null; onUnauthorized?: () => void };
+const transport: ApiTransport = { baseUrl: API_URL, token: () => null };
+
+/** Changes where requests go and how they're signed in (used by the Android app). */
+export function configureApi(next: Partial<ApiTransport>) {
+  Object.assign(transport, next);
+  transport.baseUrl = transport.baseUrl.replace(/\/+$/, "");
+}
+
+/** The engine address requests currently go to. */
+export const apiBaseUrl = () => transport.baseUrl;
+
+/** Headers that sign a request in: the bearer token when there is one. */
+function authHeaders(): Record<string, string> {
+  const token = transport.token();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 /** An error response from the engine: its HTTP status and its error message. */
 export class ApiError extends Error {
@@ -48,12 +77,13 @@ export class ApiError extends Error {
  */
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   // `await` waits for the network request to finish before continuing.
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${transport.baseUrl}${path}`, {
     ...options,
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...options.headers },
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...options.headers },
   });
   if (!res.ok) {
+    if (res.status === 401) transport.onUnauthorized?.();
     const body = await res.json().catch(() => ({}));
     throw new ApiError(res.status, body.error ?? `Request to ${path} failed (${res.status})`);
   }
@@ -256,7 +286,13 @@ export type CheckResult = {
 };
 export type BulkResult = { affected: number; errors: { id: string; error: string }[] };
 export type ChannelTemplate = { title?: string; body?: string };
+// type web_push is "Notifications" (browsers with push on + the Android app).
+// A channel's settings are write-only, so they never come back.
 export type Channel = { id: string; name: string; type: string; enabled: boolean; templates?: Record<string, ChannelTemplate> };
+// A phone running the Android app, registered for app notifications.
+export type AppDevice = { id: string; name: string; appVersion: string | null; platform: string | null; lastConnectedAt: string | null; lastIp: string | null; createdAt: string; connected: boolean };
+// One notification sent (or waiting to be sent) to a phone.
+export type AppNotification = { id: string; title: string; body: string; status: string | null; event: string | null; checkId: string | null; createdAt: string; deliveredAt: string | null };
 export type TemplateInfo = { events: string[]; defaults: Record<string, Required<ChannelTemplate>>; variables: { name: string; help: string }[] };
 
 export type MetricDef = { key: string; label: string; group: string; kind: "number" | "boolean"; unit?: string; instance?: string; instanceRequired?: boolean; agg?: string; expect?: boolean; platforms?: string; help?: string };
@@ -615,7 +651,9 @@ export const api = {
   // Sign-in, two-factor, passkeys and password (routes/auth.ts), and the
   // outbound watchdog (routes/watchdog.ts).
   login: (email: string, password: string) => request<LoginStep>("/api/auth/login", json({ email, password })),
-  verifyLogin: (input: { challengeId: string; code?: string; emailCode?: string; recoveryCode?: string; passkey?: AuthenticationResponseJSON }) => request<{ id: string; email: string; recoveryCodes?: string[] }>("/api/auth/login/verify", json(input)),
+  // client "app" (the Android app) gets sessionToken in the answer instead of a cookie.
+  verifyLogin: (input: { challengeId: string; code?: string; emailCode?: string; recoveryCode?: string; passkey?: AuthenticationResponseJSON; client?: "app" }) =>
+    request<{ id: string; email: string; expiresAt: string; sessionToken?: string; recoveryCodes?: string[] }>("/api/auth/login/verify", json(input)),
   watchdog: () => request<WatchdogView>("/api/watchdog"),
   updateWatchdog: (input: { enabled?: boolean; url?: string | null; failUrl?: string | null; intervalSeconds?: number }) => request<WatchdogView>("/api/watchdog", patch(input)),
   testWatchdog: () => request<{ sent: boolean; healthy: boolean; detail: string }>("/api/watchdog/test", { method: "POST" }),
@@ -725,6 +763,14 @@ export const api = {
   testChannel: (id: string) => request<{ sent: true }>(`/api/channels/${id}/test`, { method: "POST" }),
   deleteChannel: (id: string) => request<void>(`/api/channels/${id}`, del),
 
+  // Phones running the Android app (routes/app.ts).
+  appDevices: () => request<AppDevice[]>("/api/app/devices"),
+  registerAppDevice: (input: { name: string; appVersion?: string; platform?: string }) => request<{ device: AppDevice; token: string }>("/api/app/devices", json(input)),
+  renameAppDevice: (id: string, name: string) => request<AppDevice>(`/api/app/devices/${id}`, patch({ name })),
+  removeAppDevice: (id: string) => request<void>(`/api/app/devices/${id}`, del),
+  testAppDevice: (id: string) => request<{ sent: true; connected: boolean }>(`/api/app/devices/${id}/test`, { method: "POST" }),
+  appDeviceNotifications: (id: string) => request<AppNotification[]>(`/api/app/devices/${id}/notifications`),
+
   // Outgoing email server settings (routes/smtp.ts).
   smtpSettings: () => request<{ settings: SmtpSettings }>("/api/smtp/settings"),
   updateSmtpSettings: (input: { host?: string | null; port?: number | null; user?: string | null; password?: string; from?: string | null }) =>
@@ -822,7 +868,7 @@ export const api = {
   // Fetched as a blob (not a plain link) so the session cookie travels with
   // it in the dev setup, where the API is on a different origin.
   slaCsv: async (days: number, siteId?: string) => {
-    const res = await fetch(`${API_URL}/api/insights/reports/sla${qs({ days, siteId, format: "csv" })}`, { credentials: "include" });
+    const res = await fetch(`${transport.baseUrl}/api/insights/reports/sla${qs({ days, siteId, format: "csv" })}`, { credentials: "include", headers: authHeaders() });
     if (!res.ok) throw new ApiError(res.status, "CSV export failed");
     return res.blob();
   },

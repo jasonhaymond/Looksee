@@ -3,7 +3,7 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v5.7.0 — 65 check types across the engine and agent (reachability, web,
+**Status**: v5.8.0 — 65 check types across the engine and agent (reachability, web,
 real-browser, DNS/DNSSEC, DNS zone history, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
 app integrations, SNMP with an OID dictionary, calculations and reusable templates,
 interface tables, printers, traps/syslog, Redfish/IPMI, Proxmox, VMware, Hyper-V,
@@ -21,11 +21,14 @@ and SNMP templates, maintenance windows, dependencies, escalation, SLA reports, 
 status pages, discovery, NetFlow/sFlow top talkers, light/dark themes, in-app help, and
 a security layer (required two-factor sign-in with passkey/security-key support,
 lockouts, IP allowlist, new-IP email confirmation, attack detection with auto-blocking,
-and both an outbound watchdog and watchdog agents for Looksee's own outages). Built and
+and both an outbound watchdog and watchdog agents for Looksee's own outages), plus an
+**Android app** with full management and its own alert notifications over a direct
+connection to the server (no Google or other third-party push service). Built and
 verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md) for exactly what was
 tested how).
 
-**Current version: v5.7.0** — what's new is in [`CHANGELOG.md`](CHANGELOG.md#570---2026-11-14).
+**Current version: v5.8.0** — the Android app; see [`CHANGELOG.md`](CHANGELOG.md#580---2026-11-20)
+(5.7.0, editing settings and exclusions on many checks at once, ships with it).
 5.0 renames what 4.x called endpoints to **sites** and hosts to **endpoints** (in the
 database too), adds the sidebar tree, groups, exclusions, recovery options, watchdog
 agents, software and vulnerability checks, SNMP templates and calculations, and role
@@ -42,6 +45,7 @@ built into the app under **Help & user guide**).
 | Engine | Node/Express + Postgres (Drizzle ORM), pm2 in production |
 | Agent | Go (single static cross-platform binary) |
 | Dashboard | Next.js, installable as a PWA (Web Push support) |
+| Android app | Expo / React Native ([`mobile/`](mobile/README.md)); a Kotlin foreground service for notifications; built on the self-hosted build server |
 | Reverse proxy | Caddy (production) |
 
 ## Local development
@@ -87,13 +91,21 @@ See [`agent/README.md`](agent/README.md). Short version: create an Endpoint in t
 generate its agent key, copy `agent/looksee-agent.example.yaml` to
 `looksee-agent.yaml` with that key, then `go build` and run it.
 
+**5. Android app** (optional)
+
+See [`mobile/README.md`](mobile/README.md). Short version: `cd mobile && npm install`,
+then `npx expo start --web` to preview the screens in a browser against the local engine
+(add `http://localhost:8081` to the engine's `CORS_ALLOWED_ORIGINS`). Notifications
+only work in a real Android build ([deployment guide §12](docs/deployment-guide.md#12-the-android-app)).
+
 ## Testing
 
 ```sh
 cd engine && npm test        # vitest + supertest against a real local Postgres
 cd dashboard && npm run build  # typecheck + production build
 cd agent && go test ./... && go build ./...   # (needs Go, or use the golang Docker image — see agent/README.md)
-cd engine && npm run lint    # ESLint (also dashboard: npm run lint)
+cd engine && npm run lint    # ESLint (also dashboard and mobile: npm run lint)
+cd mobile && npm run typecheck && node scripts/check-native-versions.mjs   # the Android app
 ```
 
 ESLint is pinned to 9.x in the dashboard: the React, import and accessibility plugins
@@ -172,9 +184,11 @@ Backups section for exactly what's been proven vs. still needs a first real run.
 
 - [`spec.md`](spec.md) — full project spec: architecture, data model, v1 scope, decisions
 - [`CLAUDE.md`](CLAUDE.md) — locked project-specific decisions
+- [`mobile/README.md`](mobile/README.md) — the Android app: how it's built, how notifications reach the phone, local development
+- [`docs/plans/v5.8-android-app.md`](docs/plans/v5.8-android-app.md) — the Android app's design decisions
 - [`docs/deployment-guide.md`](docs/deployment-guide.md) — first deployment and updating
 - [`docs/migration-guide.md`](docs/migration-guide.md) — moving an existing deployment to a new server
-- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: the Location → Site → Endpoint layout and sidebar, checks (adding to many endpoints, browsing what the agent found, duplicating, editing settings and exclusions on many at once, check pages, resolving and recovery, statistics exclusions, SNMP calculations, software and security checks), endpoints and inventory, suggestions and templates, sites and locations, groups, exclusions, SNMP templates, multiple sites, discovery, heartbeats, channels and templates, alerting and alert history, maintenance, reports, traps/syslog, top talkers, status pages, dashboards, security, watchdog and watchdog agents, themes
+- [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: the Location → Site → Endpoint layout and sidebar, checks (adding to many endpoints, browsing what the agent found, duplicating, editing settings and exclusions on many at once, check pages, resolving and recovery, statistics exclusions, SNMP calculations, software and security checks), endpoints and inventory, suggestions and templates, sites and locations, groups, exclusions, SNMP templates, multiple sites, discovery, heartbeats, channels and templates, alerting and alert history, maintenance, reports, traps/syslog, top talkers, status pages, dashboards, security, watchdog and watchdog agents, themes, the Android app
 - [`docs/check-reference.md`](docs/check-reference.md) — every check type: what it watches, how it works, its value, and how to check the same thing by hand
 - [`docs/check-settings.md`](docs/check-settings.md) — every setting of every check type, with defaults (generated from the check form)
 - [`docs/plans/check-expansion.md`](docs/plans/check-expansion.md) — recommendations for further checks and templates (not built)

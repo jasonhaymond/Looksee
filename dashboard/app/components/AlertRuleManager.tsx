@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { api, type AlertRule, type Channel } from "../lib/api";
 import { Button, Label, inputClass } from "./ui";
+import { NotificationsChannelOption } from "./NotificationsChannelOption";
 
 /** Comma-separated channel names for a list of channel IDs. */
 function channelNames(ids: string[], channels: Channel[]) {
@@ -53,8 +54,10 @@ const payloadOf = (d: RuleDraft) => ({
  * @param value the current form values
  * @param onChange called with new values on every edit
  * @param channels the notification channels to choose from
+ * @param onChannelAdded called when the "Notifications" option created
+ *        that channel, so the caller adds it to `channels`
  */
-function RuleForm({ value, onChange, channels }: { value: RuleDraft; onChange: (v: RuleDraft) => void; channels: Channel[] }) {
+function RuleForm({ value, onChange, channels, onChannelAdded }: { value: RuleDraft; onChange: (v: RuleDraft) => void; channels: Channel[]; onChannelAdded: (c: Channel) => void }) {
   const set = <K extends keyof RuleDraft>(k: K, v: RuleDraft[K]) => onChange({ ...value, [k]: v });
   // Adds or removes one channel ID from a list.
   const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
@@ -86,6 +89,14 @@ function RuleForm({ value, onChange, channels }: { value: RuleDraft; onChange: (
               {c.name}
             </label>
           ))}
+          <NotificationsChannelOption
+            channels={channels}
+            accent="accent-[var(--up)]"
+            onAdded={(c) => {
+              onChannelAdded(c);
+              set("primary", [...value.primary, c.id]);
+            }}
+          />
         </div>
       </div>
       {value.escalateAfter && (
@@ -170,7 +181,7 @@ export function AlertRuleManager({ checkId }: { checkId: string }) {
               // This rule open for editing: the form, prefilled.
               <li key={r.id} className="space-y-3 rounded-md border border-[var(--border-strong)] p-3">
                 <p className="text-xs font-medium">Edit alert rule</p>
-                <RuleForm value={editing.value} onChange={(value) => setEditing({ id: r.id, value })} channels={channels} />
+                <RuleForm value={editing.value} onChange={(value) => setEditing({ id: r.id, value })} channels={channels} onChannelAdded={(c) => setChannels((list) => [...list, c])} />
                 <div className="flex gap-2">
                   <Button variant="primary" className="!py-0.5 text-xs" onClick={saveEdit} disabled={!editing.value.primary.length}>
                     Save changes
@@ -221,7 +232,7 @@ export function AlertRuleManager({ checkId }: { checkId: string }) {
       ) : (
         <div className="space-y-3 rounded-md border border-dashed border-[var(--border)] p-3">
           <p className="text-xs font-medium">Add an alert rule</p>
-          <RuleForm value={draft} onChange={setDraft} channels={channels} />
+          <RuleForm value={draft} onChange={setDraft} channels={channels} onChannelAdded={(c) => setChannels((list) => [...list, c])} />
           <Button variant="primary" onClick={add} disabled={draft.primary.length === 0}>
             Add rule
           </Button>

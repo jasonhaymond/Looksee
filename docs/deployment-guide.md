@@ -19,10 +19,11 @@ adjust package manager commands for another distro.
 5. [Firewall](#5-firewall)
 6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
 7. [Backups](#7-backups)
-8. [Updating](#8-updating) — including [Upgrading to 5.5](#upgrading-to-55), [Upgrading to 5.4](#upgrading-to-54), [Upgrading to 5.3](#upgrading-to-53), [Upgrading to 5.2](#upgrading-to-52), [Upgrading to 5.0](#upgrading-to-50), [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
+8. [Updating](#8-updating) — including [Upgrading to 5.8](#upgrading-to-58), [Upgrading to 5.5](#upgrading-to-55), [Upgrading to 5.4](#upgrading-to-54), [Upgrading to 5.3](#upgrading-to-53), [Upgrading to 5.2](#upgrading-to-52), [Upgrading to 5.0](#upgrading-to-50), [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
 9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Security notes](#11-security-notes)
+12. [The Android app](#12-the-android-app)
 
 Related: [user guide](user-guide.md) · [security guide](security-guide.md) · [Windows agent & security software](windows-agent-security.md) · [agent README](../agent/README.md) · [README](../README.md) · [CHANGELOG](../CHANGELOG.md)
 
@@ -272,6 +273,20 @@ sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
+**The Android app's notification connection** (`/api/app/stream`) is a WebSocket on the
+same `/api/*` path. Caddy's `reverse_proxy` passes WebSockets through with no extra
+settings, so the Caddyfile above already handles it. If you use another proxy, enable
+WebSocket upgrades for `/api/app/stream` and allow long-lived connections (the app and
+server ping every 30 seconds). **Check** (after 5.8 is deployed): this answers `401`
+(the right answer to a missing phone token), not `404` or `502`:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: $(openssl rand -base64 16)" \
+  https://looksee.example.com/api/app/stream
+```
+
 If you'd rather keep the engine on its own subdomain instead (e.g. if you want to reach
 the API directly for scripting), use two site blocks and set `CORS_ALLOWED_ORIGINS` to
 the dashboard's origin explicitly — real cross-origin CORS, same as local dev.
@@ -353,6 +368,24 @@ You can run the same checks by hand at any time:
 
 **Check:** every line reads `PASS` and the last line is `RESULT: PASS`; the full report
 is saved under `~/Looksee/security-reports/`.
+
+### Upgrading to 5.8
+
+`scripts/update.sh` handles it. Migration 0030 is additive: it adds a table of phones
+registered for app notifications and their notification queue, plus an "App token
+guessing" security rule. Nothing existing changes, so rolling the code back to 5.7
+works against the migrated database. The browser push channel type is now called
+**Notifications** and also reaches phones with the Android app: existing push channels
+start sending to phones as soon as a phone signs in.
+
+After updating:
+
+1. Check that the reverse proxy passes the app's WebSocket (the `curl` check at the end
+   of [section 6](#6-reverse-proxy--https)) — with Caddy it does.
+2. Build and install the app ([section 12](#12-the-android-app)), sign in on the phone,
+   and send a test from the app's **More → Settings**. **Success looks like:** a
+   notification within a few seconds, and the phone listed as *connected now* on the
+   dashboard's **Security** page under **Phones with the Looksee app**.
 
 ### Upgrading to 5.5
 
@@ -946,3 +979,66 @@ agents send them. Still on you as the operator:
 - **Agent script checks** only run files in the agent's own `script_dir` (disabled when
   unset) — the dashboard can't push new code to a host.
 - **Receivers** (traps/syslog/flows) are unauthenticated; keep them LAN-only (section 5).
+
+## 12. The Android app
+
+The Android app (`mobile/` in this repository) is built on the self-hosted build server
+and installed on phones from the APK file; it isn't in the Play Store. Its version always
+matches the server's: install the APK of the same version you deployed.
+
+Nothing extra runs on the Looksee server for it: phones connect to the engine through the
+same HTTPS address as the dashboard ([section 6](#6-reverse-proxy--https)). A phone must
+be able to reach that address to get alerts (on the VPN, if the server is VPN-only).
+
+### One-time setup on the build machine
+
+Do these on the machine that holds the build server credentials (they stay there).
+
+1. In the build server's web UI, under your profile, create an Android **signing key**
+   named `looksee`. Every release must be signed with this same key, or phones refuse to
+   install the update over the old version, so never delete or replace it.
+2. Create an **API key** with the scopes `build:create`, `build:read`, `build:logs`,
+   `artifact:download` and `signing:use`. It's shown once; keep it in your password
+   manager.
+3. Put both in the app's settings file, readable only by you:
+
+   ```bash
+   cd ~/Looksee/mobile
+   cp .env.example .env
+   chmod 600 .env
+   nano .env   # BUILD_SERVER_API_URL, BUILD_SERVER_API_KEY, BUILD_SERVER_SIGNING_KEY=looksee
+   ```
+
+### Building a release
+
+A release APK is only built from an approved, pushed release tag: the same
+security-review approval `scripts/update.sh` requires before deploying.
+
+```bash
+cd ~/Looksee && git fetch --tags && git checkout v5.8.0
+cd mobile && npm run build:android
+```
+
+The script checks the tag's approval, that the app and engine versions match, that
+Android's version number follows the version, and that every native package matches the
+Expo SDK, then submits the build and waits (several minutes, longer if other builds are
+queued). **What success looks like:** the last line starts with `✔` and names the APK file
+saved in `mobile/dist-android/`, with its size. If you stop the script while it
+waits, it prints the build ID; continue with `npm run build:android -- --status <id>`.
+
+### Installing on a phone
+
+1. Copy the APK to the phone (a file share, or the download link the build server shows
+   for the build) and open it. Android asks to allow installs from that app; allow it
+   for this install.
+2. Open Looksee and sign in (see the user guide's
+   [Android app](user-guide.md#android-app) section).
+3. Updating: install the new version's APK over the old one. Sign-in and notification
+   settings are kept.
+
+### Test builds
+
+`npm run build:android -- --debug` builds the pushed `HEAD` without signing it with the
+release key; `--abi x86_64` builds for the Android emulator. A debug build may also use
+`--allow-http`, to sign in to a local test engine at `http://…`; release builds refuse
+plain HTTP, both in the script and in the app itself.

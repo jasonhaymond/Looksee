@@ -5,6 +5,9 @@
 // unknown accounts give the same answer (no account enumeration), sessions are
 // httpOnly/secure/SameSite cookies, passwords are bcrypt-hashed, recovery codes
 // are single-use, and changing the password signs out every other session.
+// The Android app signs in through the same two steps with `client: "app"`
+// and gets its session token in the response instead of a cookie; it still
+// needs the password and a second factor, exactly like the dashboard.
 
 import { Router } from "express";
 import crypto from "node:crypto";
@@ -14,13 +17,12 @@ import { and, eq, gt, ne } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { loginChallenges, sessions, trustedIps, users, webauthnCredentials } from "../db/schema.js";
 import { SESSION_COOKIE_NAME, createSession, deleteSessionByToken, sessionCookieOptions } from "../lib/session.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, sessionToken } from "../middleware/auth.js";
 import { clientIp } from "../lib/ipMatch.js";
 import { consumeTotp, generateRecoveryCodes, generateTotpSecret, otpauthUri } from "../lib/totp.js";
 import { getSecuritySettings, lockedOut, notifySecurity, recordSecurityEvent } from "../services/security.js";
 import { authenticationOptions, credentialsFor, finishRegistration, startRegistration, verifyPasskey } from "../services/passkeys.js";
 import { sendEmail } from "../services/notifications/email.js";
-import { own } from "../lib/own.js";
 
 export const authRouter = Router();
 
@@ -102,7 +104,8 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
 });
 
 // Step 2: the authenticator code (or a recovery code), and the emailed code
-// when one was sent. Issues the session.
+// when one was sent. Issues the session: as a cookie for the dashboard, or in
+// the response body (`sessionToken`) when the body says `client: "app"`.
 authRouter.post("/login/verify", loginLimiter, async (req, res) => {
   const ip = clientIp(req);
   const challenge = await db.query.loginChallenges.findFirst({ where: and(eq(loginChallenges.id, String(req.body?.challengeId ?? "")), gt(loginChallenges.expiresAt, new Date())) });
@@ -163,14 +166,16 @@ authRouter.post("/login/verify", loginLimiter, async (req, res) => {
     if (anyBefore && challenge.emailCodeHash) await recordSecurityEvent("login_new_ip", { req, detail: `${user.email} from ${ip} (confirmed by email)` });
   }
   const settings = await getSecuritySettings();
-  const { token, expiresAt } = await createSession(user.id, { hours: settings.sessionHours, ip, userAgent: req.get("user-agent") });
-  res.cookie(SESSION_COOKIE_NAME, token, sessionCookieOptions(settings.sessionHours));
-  await recordSecurityEvent("login_success", { req, detail: user.email });
-  res.json({ id: user.id, email: user.email, expiresAt, ...(recoveryCodes ? { recoveryCodes } : {}) });
+  const isApp = req.body?.client === "app";
+  const { token, expiresAt } = await createSession(user.id, { hours: settings.sessionHours, ip, userAgent: isApp ? `Looksee app: ${String(req.get("user-agent") ?? "")}` : req.get("user-agent") });
+  if (!isApp) res.cookie(SESSION_COOKIE_NAME, token, sessionCookieOptions(settings.sessionHours));
+  await recordSecurityEvent("login_success", { req, detail: `${user.email}${isApp ? " (Android app)" : ""}` });
+  res.json({ id: user.id, email: user.email, expiresAt, ...(isApp ? { sessionToken: token } : {}), ...(recoveryCodes ? { recoveryCodes } : {}) });
 });
 
+// Ends the calling session (cookie or the app's bearer token).
 authRouter.post("/logout", async (req, res) => {
-  const token = own(req.cookies as Record<string, string> | undefined, SESSION_COOKIE_NAME);
+  const token = sessionToken(req);
   if (token) await deleteSessionByToken(token);
   res.clearCookie(SESSION_COOKIE_NAME, { sameSite: "strict", secure: process.env.NODE_ENV === "production", httpOnly: true });
   res.json({ ok: true });
@@ -199,7 +204,7 @@ authRouter.post("/password", requireAuth, async (req, res) => {
     return;
   }
   await db.update(users).set({ passwordHash: await bcrypt.hash(next, 12), passwordChangedAt: new Date() }).where(eq(users.id, user.id));
-  const current = own(req.cookies as Record<string, string> | undefined, SESSION_COOKIE_NAME);
+  const current = sessionToken(req);
   await db.delete(sessions).where(and(eq(sessions.userId, user.id), ne(sessions.token, current ?? "")));
   await recordSecurityEvent("password_changed", { req, detail: user.email });
   res.json({ ok: true });

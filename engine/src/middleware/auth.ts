@@ -1,7 +1,8 @@
 // Sign-in checks that run before protected routes.
 //
-// requireAuth: the dashboard's session cookie must match an unexpired session
-// in the database, or the request gets 401. requireAgentAuth: an agent's (or
+// requireAuth: the dashboard's session cookie (or the Android app's session
+// token, sent as "Authorization: Bearer …") must match an unexpired session in
+// the database, or the request gets 401. requireAgentAuth: an agent's (or
 // site collector's) bearer key must belong to an endpoint. Without these,
 // anyone who can reach the server could read or change everything. Middleware
 // are functions Express runs before a route's own code.
@@ -26,10 +27,25 @@ declare module "express-serve-static-core" {
   }
 }
 
-// Single-admin-user auth: any valid, non-expired session cookie is enough —
-// there's no role check because there's only one role. See CLAUDE.md.
+/**
+ * The session token a request carries: the dashboard's httpOnly cookie, or
+ * the Android app's bearer header (the app has no cookie jar it controls). A
+ * browser never adds an Authorization header by itself, so accepting it opens
+ * no cross-site request forgery route: a forged request from another site
+ * carries neither the header nor (SameSite=strict) the cookie.
+ * Out: the token, or undefined when there's none.
+ */
+export function sessionToken(req: Request): string | undefined {
+  const cookie = own(req.cookies as Record<string, string> | undefined, SESSION_COOKIE_NAME);
+  if (cookie) return cookie;
+  const header = req.headers.authorization;
+  return header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() || undefined : undefined;
+}
+
+// Single-admin-user auth: any valid, non-expired session is enough — there's
+// no role check because there's only one role. See CLAUDE.md.
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const token = own(req.cookies as Record<string, string> | undefined, SESSION_COOKIE_NAME);
+  const token = sessionToken(req);
   if (!token) {
     res.status(401).json({ error: "Not authenticated" });
     return;

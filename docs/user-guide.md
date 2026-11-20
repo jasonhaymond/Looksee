@@ -3,7 +3,8 @@
 Day-to-day usage of Looksee once it's running — adding things to monitor, managing many
 of them at once, building dashboards, and getting notified when something breaks. The
 same guide is built into the app: click **Help & user guide** in the sidebar, or
-**Learn more** at the top of any page.
+**Learn more** at the top of any page. Looksee also has an **Android app** with the same
+management features and its own alert notifications — see [Android app](#android-app).
 
 > **Coming from 4.x?** 5.0 renamed things to match how people talk about them. What 4.x
 > called an **endpoint** (a network) is now a **site**; what it called a **host** (a
@@ -70,6 +71,7 @@ two-factor, IP restriction, attack alerts), [windows-agent-security.md](windows-
 24. [Light and dark theme](#light-and-dark-theme)
 25. [Data retention](#data-retention)
 26. [Backups and logs](#backups-and-logs)
+27. [Android app](#android-app)
 
 ## How Looksee is organized
 
@@ -116,7 +118,7 @@ to open its page — a location, site, endpoint or group page lists everything u
 with its status. Type in **Find a site, endpoint or check…** to narrow the tree.
 
 On a phone or narrow window the sidebar is behind the **☰ Menu** button at the top. The
-theme button (◐ ☀ ☾), **Enable push notifications** and **Sign out** are at the bottom
+theme button (◐ ☀ ☾), **Enable push** (browser notifications from **Notifications** channels) and **Sign out** are at the bottom
 of the sidebar. **Help & user guide** holds this guide, the check reference and the
 security guides. Each page starts with a one-line explanation and a
 **Learn more** link to the matching section of this guide.
@@ -1164,7 +1166,7 @@ licenses left, a sensor). The URL is the only credential — keep it private, or
 | Microsoft Teams | In the Teams channel: ••• → **Workflows** → *Post to a channel when a webhook request is received* → copy the URL. Alerts arrive as cards with an **Open in Looksee** button. |
 | Telegram | Message **@BotFather**: `/newbot`, copy the bot token. Add the bot to your group (or message it), open `https://api.telegram.org/bot<token>/getUpdates` and copy the `chat.id` (groups start with `-100`). For a forum topic also enter its topic ID. |
 | Webhook | Any service that takes a JSON POST: Discord (default body), ntfy, Gotify, Home Assistant, your own. `{{message}}` in the body is replaced with the alert text; `{{title}}`, `{{check}}`, `{{status}}` and `{{url}}` work too. |
-| Browser / phone push | Click **Enable push notifications** in the top bar on each browser/phone (install the dashboard as an app on phones). |
+| Notifications | One channel for every browser where push is on and every phone signed in to the [Android app](#android-app), including ones added later. Nothing to set on the channel: in each browser click **Enable push** at the bottom of the sidebar (on an iPhone, add the dashboard to the home screen first); on Android phones, sign in on the app. You can also tick **Notifications** directly when setting up an alert rule; that creates this channel for you. |
 
 Each channel's **Manage** menu has **Send a test alert** (sends a sample alert through
 exactly the path a real one takes — do this after adding any channel), **Edit message
@@ -1532,3 +1534,93 @@ confirmation carefully.
 
 **System → Logs** shows the engine's own activity — what it did, what failed and why —
 filterable by level. Every entry above debug includes a plain-language explanation.
+
+## Android app
+
+The Looksee Android app manages everything the dashboard does — checks, endpoints,
+sites, locations, groups, maintenance, channels, exclusions, discovery, reports, logs,
+backups, data retention and security — and shows Looksee alerts as phone notifications.
+
+**How notifications get to the phone.** The app keeps its own connection open to your
+Looksee server (no Google push service or other outside account is involved). Alerts
+arrive within seconds, with the app closed and after the phone restarts. Two things
+follow from that:
+
+- Alerts only arrive while the phone can reach the Looksee server. If your server is
+  only reachable over a VPN, the phone needs the VPN on. A phone that was out of reach
+  gets the alerts it missed from the last 24 hours when it reconnects.
+- Android requires a small permanent "Looksee — Watching for alerts" notification while
+  the connection is kept open. You can hide it: long-press it → turn off **Watching
+  (always on)**. Alerts still arrive.
+
+If the connection is down for more than 10 minutes, the phone shows **Can't reach
+Looksee** (cleared automatically when it reconnects), so silence never looks like
+"everything is fine" by mistake.
+
+### Installing and signing in
+
+1. Install the APK on the phone (the deployment guide, [section
+   12](deployment-guide.md#12-the-android-app), says where it comes from). Android asks
+   to allow installs from the app you open it with; allow it for that one install.
+2. Open **Looksee** and enter your server's address (the one you open the dashboard at,
+   e.g. `looksee.example.com`; `https://` is added for you), your email and password.
+3. Enter the 6-digit code from your authenticator app (or a recovery code). Two-factor
+   sign-in is required in the app exactly as in the dashboard. If the server emails a
+   code for a new address, enter that too.
+4. Allow notifications when asked, then tap **Continue** and allow Looksee to run in the
+   background. **What success looks like:** the Overview tab shows your check counts,
+   and **More → Settings** shows **Connected** under *Notifications on this phone*.
+5. Tap **Send a test** in **More → Settings**. A notification arrives within a few
+   seconds.
+
+### Sending alerts to the app
+
+Phones receive the **Notifications** channel, the same one that sends browser push: one
+alert goes to every phone signed in to the app and every browser with push turned on.
+Any of these sends a check's alerts there:
+
+- On a check (dashboard or app): **Alert rules → Add**, then tick **Notifications**.
+  The first time, this creates the **Notifications** channel.
+- When creating checks, in the form's **Alerts** section, the same way.
+- On the **Channels** page: create a channel of type **Notifications**. It has nothing
+  to set up.
+
+Notifications come in three categories you can set separately in Android (**Settings →
+Sounds & categories** in the app): **Down alerts** (sound and pop-up), **Warnings**,
+and **Recoveries and other notices** (quiet). Tapping an alert opens that check.
+
+### Using the app
+
+- **Overview**: counts of up / warn / down checks, what's failing now (worst first),
+  open alerts and checks in maintenance.
+- **Alerts**: open and resolved incidents, searchable.
+- **Browse**: locations → sites → endpoints, each with its worst status. Tap one to see
+  its details, checks and actions (maintenance, pause/resume, suggested checks, install
+  or update the agent, Wake-on-LAN, edit, delete).
+- **Checks**: every check, with search and filters. Tap a check for its status, history,
+  results, alert rules and actions. **Long-press** to select several, then **Actions**
+  for bulk changes: run now, pause, resume, mark recovered, maintenance, edit settings
+  on all (including exclusions), add alert rules, interval, tags, move, delete.
+- **More**: everything else, plus **Settings** (notifications on this phone, light/dark
+  theme, sign out) and **Help** (these guides, opened from your server).
+
+The app signs in with its own session, listed on the **Security** page as "Looksee app".
+When that session expires (session length and idle timeout from the Security page
+apply), the app asks you to sign in again; notifications keep arriving meanwhile.
+
+### Removing a phone
+
+Signing out in the app (**More → Settings → Sign out**) removes the phone: it stops
+receiving notifications at once. For a lost phone, use the dashboard's **Security**
+page: under **Phones with the Looksee app**, click **Remove** (its notifications stop
+at once), then sign out its "Looksee app" session in the list below.
+
+### Troubleshooting
+
+| What you see | What to do |
+|---|---|
+| Settings says *Not connected* with an error | The phone can't reach the server: check Wi-Fi/mobile data, the VPN, and that the dashboard opens in the phone's browser. It retries by itself. |
+| No notifications, but Settings says *Connected* | Settings → **Sounds & categories**: make sure the categories are on. Check the alert rule uses a **Notifications** channel, and **Send a test**. |
+| Notifications arrive late, or only when the phone is unlocked | Battery saving is pausing Looksee: Settings → **Let Looksee run in the background**. Some phone makers have an extra battery setting per app (set Looksee to *Unrestricted*). |
+| *Looksee alerts stopped: this phone was removed* | It was removed on the Security page. Sign out and sign in again in the app. |
+| "No Looksee server answered" when signing in | Check the address, and that the phone can reach it (the VPN, if the server is VPN-only). The app only uses `https://`. |

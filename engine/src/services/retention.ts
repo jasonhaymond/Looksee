@@ -32,7 +32,7 @@ import { and, eq, getTableName, isNotNull, lt, sql, type Column } from "drizzle-
 import type { PgTable } from "drizzle-orm/pg-core";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { db, pool } from "../db/index.js";
-import { checkResults, endpointMetrics, events, flowRecords, ipBlocks, loginChallenges, logs, retentionSettings, securityEvents, sessions, softwareHistory } from "../db/schema.js";
+import { appNotifications, checkResults, endpointMetrics, events, flowRecords, ipBlocks, loginChallenges, logs, retentionSettings, securityEvents, sessions, softwareHistory } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
 
 /** One kind of time-stamped data with a retention period. */
@@ -101,7 +101,9 @@ const DAY_MS = 86_400_000;
 
 /**
  * The nightly cleanup: deletes every kind of data past its retention period, plus
- * expired sign-in sessions, login challenges and IP blocks.
+ * expired sign-in sessions, login challenges and IP blocks, and Android app
+ * notifications older than 7 days (delivered or not: undelivered ones stop
+ * being sent after APP_QUEUE_HOURS anyway, and a week is the app's history).
  *
  * Side effects: deletes rows. Autovacuum later makes the room reusable.
  */
@@ -114,6 +116,7 @@ export async function pruneData() {
   await db.delete(sessions).where(lt(sessions.expiresAt, new Date()));
   await db.delete(loginChallenges).where(lt(loginChallenges.expiresAt, new Date()));
   await db.delete(ipBlocks).where(and(isNotNull(ipBlocks.until), lt(ipBlocks.until, ago(DAY_MS))));
+  await db.delete(appNotifications).where(lt(appNotifications.createdAt, ago(7 * DAY_MS)));
 }
 
 // ---- free-space enforcement ----

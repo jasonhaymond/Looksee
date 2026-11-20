@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "./Tooltip";
 import { own } from "../lib/own";
 import { runInBackground } from "../lib/background";
+import { NotificationsChannelOption } from "./NotificationsChannelOption";
 import type { SortControl } from "../lib/useSort";
 
 // Shared building blocks for the management pages, so every table, filter
@@ -373,8 +374,21 @@ export function alertRulePayload(v: AlertOptionsValue) {
 }
 
 // The same alert-rule options everywhere checks get created: the check
-// form, suggested checks, discovery and bulk "add alert rule".
-export function AlertOptions({ channels, value, onChange }: { channels: { id: string; name: string; type: string }[]; value: AlertOptionsValue; onChange: (v: AlertOptionsValue) => void }) {
+// form, suggested checks, discovery and bulk "add alert rule". Includes the
+// "Notifications" option, which creates that channel on first use.
+export function AlertOptions({ channels: given, value, onChange }: { channels: { id: string; name: string; type: string }[]; value: AlertOptionsValue; onChange: (v: AlertOptionsValue) => void }) {
+  // Channels created from here (the Notifications one), shown until the parent reloads its list.
+  const [added, setAdded] = useState<{ id: string; name: string; type: string }[]>([]);
+  const channels = [...given, ...added.filter((a) => !given.some((g) => g.id === a.id))];
+  const appOption = (
+    <NotificationsChannelOption
+      channels={channels}
+      onAdded={(c) => {
+        setAdded((list) => [...list, c]);
+        onChange({ ...value, channelIds: [...value.channelIds, c.id] });
+      }}
+    />
+  );
   const set = <K extends keyof AlertOptionsValue>(k: K, v: AlertOptionsValue[K]) => onChange({ ...value, [k]: v });
   const toggle = (k: "channelIds" | "escalationChannelIds", id: string) => {
     const list = k === "channelIds" ? value.channelIds : value.escalationChannelIds;
@@ -382,13 +396,16 @@ export function AlertOptions({ channels, value, onChange }: { channels: { id: st
   };
   if (!channels.length) {
     return (
-      <p className="text-xs text-[var(--muted)]">
-        No notification channels yet —{" "}
-        <a className="underline" href="/channels">
-          add one
-        </a>{" "}
-        to get alerts.
-      </p>
+      <div className="space-y-1 text-sm">
+        <p className="text-xs text-[var(--muted)]">
+          No notification channels yet —{" "}
+          <a className="underline" href="/channels">
+            add one
+          </a>{" "}
+          to get alerts, or:
+        </p>
+        {appOption}
+      </div>
     );
   }
   return (
@@ -402,6 +419,7 @@ export function AlertOptions({ channels, value, onChange }: { channels: { id: st
               {c.name} <span className="text-xs text-[var(--muted)]">({c.type.replace("_", " ")})</span>
             </label>
           ))}
+          {appOption}
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

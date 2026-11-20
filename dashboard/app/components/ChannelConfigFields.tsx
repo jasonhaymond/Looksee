@@ -1,6 +1,8 @@
 // The settings fields for each notification channel type (where to send,
 // tokens, URLs) with setup instructions, plus helpers to start and clean a
-// channel's config. Secret fields are write-only once saved.
+// channel's config. Secret fields are write-only once saved. The
+// Notifications channel (type web_push) has no settings: it reaches every
+// browser with push on and every phone with the Looksee Android app.
 
 "use client";
 
@@ -13,14 +15,14 @@ export const CHANNEL_TYPE_LABEL: Record<string, string> = {
   teams: "Microsoft Teams",
   telegram: "Telegram",
   webhook: "Webhook (Discord, ntfy, anything)",
-  web_push: "Browser / phone push",
+  web_push: "Notifications (browsers and Android app)",
   sms: "SMS (not wired to a provider yet)",
 };
 
 export const CHANNEL_TYPE_HELP: Record<string, string> = {
   email: "Sent through the SMTP server above.",
   webhook: "A generic JSON POST — Discord, ntfy, Gotify, Home Assistant, or your own site.",
-  web_push: "Delivers to every browser subscribed via this dashboard's \"Enable push notifications\" button. No config needed.",
+  web_push: "Delivers to every browser where push is turned on (the \"Enable push\" button) and every phone signed in to the Looksee Android app. Nothing to set here.",
   sms: "Not yet wired to a provider (see spec.md deferred items) — saving this channel is a no-op until one is.",
   slack: "Posts to a Slack channel through an incoming webhook.",
   teams: "Posts an Adaptive Card to a Teams channel through a Workflows webhook.",
@@ -39,6 +41,11 @@ const SETUP: Record<string, string[]> = {
     "Message @BotFather in Telegram: /newbot → copy the bot token it gives you.",
     "Add the bot to your group/channel (or send it a message directly).",
     "Get the chat ID: open https://api.telegram.org/bot<token>/getUpdates after messaging the bot — it's the \"chat\":{\"id\":…} number (groups start with -100).",
+  ],
+  web_push: [
+    "Browsers: click \"Enable push\" at the bottom of the sidebar in each browser (install the dashboard as an app on iPhones first).",
+    "Phones: install the Looksee Android app and sign in with this server's address. Allow notifications, and let Looksee run in the background when the app asks.",
+    "One Notifications channel reaches all of them, including browsers and phones added later.",
   ],
   webhook: ["Paste the service's webhook URL. The body is JSON; {{message}} becomes the alert text, and {{title}}, {{check}}, {{status}}, {{url}} are available too.", 'Discord (default body): {"content": "{{message}}"} · ntfy: post to https://ntfy.sh/your-topic with body {{message}}.'],
 };
@@ -117,3 +124,4 @@ export function ChannelConfigFields({ type, config, onChange }: { type: string; 
     </div>
   );
 }
+

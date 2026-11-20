@@ -19,12 +19,22 @@ global doc governs.
 - **Agent is Go, single static binary** — no runtime dependency on monitored hosts. Don't
   substitute a Node/Python agent for stack-consistency reasons; the cross-platform,
   no-install-step requirement is the actual point of the agent.
-- **Dashboard is a web app / installable PWA**, not a native Expo app. Web Push is the
-  push-notification mechanism specifically so no third-party notification account or app
-  store build is required.
+- **Dashboard is a web app / installable PWA, plus a native Android app since 5.8**
+  (Jason's decision 2026-11-20, replacing the earlier "PWA, not a native Expo app" rule).
+  The app (`mobile/`, Expo) has **fully native screens** for every management area, not a
+  web view of the dashboard; it shares the dashboard's API client and check-type registry
+  rather than copying them. Its notifications use a **direct connection** from a native
+  Android foreground service to the engine (`/api/app/stream`), so still **no third-party
+  notification account** (no Firebase/FCM, no Expo push service, no app store): don't add
+  one without asking. The accepted trade-off is that alerts only reach a phone that can
+  reach the server, and the connection uses some battery. Web Push stays for browsers.
+  Android only; built on the self-hosted build server, sideloaded. The app's version is
+  the engine's (lockstep), versionCode = MAJOR×10000 + MINOR×100 + PATCH.
 - **Alerting channels are opt-in per rule.** A check with no channel configured just shows
   on the dashboard silently. Email is the only always-on default; Web Push, webhook
-  (Discord/Slack/ntfy/Telegram), and SMS are configured as needed.
+  (Discord/Slack/ntfy/Telegram) and SMS are configured as needed. "Notifications"
+  (type ID `web_push`, Jason's decision 2026-11-20) is one channel for both browser push
+  and the Android app; don't split it back into separate types without asking.
 - **Network discovery is on-demand only.** Added in 3.0 at Jason's request (originally
   deferred to "v2+"): a scan runs only when started from the Discovery page, results are
   suggestions, and nothing is added without ticking it. Don't turn it into a scheduled

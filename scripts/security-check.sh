@@ -6,8 +6,8 @@
 # Where this sits: the global development standards require this gate before
 # every commit, push, tag or deploy, with the results shown to the developer
 # and approved by them. Run it from a development machine with Docker, Node
-# and the project's dependencies installed (`npm ci` in engine/ and
-# dashboard/). The approval is then recorded in the release's annotated git
+# and the project's dependencies installed (`npm ci` in engine/, dashboard/
+# and mobile/). The approval is then recorded in the release's annotated git
 # tag, which scripts/update.sh checks before deploying (see
 # scripts/verify-release-tag.sh).
 #
@@ -20,17 +20,17 @@
 #
 # What it runs (each reported individually; a tool that can't run is NOT RUN,
 # never silently skipped or counted as a pass):
-#   1. Static analysis — Semgrep (OWASP Top 10, TypeScript, Node, Go and
-#      secrets rulesets), ESLint with eslint-plugin-security (engine and
-#      dashboard), ShellCheck (every .sh), PSScriptAnalyzer (every .ps1),
-#      go vet (agent).
-#   2. Dependency vulnerabilities — npm audit (engine, dashboard) and
+#   1. Static analysis — Semgrep (OWASP Top 10, TypeScript, Node, Go, Kotlin
+#      and secrets rulesets), ESLint with eslint-plugin-security (engine,
+#      dashboard and the Android app), ShellCheck (every .sh),
+#      PSScriptAnalyzer (every .ps1), go vet (agent).
+#   2. Dependency vulnerabilities — npm audit (engine, dashboard, mobile) and
 #      govulncheck (agent). Plus `npm outdated` for currency (information only).
 #   3. Secret scanning — gitleaks over the working tree, the staged diff, and
 #      every commit since the last release tag.
 #   4. Project tests — the engine's Vitest suite against the real local test
 #      database (includes the security tests), the agent's Go tests, and
-#      TypeScript typechecks of engine and dashboard.
+#      TypeScript typechecks of engine, dashboard and the Android app.
 #   5. AI-assisted diff review — can't be scripted; always listed as a manual
 #      step (run /security-review in Claude Code on the pending change).
 #
@@ -292,25 +292,26 @@ DOCKER_OK=0
 if have docker && docker info >/dev/null 2>&1; then DOCKER_OK=1; fi
 nodocker() { record "$1" "NOT RUN" "Docker isn't available"; }
 
-# 1a. Semgrep over engine, dashboard and agent source (tests excluded: they
-# hold deliberate attack strings and fixtures, and aren't shipped).
+# 1a. Semgrep over engine, dashboard, Android app (TypeScript and its Kotlin
+# notification service) and agent source (tests excluded: they hold
+# deliberate attack strings and fixtures, and aren't shipped).
 if [ "$DOCKER_OK" = 1 ]; then
-  repo_files engine/src engine/scripts dashboard/app agent scripts | grep -E '\.(ts|tsx|mjs|js|go)$' | grep -vE '(\.test\.ts|_test\.go)$' \
-    | tar_list | dockr run -i --rm "$SEMGREP_IMAGE" sh -c 'mkdir -p /src && cd /src && tar -xf - && semgrep scan --config p/owasp-top-ten --config p/typescript --config p/nodejsscan --config p/golang --config p/secrets --metrics=off --quiet --json --timeout 60 .' \
+  repo_files engine/src engine/scripts dashboard/app mobile/src mobile/modules mobile/scripts agent scripts | grep -E '\.(ts|tsx|mjs|js|go|kt)$' | grep -vE '(\.test\.ts|_test\.go)$' \
+    | tar_list | dockr run -i --rm "$SEMGREP_IMAGE" sh -c 'mkdir -p /src && cd /src && tar -xf - && semgrep scan --config p/owasp-top-ten --config p/typescript --config p/nodejsscan --config p/golang --config p/kotlin --config p/secrets --metrics=off --quiet --json --timeout 60 .' \
     > "$TMP/semgrep.json" 2> "$TMP/semgrep.err"
   parse_and_record "SAST: Semgrep" semgrep "$TMP/semgrep.json"
 else nodocker "SAST: Semgrep"; fi
 
 # 1b. ESLint with the security plugin, in each workspace (needs `npm ci` done).
 ESL=""
-for ws in engine dashboard; do
+for ws in engine dashboard mobile; do
   if [ -d "$ws/node_modules/eslint-plugin-security" ]; then
     (cd "$ws" && npx --no-install eslint . -f json -o "$TMP/eslint-$ws.json" >/dev/null 2>"$TMP/eslint-$ws.err")
     ESL+="${ESL:+,}$TMP/eslint-$ws.json"
   fi
 done
 if [ -n "$ESL" ]; then parse_and_record "SAST: ESLint security rules" eslint "$ESL"
-else record "SAST: ESLint security rules" "NOT RUN" "run npm ci in engine/ and dashboard/ first"; fi
+else record "SAST: ESLint security rules" "NOT RUN" "run npm ci in engine/, dashboard/ and mobile/ first"; fi
 
 # 1c. ShellCheck on every shell script, in its own image (or a local copy).
 repo_files . | grep -E '\.sh$' > "$TMP/sh.txt"
@@ -355,14 +356,14 @@ else nodocker "SAST: go vet (agent)"; nodocker "Deps: govulncheck (agent)"; nodo
 
 # 2a. npm audit per workspace, full and production-only. npm 10 matches the
 # servers, so results agree with what `npm ci` installs there.
-for ws in engine dashboard; do
+for ws in engine dashboard mobile; do
   (cd "$ws" && npx --yes npm@10 audit --json > "$TMP/audit-$ws.json" 2>/dev/null; npx --yes npm@10 audit --omit=dev --json > "$TMP/audit-$ws-prod.json" 2>/dev/null)
   parse_and_record "Deps: npm audit ($ws)" npm-audit "$TMP/audit-$ws.json" --prod "$TMP/audit-$ws-prod.json" --accepted "$REPO_ROOT/security-accepted-risks.json"
 done
 
 # 2c. Currency (information only): packages with a newer version available.
 {
-  for ws in engine dashboard; do
+  for ws in engine dashboard mobile; do
     echo "### $ws"; echo; echo "$FENCE"
     (cd "$ws" && npx --yes npm@10 outdated 2>/dev/null) || true
     echo "$FENCE"; echo
@@ -399,7 +400,7 @@ if [ "$DOCKER_OK" = 1 ]; then
 else nodocker "Secrets: gitleaks"; fi
 
 # 4a. Typechecks.
-for ws in engine dashboard; do
+for ws in engine dashboard mobile; do
   if (cd "$ws" && npx --no-install tsc --noEmit -p . > "$TMP/tsc-$ws.txt" 2>&1); then
     record "Typecheck ($ws)" "PASS" "tsc --noEmit clean"
   else

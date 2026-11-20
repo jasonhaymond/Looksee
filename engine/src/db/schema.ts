@@ -74,6 +74,8 @@ export const channelType = pgEnum("channel_type", [
   "slack",
   "teams",
 ]);
+// web_push is shown as "Notifications": it reaches browsers with push turned
+// on and phones with the Looksee Android app (services/notifications/push.ts).
 
 // An alert incident is open ("triggered") until its check recovers.
 export const alertEventStatus = pgEnum("alert_event_status", ["triggered", "resolved"]);
@@ -805,6 +807,51 @@ export const webPushSubscriptions = pgTable("web_push_subscriptions", {
   auth: text("auth").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Phones running the Looksee Android app. Each holds a notification-only
+// token: it can open the alert stream (/api/app/stream) and acknowledge what
+// it received, nothing else, so it keeps working after the app's sign-in
+// session expires. Only a SHA-256 hash of the token is stored, so a copy of
+// the database can't be used to listen in. Deleting the row (Security page,
+// or signing out in the app) stops that phone's alerts at once.
+export const appDevices = pgTable("app_devices", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  // The app's own version and Android version, shown on the Security page.
+  appVersion: text("app_version"),
+  platform: text("platform"),
+  lastConnectedAt: timestamp("last_connected_at", { withTimezone: true }),
+  lastIp: text("last_ip"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Notifications waiting for (or already delivered to) one phone. A phone
+// that was offline receives the ones it missed when it reconnects, within
+// APP_QUEUE_HOURS (services/notifications/app.ts); delivered rows are kept
+// briefly as the phone's alert history, then pruned.
+export const appNotifications = pgTable(
+  "app_notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => appDevices.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    // DOWN / WARN / UP / … (decides the phone's notification category) and
+    // triggered / resolved / reminder / escalated / test / security.
+    status: text("status"),
+    event: text("event"),
+    checkId: uuid("check_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  },
+  (t) => [index("app_notifications_device_idx").on(t.deviceId, t.createdAt)]
+);
 
 // Severity of an engine log entry, lowest to highest.
 // A group is a named set of locations, sites, endpoints and/or checks that

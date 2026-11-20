@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android declarations for Looksee's notification service. This library
+     manifest is merged into the app's own when it's built.
+
+     Permissions, and why each is needed:
+     - INTERNET / ACCESS_NETWORK_STATE: connect to the Looksee server, and
+       reconnect as soon as the network comes back.
+     - POST_NOTIFICATIONS: show alerts (Android 13+ also asks the user).
+     - FOREGROUND_SERVICE / FOREGROUND_SERVICE_SPECIAL_USE: keep the
+       connection open while the app is closed. "specialUse" is the type for
+       a service that fits none of Android's named categories; the property
+       below says what it's for.
+     - RECEIVE_BOOT_COMPLETED: start again after the phone restarts.
+     - REQUEST_IGNORE_BATTERY_OPTIMIZATIONS: lets the app ask (once, with a
+       system dialog the user answers) to be left out of battery saving, so
+       Android's Doze mode doesn't cut the connection overnight. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+  <application>
+    <!-- exported=false: no other app can start, stop or bind to it. -->
+    <service
+        android:name="expo.modules.lookseestream.StreamService"
+        android:exported="false"
+        android:foregroundServiceType="specialUse">
+      <property
+          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+          android:value="Keeps a connection to the user's own Looksee monitoring server to receive its alerts in real time, without a third-party push service." />
+    </service>
+    <!-- Only the system sends these two broadcasts; exported=true is required
+         to receive them, and the receiver does nothing but restart the
+         service if the user had it on. -->
+    <receiver
+        android:name="expo.modules.lookseestream.BootReceiver"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+      </intent-filter>
+    </receiver>
+  </application>
+</manifest>

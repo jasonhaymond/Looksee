@@ -31,12 +31,26 @@ security software), [user-guide.md](user-guide.md), [README](../README.md).
 | `/install/*` | The agent install scripts and binaries | Nothing secret in them; the agent key is in the command you copy, not on the server |
 | `/api/agent/*`, `/api/collector/*` | Agents and site collectors | Per-host agent key; wrong keys are logged and rate-ruled (*Agent key guessing*) |
 | `/api/hb/<token>` | Heartbeat/push URLs | The token is the credential; unknown tokens are logged (*Heartbeat token guessing*) |
+| `/api/app/stream` | The Android app's notification connection (WebSocket) | Each phone's own notification token, sent in a header; wrong tokens are logged (*App token guessing*). It can only receive and acknowledge that phone's notifications |
 | `/status/<slug>` | Public status pages you publish | Shows only the names, status and uptime of checks you put on them |
 | The sign-in page | — | Password + required two-factor, lockouts, optional allowlist and new-IP confirmation |
 
 Everything else needs a signed-in session. Sessions are `httpOnly`, `secure` (in
 production) and `SameSite=Strict` cookies, so another website can't make your browser
-act in Looksee. Passwords are bcrypt-hashed; channel URLs/tokens, check passwords and the
+act in Looksee.
+
+**The Android app** signs in with the same password and required two-factor code. Its
+session token is kept in the phone's encrypted storage and sent in an `Authorization`
+header rather than a cookie; browsers never add that header by themselves, so it opens
+no cross-site route. The app's session follows the same session length and idle timeout
+and is listed (as "Looksee app") with the others. Each phone also gets a separate
+**notification token**, stored on the server only as a SHA-256 hash and on the phone
+encrypted with the Android Keystore. That token can only receive and acknowledge the
+phone's own notifications, never read or change anything, so a phone keeps getting
+alerts after its management session expires. Registering a phone is a security event
+and sends a security notification. To cut a lost phone off, remove it on the **Security**
+page (its connection closes at once) and sign out its session. Release builds of the app
+only connect over HTTPS. Passwords are bcrypt-hashed; channel URLs/tokens, check passwords and the
 SMTP/backup secrets are write-only (never sent back to the browser).
 
 ## Two-factor authentication (required)
@@ -147,6 +161,7 @@ push). **Send a test** confirms the path.
 | Vulnerability scanner | 3 scanner probes from one IP in 10 min | Notify + block for 24 h |
 | Agent key guessing | 10 invalid agent keys from one IP in 10 min | Notify + block for 60 min — except an address working agents have reported from in the last 24 hours (see below) |
 | Heartbeat token guessing | 30 unknown heartbeat tokens from one IP in 10 min | Notify + block for 60 min |
+| App token guessing | 10 Android-app connections with a wrong phone token from one IP in 10 min | Notify + block for 60 min |
 | Sign-in from a new IP | Any successful sign-in from an IP not used before | Notify |
 | Lockout or password change | An account lockout, a password change, or a recovery code used | Notify |
 

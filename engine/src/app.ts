@@ -46,6 +46,7 @@ import { snmpTemplatesRouter } from "./routes/snmpTemplates.js";
 import { securityRouter } from "./routes/security.js";
 import { watchdogRouter } from "./routes/watchdog.js";
 import { retentionRouter } from "./routes/retention.js";
+import { appRouter } from "./routes/app.js";
 import { notFoundHandler, securityGate, securityHeaders } from "./middleware/securityGate.js";
 import { requireAgentAuth } from "./middleware/auth.js";
 import { stripNulBody } from "./lib/stripNul.js";
@@ -104,6 +105,9 @@ app.use("/api/snmp-templates", snmpTemplatesRouter);
 app.use("/api/security", securityRouter);
 app.use("/api/watchdog", watchdogRouter);
 app.use("/api/retention", retentionRouter);
+// The Android app's phones; its notification stream (/api/app/stream) is a
+// WebSocket attached to the HTTP server in index.ts, not an Express route.
+app.use("/api/app", appRouter);
 app.use("/api/endpoints", endpointsRouter);
 app.use("/api/checks", checksRouter);
 app.use("/api/channels", channelsRouter);

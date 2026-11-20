@@ -18,7 +18,12 @@ import { own, setOwn } from "../lib/own.js";
 export const channelsRouter = Router();
 channelsRouter.use(requireAuth);
 
+// web_push is the "Notifications" channel: browsers with push on and phones
+// with the Android app (services/notifications/push.ts).
 const VALID_TYPES = ["email", "webhook", "web_push", "sms", "telegram", "slack", "teams"] as const;
+
+/** A channel's settings as saved: an object, or {} when anything else is sent. */
+const configFor = (raw: unknown) => (raw && typeof raw === "object" ? raw : {});
 
 // Keeps only known events and string title/body, trimmed to sane sizes.
 function cleanTemplates(raw: unknown): Templates {
@@ -67,7 +72,7 @@ channelsRouter.post("/", async (req, res) => {
     res.status(400).json({ error: `name and a valid type (${VALID_TYPES.join(", ")}) are required` });
     return;
   }
-  const config = req.body?.config && typeof req.body.config === "object" ? req.body.config : {};
+  const config = configFor(req.body?.config);
   const [channel] = await db.insert(notificationChannels).values({ name, type, config, templates: cleanTemplates(req.body?.templates) }).returning();
   res.status(201).json(publicView(channel));
 });
@@ -75,7 +80,7 @@ channelsRouter.post("/", async (req, res) => {
 channelsRouter.patch("/:id", async (req, res) => {
   const updates: Partial<typeof notificationChannels.$inferInsert> = {};
   if (req.body?.name !== undefined) updates.name = String(req.body.name).trim();
-  if (req.body?.config !== undefined) updates.config = req.body.config;
+  if (req.body?.config !== undefined) updates.config = configFor(req.body.config);
   if (req.body?.enabled !== undefined) updates.enabled = Boolean(req.body.enabled);
   if (req.body?.templates !== undefined) updates.templates = cleanTemplates(req.body.templates);
   const [channel] = await db.update(notificationChannels).set(updates).where(eq(notificationChannels.id, req.params.id)).returning();

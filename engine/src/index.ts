@@ -1,6 +1,7 @@
 import "dotenv/config";
 import cron from "node-cron";
 import { app } from "./app.js";
+import { attachAppStream } from "./services/appStream.js";
 import { startScheduler } from "./services/scheduler.js";
 import { startWatchdog } from "./services/watchdog.js";
 import { initBackupScheduler } from "./services/backup.js";
@@ -14,9 +15,12 @@ import { enforceFreeSpace, pruneData } from "./services/retention.js";
 
 const port = Number(process.env.PORT ?? 4100);
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   logger.info("engine", `Looksee engine listening on http://localhost:${port}`, "Looksee engine started and is ready.");
 });
+// The Android app's notification stream shares the API's port (and so its
+// reverse proxy and HTTPS); see services/appStream.ts.
+attachAppStream(server, app);
 
 // Upserted on every successful boot, not just deploys, so this reflects
 // what's actually been running rather than what a deploy script assumed —

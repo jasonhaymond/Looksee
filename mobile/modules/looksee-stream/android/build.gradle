@@ -1,0 +1,29 @@
+// Gradle build for the looksee-stream native module (Android only). Gradle is
+// Android's build tool; this file says what kind of library this is and what
+// it depends on. Expo's autolinking finds the module through
+// expo-module.config.json and includes it in the app build.
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.haymondtechnologies.looksee'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.lookseestream"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+    // Keeps this module's classes through R8 shrinking in release builds
+    // (the service and receiver are started by Android by name).
+    consumerProguardFiles 'proguard-rules.pro'
+  }
+}
+
+dependencies {
+  // OkHttp is the HTTP/WebSocket client React Native itself ships (same
+  // version as React Native's own, so there is one copy in the app).
+  implementation "com.squareup.okhttp3:okhttp:4.9.2"
+  implementation "androidx.core:core-ktx:1.13.1"
+}
