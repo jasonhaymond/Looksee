@@ -1023,17 +1023,27 @@ The script checks the tag's approval, that the app and engine versions match, th
 Android's version number follows the version, and that every native package matches the
 Expo SDK, then submits the build and waits (several minutes, longer if other builds are
 queued). **What success looks like:** the last line starts with `✔` and names the APK file
-saved in `mobile/dist-android/`, with its size. If you stop the script while it
+saved in `mobile/dist-android/`, with its size, e.g.
+`✔ …/dist-android/Looksee-v5.8.1-arm64-v8a-release.apk (33.1 MB)`. The name always says
+which processor it runs on (`arm64-v8a` = phones, `x86_64` = emulator, `all` = both).
+If the build server can't be reached, the error gives the reason (for example
+`ENOTFOUND` = the name in `BUILD_SERVER_API_URL` doesn't resolve, `ECONNREFUSED` =
+nothing is listening at that address). If you stop the script while it
 waits, it prints the build ID; continue with `npm run build:android -- --status <id>`.
 
 ### Installing on a phone
 
-1. Copy the APK to the phone (a file share, or the download link the build server shows
+1. Pick the phone build. Its name contains `arm64-v8a`, e.g.
+   `Looksee-v5.8.1-arm64-v8a-release.apk`. A name with `x86_64` is an emulator build:
+   a phone refuses it as "not compatible".
+2. Copy the APK to the phone (a file share, or the download link the build server shows
    for the build) and open it. Android asks to allow installs from that app; allow it
-   for this install.
-2. Open Looksee and sign in (see the user guide's
+   for this install. If Android says the file is "invalid", the copy is usually incomplete:
+   check in the phone's file manager that its size matches the size the script printed,
+   and copy it again.
+3. Open Looksee and sign in (see the user guide's
    [Android app](user-guide.md#android-app) section).
-3. Updating: install the new version's APK over the old one. Sign-in and notification
+4. Updating: install the new version's APK over the old one. Sign-in and notification
    settings are kept.
 
 ### Test builds

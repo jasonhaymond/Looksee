@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [5.8.1] - 2026-11-20
+
+### Changed
+
+- Engine dependency updates (patch and minor, no behavior change intended):
+  express-rate-limit 8.7.5, imapflow 2.12.2, mongodb 7.9.1, mssql 12.8.0, net-snmp 3.29.3,
+  nodemailer 10.6.1, puppeteer-core 25.18.1, typescript-eslint 8.73.0. Major upgrades
+  (TypeScript 7, Vitest 5, bcryptjs 3, dotenv 18, web-push 4, marked 18, @types/node 26)
+  remain planned for 5.9.
+
+### Security
+
+- The two development-only advisories accepted until 2027-01-08 are fixed, and removed
+  from `security-accepted-risks.json`: the old esbuild inside drizzle-kit is moved to
+  0.25.12 (`overrides` in engine/package.json; `drizzle-kit generate` checked), and
+  minimatch in the dashboard's lint tooling is updated (`npm audit fix`).
+
+### Fixed
+
+- **Android APK file names always say which processor they run on**, e.g.
+  `Looksee-v5.8.1-arm64-v8a-release.apk` (phones) and `…-x86_64-release.apk`
+  (emulator). Before, the default phone build had no processor in its name, and on the
+  build server's dashboard both builds had the same name. That made it easy to install
+  the emulator build on a phone, which fails with "not compatible". Needs build server
+  2.10.0 for its dashboard names; `npm run build:android` labels the saved files either way.
+- `npm run build:android` now says why the build server couldn't be reached
+  (e.g. `ENOTFOUND`, `ECONNREFUSED`, a certificate error), instead of only "fetch failed".
+- The deployment guide's install steps say how to pick the phone APK and what
+  "invalid" usually means.
+
 ## [5.8.0] - 2026-11-20
 
 ### Added

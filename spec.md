@@ -183,8 +183,8 @@ if a real use case shows up.
 ### Next: major dependency upgrades (deferred from 5.6, 2026-11-09)
 
 - [ ] TypeScript 7, Vitest 5, bcryptjs 3, dotenv 18, web-push 4, marked 18,
-  @types/node 26 — each read for breaking changes; clears the two dev-only advisories
-  accepted in `security-accepted-risks.json` (review by 2027-01-08).
+  @types/node 26 — each read for breaking changes. (The two dev-only advisories once
+  accepted for this were fixed in 5.8.1 without the majors.)
 
 ### Built for 5.6 (requested 2026-11-09, not yet released)
 

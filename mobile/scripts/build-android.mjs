@@ -90,14 +90,32 @@ function githubHttpsUrl() {
 }
 
 /**
+ * Turns a failed fetch into a readable reason, e.g. "ENOTFOUND: getaddrinfo ENOTFOUND
+ * builds.example.com" or "UNABLE_TO_VERIFY_LEAF_SIGNATURE: unable to verify the first certificate".
+ * In: the error fetch threw. Out: a short text.
+ */
+function networkReason(err) {
+  const cause = err?.cause;
+  if (!cause) return err?.message || String(err);
+  return [cause.code, cause.message].filter(Boolean).join(': ') || String(cause);
+}
+
+/**
  * Calls the build server's API.
  * In: config, a path, and fetch options. Out: the parsed answer. Throws on an error status.
  */
 async function request(config, path, options = {}) {
-  const res = await fetch(`${config.apiUrl}${path}`, {
-    ...options,
-    headers: { Authorization: `Bearer ${config.apiKey}`, ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
-  });
+  let res;
+  try {
+    res = await fetch(`${config.apiUrl}${path}`, {
+      ...options,
+      headers: { Authorization: `Bearer ${config.apiKey}`, ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
+    });
+  } catch (err) {
+    // Node's fetch only says "fetch failed"; the real reason (DNS name not found, connection
+    // refused, certificate problem, timeout) is in err.cause, so it's shown here.
+    throw new Error(`Couldn't reach the build server at ${config.apiUrl} (${networkReason(err)}). Check BUILD_SERVER_API_URL in mobile/.env, and that this machine can reach that address.`, { cause: err });
+  }
   const text = await res.text();
   let body = text;
   try { body = JSON.parse(text); } catch { /* Plain text, which is what logs are. */ }
@@ -106,11 +124,26 @@ async function request(config, path, options = {}) {
 }
 
 /**
- * Waits for a build to finish, then downloads its APK.
- * In: config, the build id, and a suffix that keeps other processor sets from overwriting the
- * normal APK's file name. Side effects: writes to mobile/dist-android/.
+ * Works out the saved file name, which always says which processors the APK runs on, so a
+ * phone build and an emulator build can't be mixed up (an x86_64 APK on a phone fails with
+ * "not compatible"). Build server 2.10.0+ already names files that way, e.g.
+ * Looksee-v5.8.1-arm64-v8a-release.apk, and that name is kept. An older build server's
+ * name (Looksee-v5.8.1-release.apk) gets the processor part inserted before -release/-debug.
+ * In: the checked plain name, and the processor tag ("arm64-v8a", "x86_64", "all"…, or ''
+ * when unknown, as for --status). Out: the file name to save as.
  */
-async function waitAndDownload(config, id, abiSuffix = '') {
+function labelledName(name, abiTag) {
+  if (!abiTag || name.includes(`-${abiTag}-`)) return name;
+  // Matches the end of the name: an optional -debug/-release and then .apk
+  return name.replace(/(-debug|-release)?\.apk$/, `-${abiTag}$1.apk`);
+}
+
+/**
+ * Waits for a build to finish, then downloads its APK.
+ * In: config, the build id, and the processor tag for the file name (see labelledName).
+ * Side effects: writes to mobile/dist-android/.
+ */
+async function waitAndDownload(config, id, abiTag = '') {
   let last = '';
   for (;;) {
     const build = await request(config, `/api/v1/builds/${id}`);
@@ -130,15 +163,19 @@ async function waitAndDownload(config, id, abiSuffix = '') {
   if (!artifacts?.length) fail('The build completed but produced no files.');
   mkdirSync(OUT_DIR, { recursive: true });
   for (const artifact of artifacts) {
-    const res = await fetch(artifact.downloadUrl);
+    let res;
+    try {
+      res = await fetch(artifact.downloadUrl);
+    } catch (err) {
+      fail(`Downloading ${artifact.filename} failed (${networkReason(err)}).`);
+    }
     if (!res.ok) fail(`Downloading ${artifact.filename} failed (${res.status}).`);
     // The file name comes from the build server, so only a plain name is accepted
     // (letters, digits, dot, dash, underscore — e.g. Looksee-release.apk): a name
     // like ../../x could otherwise write outside dist-android/.
     const name = basename(String(artifact.filename));
     if (!/^[\w.-]+$/.test(name) || name !== artifact.filename) fail(`The build server sent an unexpected file name: ${artifact.filename}`);
-    // Inserts the processor suffix before -debug/-release, e.g. Looksee-x86_64-debug.apk.
-    const file = join(OUT_DIR, abiSuffix ? name.replace(/(-debug|-release)?\.apk$/, `${abiSuffix}$1.apk`) : name);
+    const file = join(OUT_DIR, labelledName(name, abiTag));
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- file is OUT_DIR plus the checked plain name above
     writeFileSync(file, Buffer.from(await res.arrayBuffer()));
     console.log(`\n✔ ${file} (${(artifact.size / 1e6).toFixed(1)} MB)`);
@@ -173,8 +210,8 @@ async function main() {
   const abiArg = abiIndex !== -1 ? String(args[abiIndex + 1] || '').trim() : '';
   const abis = !abiArg ? DEFAULT_ABIS : abiArg === 'all' ? ALL_ABIS : abiArg.split(',').map((a) => a.trim()).filter(Boolean);
   if (!abis.length || abis.some((a) => !ALL_ABIS.includes(a))) fail(`--abi takes all, or a comma-separated list of: ${ALL_ABIS.join(', ')}`);
-  const isDefault = abis.length === DEFAULT_ABIS.length && DEFAULT_ABIS.every((a) => abis.includes(a));
-  const abiSuffix = isDefault ? '' : abis.length === ALL_ABIS.length ? '-all' : `-${abis.join('-')}`;
+  // The same processor tag the build server puts in its file names: "all" or the list joined with "-".
+  const abiTag = abis.length === ALL_ABIS.length ? 'all' : abis.join('-');
 
   const refIndex = args.indexOf('--ref');
   let ref = refIndex !== -1 ? args[refIndex + 1] : null;
@@ -217,7 +254,7 @@ async function main() {
     body: JSON.stringify({ project: { name: 'Looksee', source: { type: 'git', url: githubHttpsUrl(), ref }, projectRoot: 'mobile' }, build }),
   });
   console.log(`  Build id ${id}. Safe to Ctrl+C. Resume with: npm run build:android -- --status ${id}\n`);
-  await waitAndDownload(config, id, abiSuffix);
+  await waitAndDownload(config, id, abiTag);
 }
 
 main().catch((err) => fail(err.message));
