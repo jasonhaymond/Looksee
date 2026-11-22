@@ -1,7 +1,7 @@
 // API routes for endpoints (devices: servers, PCs, switches, printers): list,
 // details, inventory, IP history, create, edit, delete, agent keys and install
 // commands, agent updates, watchdog settings, which sites it collects for,
-// metrics, Wake-on-LAN,
+// metrics, Wake-on-LAN, duplicating an endpoint (with its checks),
 // suggestions, role/security templates and bulk actions.
 //
 // Security: every route requires a signed-in session; an endpoint's agent key
@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 import { and, desc, eq, gte, inArray, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { queueCollectorJob, siteCollectorFor } from "../services/sites.js";
-import { endpoints, endpointMetrics, checks, sites, maintenanceWindows, softwareHistory } from "../db/schema.js";
+import { endpoints, endpointMetrics, checks, checkDependencies, groupMembers, sites, maintenanceWindows, softwareHistory } from "../db/schema.js";
 import type { SoftwareReport } from "../services/software.js";
 import { requireAuth } from "../middleware/auth.js";
 import { sendWakeOnLan } from "../services/probes/protocols.js";
@@ -20,7 +20,7 @@ import { suggestChecks } from "../services/suggestions.js";
 import { invalidateMaintenanceCache } from "../services/maintenance.js";
 import { ENDPOINT_METRICS } from "../services/endpointMetrics.js";
 import { addressHistory } from "../services/addresses.js";
-import { createAlertRule, parseAlertRule, type AlertRuleParams } from "../services/alertRuleFactory.js";
+import { copyAlertRules, createAlertRule, parseAlertRule, type AlertRuleParams } from "../services/alertRuleFactory.js";
 import { parseWatchdog } from "../services/watchdogAgents.js";
 import { hostFacts, templatesFor } from "../services/roleTemplates.js";
 import { primaryAddress } from "../services/suggestions.js";
@@ -286,6 +286,86 @@ endpointsRouter.get("/:id/metrics", async (req, res) => {
 endpointsRouter.delete("/:id", async (req, res) => {
   await db.delete(endpoints).where(eq(endpoints.id, req.params.id));
   res.status(204).end();
+});
+
+// POST /api/endpoints/:id/duplicate { name, hostname?, siteId?, copyChecks? }
+// Makes a new endpoint like this one, under a new name — for a second
+// device set up the same way (another switch, printer or server). Copied:
+// the site (or the one given), OS and tags, manual group memberships, and
+// (unless copyChecks is false) every check on the endpoint with its alert
+// rules and dependencies. Checks keep their enabled state; a setting that
+// was exactly the old device's address (hostname) becomes the new one's, so
+// a ping/SNMP/HTTP check points at the new device. Dependencies between the
+// endpoint's own checks point at the copies; others stay as they were.
+//
+// Not copied — they belong to the physical machine, not its setup: the
+// agent key (the copy has none until one is issued, so the old machine's
+// agent can't report as the copy), anything the agent reported (inventory,
+// software, metrics, processes), the MAC address, address history, and its
+// watchdog or site-collector role.
+//
+// Returns the new endpoint and how many checks were copied (201).
+endpointsRouter.post("/:id/duplicate", async (req, res) => {
+  const source = await db.query.endpoints.findFirst({ where: eq(endpoints.id, req.params.id) });
+  if (!source) {
+    res.status(404).json({ error: "Endpoint not found" });
+    return;
+  }
+  const name = String(req.body?.name ?? "").trim().slice(0, 200);
+  if (!name) {
+    res.status(400).json({ error: "Give the copy a name" });
+    return;
+  }
+  // The copy's site: the one given (it must exist), else the original's.
+  const siteId = req.body?.siteId ? String(req.body.siteId) : source.siteId;
+  if (!isUuid(siteId) || !(await db.query.sites.findFirst({ where: eq(sites.id, siteId) }))) {
+    res.status(400).json({ error: "Unknown site" });
+    return;
+  }
+  const hostname = typeof req.body?.hostname === "string" && req.body.hostname.trim() ? req.body.hostname.trim().slice(0, 255) : null;
+  const [copy] = await db.insert(endpoints).values({ name, siteId, hostname, os: source.os, tags: source.tags }).returning();
+
+  // Manual groups the original is in: the copy joins them too.
+  const memberships = await db.query.groupMembers.findMany({ where: and(eq(groupMembers.memberType, "endpoint"), eq(groupMembers.memberId, source.id)) });
+  if (memberships.length) await db.insert(groupMembers).values(memberships.map((m) => ({ groupId: m.groupId, memberType: "endpoint", memberId: copy.id }))).onConflictDoNothing();
+
+  let copied = 0;
+  if (req.body?.copyChecks !== false) {
+    const originals = await db.query.checks.findMany({ where: eq(checks.endpointId, source.id) });
+    // A setting equal to the old device's address is the device itself:
+    // it becomes the copy's address (only when one was given).
+    const readdress = (config: Record<string, unknown>) =>
+      Object.fromEntries(Object.entries(config ?? {}).map(([k, v]) => [k, hostname && source.hostname && typeof v === "string" && v.trim().toLowerCase() === source.hostname.toLowerCase() ? hostname : v]));
+    const idMap = new Map<string, string>();
+    for (const c of originals) {
+      const [made] = await db
+        .insert(checks)
+        .values({
+          name: c.name,
+          siteId,
+          endpointId: copy.id,
+          // A check run by the device's own agent is run by the copy's.
+          probeEndpointId: c.probeEndpointId === source.id ? copy.id : c.probeEndpointId,
+          type: c.type,
+          config: readdress(c.config as Record<string, unknown>),
+          intervalSeconds: c.intervalSeconds,
+          retryIntervalSeconds: c.retryIntervalSeconds,
+          enabled: c.enabled,
+          tags: c.tags,
+          // Push URLs are per check: each copy gets its own secret token.
+          pushToken: c.pushToken ? crypto.randomBytes(18).toString("base64url") : null,
+        })
+        .returning();
+      idMap.set(c.id, made.id);
+      await copyAlertRules(c.id, made.id);
+      copied++;
+    }
+    // Dependencies: on one of the endpoint's own checks → on its copy.
+    const deps = originals.length ? await db.query.checkDependencies.findMany({ where: inArray(checkDependencies.checkId, originals.map((c) => c.id)) }) : [];
+    const rows = deps.map((d) => ({ checkId: idMap.get(d.checkId)!, dependsOnCheckId: idMap.get(d.dependsOnCheckId) ?? d.dependsOnCheckId }));
+    if (rows.length) await db.insert(checkDependencies).values(rows).onConflictDoNothing();
+  }
+  res.status(201).json({ endpoint: publicHost(copy), checksCopied: copied });
 });
 
 endpointsRouter.post("/:id/wake", async (req, res) => {

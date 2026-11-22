@@ -592,6 +592,16 @@ types use it:
   under Advanced to keep everything local. Results are cached (vulnerabilities for 7
   days, end-of-life dates for 1 day), so the lookups are light.
 
+  **Fixing what's found.** Every upgradable package, vulnerable package and unsupported
+  product in these checks' *Latest details* says how to fix it: `fix` explains why the
+  usual update didn't (kept back by apt, a phased Ubuntu update, a fix only in Ubuntu
+  Pro, no fix released yet, an old kernel still running, an application dependency
+  that OS updates never touch, a Windows driver/optional/feature update, a major macOS
+  upgrade…), `command` is the command to run on the endpoint (with a **Copy** button —
+  Looksee never runs it), `fixedIn` is the version that fixes a vulnerability, and the
+  links open the advisory and the step-by-step section of
+  [Patching updates & vulnerabilities](patching.md).
+
 Two more checks (agent 5.2) round this out:
 
 - **Local user accounts** — alerts on new, removed and changed local accounts (enabled
@@ -686,6 +696,24 @@ from inside the machine.
    `--minimal` option.
 4. Within about 30 seconds the endpoint shows **online** and its **Overview** tab fills
    in.
+
+**Duplicating an endpoint** — for a second device set up like an existing one (another
+switch, printer or server of the same kind):
+
+1. Open the endpoint, go to its **Edit** tab and click **Duplicate this endpoint…** (in the
+   app: the endpoint's **Duplicate…** button).
+2. Enter the new device's **name** and, optionally, its **hostname / IP** and **site**.
+   Leave **Copy its checks and their alert rules** ticked to copy every check.
+3. Click **Duplicate**. The new endpoint opens.
+
+What's copied: the site (or the one you chose), OS, tags, manual group memberships, and
+every check with its settings, alert rules and dependencies (dependencies between the
+endpoint's own checks point at the copies). Any check setting that was exactly the old
+device's hostname/IP becomes the new one — so ping, SNMP and HTTP checks point at the new
+device. **Not** copied, because they belong to the physical machine: the agent key (install
+the agent on the new device from its **Agent** tab), anything the agent reported
+(inventory, software, metrics), the MAC address, address history, and a watchdog or
+site-collector role.
 
 **An endpoint's tabs:**
 
@@ -1550,8 +1578,10 @@ follow from that:
   only reachable over a VPN, the phone needs the VPN on. A phone that was out of reach
   gets the alerts it missed from the last 24 hours when it reconnects.
 - Android requires a small permanent "Looksee — Watching for alerts" notification while
-  the connection is kept open. You can hide it: long-press it → turn off **Watching
-  (always on)**. Alerts still arrive.
+  the connection is kept open. It's silent, sits folded at the bottom of the
+  notification shade with no status-bar icon, and doesn't put a badge (dot or count) on
+  the app icon — only real alerts do. You can hide it completely: long-press it → turn
+  off **Watching (always on)**. Alerts still arrive.
 
 If the connection is down for more than 10 minutes, the phone shows **Can't reach
 Looksee** (cleared automatically when it reconnects), so silence never looks like
@@ -1593,10 +1623,12 @@ and **Recoveries and other notices** (quiet). Tapping an alert opens that check.
 
 - **Overview**: counts of up / warn / down checks, what's failing now (worst first),
   open alerts and checks in maintenance.
-- **Alerts**: open and resolved incidents, searchable.
+- **Alerts**: open and resolved incidents, searchable. It refreshes every 15 seconds,
+  as soon as the app comes back to the screen, and the moment a new alert notification
+  arrives (Overview and Checks do too); pull down to refresh by hand.
 - **Browse**: locations → sites → endpoints, each with its worst status. Tap one to see
   its details, checks and actions (maintenance, pause/resume, suggested checks, install
-  or update the agent, Wake-on-LAN, edit, delete).
+  or update the agent, Wake-on-LAN, edit, duplicate, delete).
 - **Checks**: every check, with search and filters. Tap a check for its status, history,
   results, alert rules and actions. **Long-press** to select several, then **Actions**
   for bulk changes: run now, pause, resume, mark recovered, maintenance, edit settings

@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [5.9.0] - 2026-11-21
+
+### Added
+
+- **DNS zone: discovering every record without a zone transfer** (new mode, the default
+  for new checks). Uses ordinary DNS questions any server answers. When the zone has a
+  DNSSEC NSEC chain it is followed and every name is listed; otherwise the zone itself,
+  *Extra names*, about 200 common names (www, mail, autodiscover, `_dmarc`, DKIM
+  selectors, SRV records…) and every in-zone name a record points at are looked up.
+  Every record type is read at each name (A, AAAA, CNAME, DNAME, MX, TXT, SPF, NS
+  including delegations, SRV, PTR, NAPTR, CAA, TLSA, SSHFP, HTTPS, SVCB, URI, HINFO,
+  LOC, DS, DNSKEY, CDS, CDNSKEY, SOA). With no DNS server set, the zone's own name
+  servers are asked, so TTLs are first-hand. A wildcard is recorded once as `*`.
+  Bounded to *Most records* names/records, 10 s per question and 5 minutes in all.
+- **DNS zone: compare with a saved baseline** (default for new checks). Each added,
+  removed or changed record is tracked on its own with when it was first seen and for
+  how many runs, and keeps the check failing until accepted — after *Accept a change
+  after this many runs* runs (0 = never automatically) or all at once when the check
+  is marked recovered. A record that goes back by itself is recorded as *reverted*.
+  Existing checks keep comparing with the previous run; marking one recovered now
+  ends its hold. New *Ignore record types* setting.
+- **Duplicate an endpoint** with a new name (and optionally a new address and site):
+  copies its OS, tags, manual groups and every check with alert rules and
+  dependencies; a check setting that was the old device's address becomes the new
+  one. The agent key, MAC address and everything the agent reported are not copied.
+  Dashboard: the endpoint's Edit tab; app: **Duplicate…** on the endpoint.
+  `POST /api/endpoints/:id/duplicate`.
+- **SNMP: "Read the value as"** — automatic, a number, the number inside text
+  (`23.5 C` → 23.5), text, time ticks → seconds, or a **state list**
+  (`1 = up running`, `2 = down stopped`) that sets the status. Text rules can now be
+  *contain*, *be exactly*, *not contain* or *match a regex* (RE2), with their own
+  failing status. Net-SNMP Opaque float/double values are decoded (single values,
+  walks and extra OIDs). A Counter32 that wraps past its maximum is counted through
+  when reading a rate. The result shows the value's SNMP type and raw text.
+- **How to fix updates and vulnerabilities.** Every upgradable package, vulnerable
+  package and end-of-life product in the software checks' results now says why the
+  usual update didn't fix it (kept back by apt, a phased Ubuntu update, a fix only in
+  Ubuntu Pro/ESM, no fix released yet, an old kernel still running, an application
+  dependency that OS updates never touch, a Windows driver/optional/feature update,
+  Defender definitions, Office's own updater, a failing KB, a major macOS upgrade),
+  the command to run (with a Copy button — never run by Looksee), the fixed version
+  from OSV.dev, the advisory (Ubuntu/Debian CVE pages, OSV.dev, the Microsoft Update
+  Catalog, endoflife.date) and a link to the new help page.
+- New guide **Patching updates & vulnerabilities** (`docs/patching.md`, in the app's
+  Help on the dashboard and the phone): step by step for apt (kept back, phased, not
+  offered, Ubuntu Pro, no fix yet, kernels), dnf, apk, pacman, npm, pip, Composer,
+  Windows (drivers and optional updates, feature updates, Defender, Office, failing
+  updates, other programs with winget), macOS (updates, major upgrades, other apps)
+  and end-of-life operating systems, runtimes and databases.
+- Android app: **Latest details** card on a check, showing every part of its result.
+
+### Changed
+
+- **Check results are shown in full.** Every list in a result is its own titled table
+  (before, only the first one was shown) with every column (before, at most 8) and
+  "Show all" past 100 rows; plain fields are listed as label and value; long text
+  (explanations, commands) is shown on a full-width line under its row; on phones each
+  record is a card. *Latest details* is a full-width panel on the check page. Messages
+  wrap instead of being cut off; the checks list shows two lines. A check can name its
+  field order per table (`details.columns`).
+- Android app: tap a result to see all of its message (two lines before).
+- Agent results' messages may be 4,000 characters (was 2,000), the same as site
+  collectors'.
+- SNMP: a text value with no text rule is now **up** (was a "non-numeric" warning), and
+  a text rule also applies to numeric values. A missing OID says the device has no
+  value there and how to find the right one.
+- "Things to check" on vulnerability, upgradable-package and DNS zone checks gives
+  advice for that check; their messages (lists of findings) no longer trigger
+  error-message hints such as "the device doesn't provide this data".
+- The OSV.dev cache key is now `osv2:` (entries also hold fixed versions and advisory
+  links); old entries are simply not read again.
+
+### Fixed
+
+- **Android: the Alerts page didn't show new alerts.** The Alerts, Overview and Checks
+  screens now reload as soon as the app comes back to the foreground (Android pauses
+  the app's timers in the background) and the moment the notification service shows a
+  new alert; Alerts also refreshes every 15 seconds (was 30). Verified on an Android 15
+  emulator: a new alert appeared in the list about 4 seconds after it fired.
+- **Android: the permanent "Watching" notification put a badge on the app icon.** It
+  moved to a new channel created without a badge (Android doesn't allow changing that on
+  an existing channel; the old one is removed). Only alerts badge the icon now. Android
+  requires the notification itself while the service runs.
+- Android: a time a few seconds ahead of the phone's clock reads "just now" instead of
+  "in a moment".
+
+### Security
+
+- Suggested commands are built only from package names and paths made of safe
+  characters, so a crafted package name or path reported by an agent can't turn a
+  command an admin pastes into a root shell into a different one (tested; paths with
+  curly quotes are refused too, since PowerShell treats them as quote marks). Advisory
+  links from OSV.dev are only passed on as plain http(s) addresses; the dashboard and
+  app only link http(s) addresses and in-app `/help/` paths.
+- DNS discovery's UDP sockets are connected to the one server asked and answers must
+  repeat the random query ID (tested against a server answering with the wrong ID);
+  name-compression and record limits are as for zone transfers. Zone baselines are
+  kept in Maps while compared, so record text from the network can't reach object
+  properties.
+- Duplicating an endpoint never copies its agent key, so the original machine's agent
+  can't report as the copy (tested); the route requires a signed-in session.
+
 ## [5.8.1] - 2026-11-20
 
 ### Changed

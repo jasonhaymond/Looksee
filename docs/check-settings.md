@@ -139,26 +139,31 @@ Type ID `dns`. Resolves a name (any record type), optionally via a specific serv
 
 ### DNS zone history
 
-Type ID `dns_zone`. Takes an inventory of every record in a zone and keeps a history of what was added, removed or changed — by zone transfer (AXFR) or by reading a list of names.
+Type ID `dns_zone`. Takes an inventory of every record in a zone and tracks what was added, removed or changed — by zone transfer (AXFR), by discovering every name and record type without a transfer, or by reading a list of names.
 
 **Value:** records in the zone. Thresholds apply to it.
 
 | Setting | Kind | Default | Notes |
 |---|---|---|---|
 | Zone * | text | — | Example: `example.com`. |
-| Read the zone by | choice | Zone transfer (AXFR) — every record | A zone transfer sees everything, but the server must allow transfers to Looksee's address (or the site collector's). Reading names works with any server but only sees the names you list. Options: Zone transfer (AXFR) — every record (`axfr`); Reading a list of names (`names`). |
-| DNS server | text | — | The zone's own (authoritative) server. Needed for a zone transfer; for a list of names, blank uses the system resolver. Example: `10.0.0.53 or ns1.example.com:53`. |
+| Read the zone by | choice | Discovering every record (no transfer) | A zone transfer sees everything, but the server must allow transfers to Looksee's address (or the site collector's). Discovery needs no permission: it follows the zone's DNSSEC NSEC chain when it has one (every name), and otherwise looks up the zone, your extra names, common names and every in-zone name the records point at — then reads every record type at each. Reading names only sees the names you list. Options: Zone transfer (AXFR) — every record (`axfr`); Discovering every record (no transfer) (`discover`); Reading a list of names (`names`). |
+| DNS server | text | — | The zone's own (authoritative) server. Needed for a zone transfer. For discovery, blank asks the zone's own name servers (found from its NS records), which gives real TTLs; for a list of names, blank uses the system resolver. Example: `10.0.0.53 or ns1.example.com:53`. |
 | Names to read * | text (several lines) | — | One per line, relative to the zone (@ is the zone itself) or ending with a dot for a full name. Each is read as A, AAAA, CNAME, MX, TXT, NS, SRV and CAA. Example: `@ ⏎ www ⏎ mail ⏎ _dmarc ⏎ _sip._tcp`. Shown only for some choices of the settings above. |
+| Extra names to look for | text (several lines) | — | Optional. Names this zone has that discovery wouldn't guess, one per line, relative to the zone. Not needed when the zone has an NSEC chain (the result says so). Example: `nas ⏎ printer ⏎ _sip._tcp`. Shown only for some choices of the settings above. |
+| Also try common names (www, mail, _dmarc, DKIM selectors…) *(Advanced)* | on/off | on | About 200 names zones usually have. A name that doesn't exist costs one query. Names that only match a wildcard (*) record aren't listed separately. Shown only for some choices of the settings above. |
 | TSIG key name *(Advanced)* | text | — | Optional: for servers that only allow signed transfers (BIND allow-transfer { key …; }). Example: `looksee-transfer`. Shown only for some choices of the settings above. |
 | TSIG secret (base64) *(Advanced)* | secret (write-only) | — | Shown only for some choices of the settings above. |
 | TSIG algorithm *(Advanced)* | choice | hmac-sha256 | Options: hmac-sha256; hmac-sha512; hmac-sha1. Shown only for some choices of the settings above. |
 | Status when records change | choice | Warn | Options: Down (critical) (`down`); Warn (`warn`). |
-| Hold the alert status for (minutes) *(Advanced)* | number | 60 | A change keeps the check failing this long, so an alert rule catches it. |
+| Compare with | choice | A saved baseline (each change alerts until accepted) | With a saved baseline, every added, removed or changed record keeps the check failing until it's accepted: after the number of runs below, or when you mark the check recovered (the next run then saves the zone as it is as the new baseline). A record that goes back by itself stops counting. Options: The previous run (a change alerts for the hold time) (`each_run`); A saved baseline (each change alerts until accepted) (`pinned`). |
+| Accept a change after this many runs | number | 0 | 0 = only when the check is marked recovered. With 24 and hourly runs, a change is the new normal after a day. Shown only for some choices of the settings above. |
+| Hold the alert status for (minutes) *(Advanced)* | number | 60 | A change keeps the check failing this long, so an alert rule catches it. Shown only for some choices of the settings above. |
 | Ignore names *(Advanced)* | text (several lines) | — | One per line, relative to the zone; * matches anything. For records that change on their own — certificate challenges, DHCP-registered hosts. Example: `_acme-challenge* ⏎ dhcp-*`. |
-| Also report TTL changes *(Advanced)* | on/off | — | — |
+| Ignore record types *(Advanced)* | text | — | Comma-separated, e.g. DNSKEY if your provider rotates DNSSEC keys on its own. Example: `DNSKEY, DS`. |
+| Also report TTL changes *(Advanced)* | on/off | — | Only first-hand answers from the zone's own server carry real TTLs; a resolver's are left out. |
 | Also report SOA changes *(Advanced)* | on/off | — | Off by default: the SOA serial changes with every edit, so it would repeat every other change. |
 | Most records *(Advanced)* | number | 5000 | A bigger zone fails with a clear message instead of being read. |
-| Timeout (seconds) *(Advanced)* | number | 30 | How long the whole transfer (or each name) may take. |
+| Timeout (seconds) *(Advanced)* | number | 30 | Zone transfer: how long the whole transfer may take. Discovery and names: how long each question may take (at most 10 s for discovery, which also stops after 5 minutes in all). |
 
 <a id="ssl-cert"></a>
 
@@ -492,7 +497,12 @@ Type ID `snmp`. Reads one OID, a walked subtree, or a ready-made template (print
 | Keep at most N rows *(Advanced)* | number | 2000 | Shown only for some choices of the settings above. |
 | Multiply by *(Advanced)* | number | — | Shown only for some choices of the settings above. |
 | Unit label *(Advanced)* | text | — | Shown only for some choices of the settings above. |
-| Text value must contain *(Advanced)* | text | — | Shown only for some choices of the settings above. |
+| Read the value as | choice | Automatic (numbers as numbers, anything else as text) | Automatic handles Integer, Gauge, Counter, TimeTicks, Net-SNMP Opaque floats and text that's just a number; other text, IP addresses and OIDs are shown as text (use a text rule below to judge them). The check's result shows the value's SNMP type. Options: Automatic (numbers as numbers, anything else as text) (`auto`); A number (fail if it isn't one) (`number`); The number inside text ("23.5 C" → 23.5) (`text_number`); Text (`text`); Time ticks → seconds (uptime) (`timeticks`); A state, from a list (1 = up, 2 = down…) (`state`). Shown only for some choices of the settings above. |
+| States | text (several lines) | — | One per line: the value (number or text), =, up / warn / down, then an optional label for the message. For status OIDs such as ifOperStatus, upsBasicOutputStatus or a RAID/fan state. Example: `1 = up running ⏎ 2 = down stopped ⏎ 3 = warn testing`. Shown only for some choices of the settings above. |
+| Status for a value not listed | choice | Warn | Options: Warn (`warn`); Down (`down`); Up (`up`). Shown only for some choices of the settings above. |
+| Text rule *(Advanced)* | text | — | Optional: judge the value's text — e.g. "OK" or, as a regex, ^(Normal\|OK)$. Shown only for some choices of the settings above. |
+| The value must *(Advanced)* | choice | Contain the text rule | Options: Contain the text rule (`contains`); Be exactly the text rule (`equals`); Not contain the text rule (`not_contains`); Match the text rule as a regex (`regex`). Shown only for some choices of the settings above. |
+| Status when the text rule fails *(Advanced)* | choice | Down | Options: Down (`down`); Warn (`warn`). Shown only for some choices of the settings above. |
 | Calculate *(Advanced)* | text | — | Optional maths on the value read, after “Multiply by”: value / 10, value * 8 / 1e6, round(value / 1024, 1). Use the names of Extra OIDs (below) to combine several values from this device, and ref for another check's latest value. + - * / % ^, brackets, min max abs round floor ceil sqrt log10. Example: `value / 10`. |
 | Extra OIDs (name = OID) *(Advanced)* | text (several lines) | — | More values read from this device in the same poll, one per line, for Calculate to use by name — e.g. used / size * 100. rate(…) turns a counter into a per-second rate. With these, the main OID is optional. Example: `used = 1.3.6.1.2.1.25.2.3.1.6.1 ⏎ size = 1.3.6.1.2.1.25.2.3.1.5.1 ⏎ inb = rate(1.3.6.1.2.1.31.1.1.1.6.1)`. |
 | ref = this check's latest value *(Advanced)* | another check | — | For a value worked out from another check — e.g. this counter as a % of a capacity another check reads. Shown only for some choices of the settings above. |

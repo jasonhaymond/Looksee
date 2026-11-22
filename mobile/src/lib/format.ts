@@ -6,6 +6,10 @@ export function relativeTime(iso: string | number | null | undefined): string {
   if (iso == null) return "never";
   const ms = Date.now() - new Date(iso).getTime();
   if (Number.isNaN(ms)) return "—";
+  // A phone's clock is often a few seconds off the server's, so something
+  // that just happened can look slightly in the future: up to a minute
+  // ahead counts as "just now" rather than "in a moment".
+  if (ms < 0 && ms >= -60_000) return "just now";
   const future = ms < 0;
   const s = Math.abs(ms) / 1000;
   const text = s < 45 ? "moments" : s < 3600 ? `${Math.round(s / 60)} min` : s < 86_400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86_400)} d`;

@@ -274,7 +274,8 @@ async function storeReport(agent: AgentEndpoint, host: typeof endpoints.$inferSe
       {
         status,
         latencyMs: numberOrNull(r.latencyMs),
-        message: r.message ? String(r.message).slice(0, 2000) : null,
+        // Capped at 4000 characters, the same as site collectors' results.
+        message: r.message ? String(r.message).slice(0, 4000) : null,
         value: numberOrNull(r.value),
         details: r.details ?? null,
       },

@@ -122,6 +122,176 @@ export async function snmpWalk(session: snmp.Session, oid: string): Promise<Map<
 }
 
 export const toNum = (v: unknown) => (Buffer.isBuffer(v) ? Number(v.toString()) : typeof v === "bigint" ? Number(v) : v == null || v === "" ? NaN : Number(v));
+
+/**
+ * Net-SNMP (and devices built on it) sends floating-point values — load
+ * averages (laLoadFloat), some sensor readings — as an Opaque value wrapping
+ * a float (bytes 9f 78 04 + 4-byte IEEE float) or a double (9f 79 08 +
+ * 8 bytes). Returns the number, or null when the bytes aren't one of those.
+ */
+export function opaqueNumber(v: unknown): number | null {
+  if (!Buffer.isBuffer(v)) return null;
+  if (v.length === 7 && v[0] === 0x9f && v[1] === 0x78 && v[2] === 0x04) return v.readFloatBE(3);
+  if (v.length === 11 && v[0] === 0x9f && v[1] === 0x79 && v[2] === 0x08) return v.readDoubleBE(3);
+  return null;
+}
+
+/**
+ * The first number inside a text value: "23.5 C" → 23.5, "Load: -1,204 W"
+ * → -1204 (thousands commas dropped), "Fan 2 OK" → 2. Null if none.
+ */
+export function numberInText(text: string): number | null {
+  // An optional minus sign, a digit, then digits and commas — e.g.
+  // "-1,204" in "Load: -1,204.5 W". One repeated character class only, so
+  // it runs in linear time on any text. The decimal part is read after it
+  // by hand (a "." followed by digits).
+  const m = /-?\d[\d,]*/.exec(text);
+  if (!m) return null;
+  const after = text.slice(m.index + m[0].length);
+  const decimalMatch = after.startsWith(".") ? /^\.(\d+)/.exec(after) : null;
+  const whole = m[0];
+  const decimals = decimalMatch?.[1];
+  // Commas count as thousands separators only before groups of exactly
+  // three digits ("1,204" → 1204); any other comma ends the number
+  // ("41,5" → 41, "2, 3" → 2).
+  const groups = whole.split(",");
+  let digits = groups[0];
+  let complete = true;
+  for (const g of groups.slice(1)) {
+    if (g.length !== 3) {
+      complete = false;
+      break;
+    }
+    digits += g;
+  }
+  return Number(complete && decimals !== undefined ? `${digits}.${decimals}` : digits);
+}
+
+/** "3 days 4 h 05 min" for a number of seconds — how time-tick values read in messages. */
+export function durationText(seconds: number): string {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return d ? `${d} day(s) ${h} h ${String(m).padStart(2, "0")} min` : h ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min ${Math.floor(seconds % 60)} s`;
+}
+
+/** One line of a state map: the raw value it matches, the status it means, and its label. */
+type StateEntry = { raw: string; status: "up" | "warn" | "down"; label: string };
+
+/**
+ * Parses the "State map" setting: one "value = status label" per line, e.g.
+ * "1 = up running", "2 = down stopped", "degraded = warn". Status is up,
+ * warn or down; the label (optional) is what the message shows.
+ *
+ * @throws with the offending line when one isn't in that form
+ */
+export function parseStateMap(value: unknown): StateEntry[] {
+  const out: StateEntry[] = [];
+  for (const line of excludeItems(value)) {
+    // "<value> = <up|warn|down> [label]" — e.g. "1 = up running".
+    const m = /^(.+?)\s*=\s*(up|warn|down)\b\s*(.*)$/i.exec(line);
+    if (!m) throw new Error(`State map line isn't "value = up|warn|down label": ${line.slice(0, 80)}`);
+    out.push({ raw: m[1].trim(), status: m[2].toLowerCase() as StateEntry["status"], label: m[3].trim() });
+  }
+  return out;
+}
+
+/**
+ * Turns one SNMP value into what a check judges, by the "Read the value as"
+ * setting (valueType):
+ * - auto (default): numbers (Integer, Gauge, Counter, TimeTicks, an Opaque
+ *   float) as numbers; text that is just a number ("42", " 23.5 ") as that
+ *   number; other text, addresses and OIDs as text.
+ * - number: like auto, but text must be a number.
+ * - text_number: the first number inside the text ("23.5 C" → 23.5).
+ * - text: always text, even "42".
+ * - timeticks: hundredths of a second (sysUpTime, hrSystemUptime…) as seconds.
+ * - state: looked up in the state map (stateMap) — e.g. ifOperStatus 1 = up,
+ *   2 = down — giving the status itself.
+ *
+ * @param vb the value as read ({ type, value }, Counter64 already decoded)
+ * @param config valueType, stateMap, unmappedStatus
+ * @returns the number (or null), the text form, the SNMP type's name, and —
+ *   for a state map — the status and label it maps to; or { error }
+ */
+export function interpretValue(
+  vb: { type?: number; value?: unknown },
+  config: Config
+): { num: number | null; text: string; type: string; state?: { status: "up" | "warn" | "down"; label: string } } | { error: string } {
+  const type = vb.type != null ? (TYPE_NAMES[vb.type] ?? `type ${vb.type}`) : "unknown";
+  const mode = str(config, "valueType", "auto");
+  const opaque = vb.type === snmp.ObjectType.Opaque ? opaqueNumber(vb.value) : null;
+  const text = opaque != null ? String(opaque) : vb.type === snmp.ObjectType.OctetString ? displayValue(vb.value) : toStr(vb.value);
+  // A number the value holds directly (not text that looks like one).
+  const direct = opaque ?? (Buffer.isBuffer(vb.value) || typeof vb.value === "string" ? null : Number.isFinite(toNum(vb.value)) ? toNum(vb.value) : null);
+  // Text that is nothing but a number ("42", " 23.5 "): only digits, dots
+  // and a leading minus (a single character class — no nested repetition),
+  // confirmed by Number() so "1.2.3" isn't one.
+  const trimmed = text.trim();
+  const textNumber = trimmed !== "" && /^-?[0-9.]+$/.test(trimmed) && Number.isFinite(Number(trimmed)) ? Number(trimmed) : null;
+  switch (mode) {
+    case "text":
+      return { num: null, text, type };
+    case "text_number": {
+      const n = direct ?? numberInText(text);
+      return n == null ? { error: `No number in the value: ${text.slice(0, 120)}` } : { num: n, text, type };
+    }
+    case "timeticks": {
+      const n = direct ?? textNumber;
+      return n == null ? { error: `Not a time-ticks value: ${text.slice(0, 120)}` } : { num: n / 100, text: durationText(n / 100), type };
+    }
+    case "state": {
+      let map: StateEntry[];
+      try {
+        map = parseStateMap(config.stateMap);
+      } catch (err) {
+        return { error: errMsg(err) };
+      }
+      if (!map.length) return { error: "List the states (one per line, e.g. 1 = up running)" };
+      // Matched against the number (1, "1") or the text ("running"), ignoring case.
+      const hit = map.find((e) => e.raw.toLowerCase() === text.trim().toLowerCase() || (direct != null && Number(e.raw) === direct));
+      const unmapped = str(config, "unmappedStatus", "warn") as "up" | "warn" | "down";
+      return { num: direct ?? textNumber, text, type, state: hit ? { status: hit.status, label: hit.label || text } : { status: unmapped, label: `unlisted value ${text}` } };
+    }
+    case "number": {
+      const n = direct ?? textNumber;
+      return n == null ? { error: `Returned a non-numeric value (${type}): ${text.slice(0, 120)}` } : { num: n, text, type };
+    }
+    default:
+      return { num: direct ?? textNumber, text, type };
+  }
+}
+
+/**
+ * Judges a text value by the text rule: textMatch is contains (default),
+ * equals, not_contains or regex (RE2, lib/userRegex.ts — no catastrophic
+ * backtracking), against expectString; not matching gives textStatus
+ * (down by default). Null when no text rule is set.
+ */
+export function judgeText(text: string, config: Config): { status: "up" | "warn" | "down"; why: string } | { error: string } | null {
+  const expect = str(config, "expectString");
+  if (!expect) return null;
+  const how = str(config, "textMatch", "contains");
+  let ok: boolean;
+  if (how === "regex") {
+    // The admin's pattern runs on RE2 (lib/userRegex.ts): linear time, so
+    // no pattern or device text can make it slow. Compiled first, so an
+    // invalid pattern is reported as such.
+    let re: UserRegex;
+    try {
+      re = compileUserRegex(expect);
+    } catch {
+      return { error: `Invalid text regex: ${expect.slice(0, 80)}` };
+    }
+    // nosemgrep: ajinabraham.njsscan.dos.regex_dos.regex_dos -- pattern runs on RE2 (lib/userRegex.ts), linear time; cannot backtrack
+    ok = re.test(text);
+  } else if (how === "equals") ok = text.trim() === expect.trim();
+  else if (how === "not_contains") ok = !text.includes(expect);
+  else ok = text.includes(expect);
+  const failed = str(config, "textStatus", "down") === "warn" ? "warn" : "down";
+  const wording = own({ contains: "doesn't contain", equals: "isn't", not_contains: "contains", regex: "doesn't match" }, how) ?? "doesn't contain";
+  return ok ? { status: "up", why: "" } : { status: failed, why: ` (${wording} "${expect.slice(0, 80)}")` };
+}
 const toStr = (v: unknown) => (Buffer.isBuffer(v) ? v.toString("utf-8").replace(/\0/g, "") : String(v ?? ""));
 
 // How a walk shows a value: printable text as text, binary (MAC
@@ -376,9 +546,16 @@ async function walkCheck(session: snmp.Session, oid: string, mode: string, confi
   const raw: Record<string, number> = {};
   const details: { oid: string; type: string; value: string; rate?: number | null }[] = [];
   const numbers: number[] = [];
+  const valueType = str(config, "valueType", "auto");
   for (const r of picked) {
-    const n = toNum(r.value);
-    const numeric = !Number.isNaN(n) && !Buffer.isBuffer(r.value);
+    // A row's number: an Opaque float (Net-SNMP), the number itself, or —
+    // with "number inside text" — the first number in its text ("23.5 C").
+    // TimeTicks rows count in seconds when read as time ticks.
+    const opaque = opaqueNumber(r.value);
+    const inText = valueType === "text_number" && Buffer.isBuffer(r.value) ? numberInText(displayValue(r.value)) : null;
+    const plain = toNum(r.value);
+    const n = opaque ?? inText ?? (valueType === "timeticks" ? plain / 100 : plain);
+    const numeric = opaque != null || inText != null || (!Number.isNaN(plain) && !Buffer.isBuffer(r.value));
     let shown: number | null = numeric ? n * scale : null;
     if (numeric && asRate) {
       raw[r.suffix] = n;
@@ -524,7 +701,8 @@ async function readExtraOids(config: Config, extras: ExtraOid[], prev: Record<st
     for (const [i, e] of extras.entries()) {
       const vb = vbs.at(i);
       if (!vb || snmp.isVarbindError(vb)) return { error: `${e.name} (${e.oid}): ${vb ? snmp.varbindError(vb) : "no response"}` };
-      const n = toNum(vb.value);
+      // An Opaque float (Net-SNMP load averages, sensors) or a plain number.
+      const n = opaqueNumber(vb.value) ?? toNum(vb.value);
       if (Number.isNaN(n)) return { error: `${e.name} (${e.oid}) isn't a number: ${toStr(vb.value).slice(0, 60)}` };
       if (!e.rate) {
         values[e.name] = n;
@@ -572,28 +750,51 @@ async function readSnmp(config: Config, ctx: ProbeContext): Promise<ProbeOutcome
     const unit = str(config, "unit");
     if (mode !== "get") return await walkCheck(session, oid, mode, config, ctx, start, scale, unit);
 
-    let value: number;
     const [vb] = await snmpGet(session, [oid]);
     if (!vb) return down("No response");
-    if (snmp.isVarbindError(vb)) return down(snmp.varbindError(vb));
-    value = toNum(vb.value);
-    if (Number.isNaN(value)) {
-      const text = toStr(vb.value);
-      const expect = str(config, "expectString");
-      if (expect) return { status: text.includes(expect) ? "up" : "down", latencyMs: Date.now() - start, message: text };
-      return { status: "warn", latencyMs: Date.now() - start, message: `Returned a non-numeric value: ${text}` };
+    if (snmp.isVarbindError(vb)) {
+      // noSuchObject / noSuchInstance: the device answered but doesn't have
+      // this OID (wrong OID, a missing ".0" on a single value, or a MIB the
+      // device doesn't support) — say so rather than only the SNMP term.
+      const why = snmp.varbindError(vb);
+      const missing = vb.type === snmp.ObjectType.NoSuchObject || vb.type === snmp.ObjectType.NoSuchInstance || vb.type === snmp.ObjectType.EndOfMibView;
+      return down(missing ? `${why} — the device answered but has no value at ${oid}. Check the OID (single values usually end in .0) or use "Browse" to see what it has.` : why);
     }
+    const latencyMs = Date.now() - start;
+    const read = interpretValue(vb, config);
+    if ("error" in read) return { status: "warn", latencyMs, message: read.error };
+    const details = { oid, type: read.type, raw: read.text };
+    // A state map decides the status itself (e.g. ifOperStatus 2 = down).
+    if (read.state) return { status: read.state.status, latencyMs, message: `${read.state.label}${read.num != null && read.state.label !== read.text ? ` (${read.text})` : ""}`, value: read.num, details };
+    // A text rule judges the text (contains / equals / doesn't contain / regex).
+    const textRule = judgeText(read.text, config);
+    if (textRule && "error" in textRule) return { status: "warn", latencyMs, message: textRule.error };
+    if (read.num == null || textRule) {
+      const status = textRule ? textRule.status : "up";
+      return { status, latencyMs, message: `${read.text || "(empty)"}${textRule && status !== "up" ? textRule.why : ""}`, value: read.num != null ? read.num * scale : null, details };
+    }
+    let value = read.num;
     let state: Record<string, unknown> | undefined;
     // Counters (octets, packets) are only meaningful as a rate.
     if (bool(config, "asRate")) {
       const now = Date.now();
       const prev = ctx.state as { raw?: number; at?: number };
       state = { raw: value, at: now };
-      if (prev.raw == null || prev.at == null || value < prev.raw) return { status: "up", latencyMs: now - start, message: "Collecting a baseline for the rate", skip: true, state };
-      value = (value - prev.raw) / ((now - prev.at) / 1000);
+      if (prev.raw == null || prev.at == null) return { status: "up", latencyMs: now - start, message: "Collecting a baseline for the rate", skip: true, state };
+      let delta = value - prev.raw;
+      if (delta < 0) {
+        // Lower than last time: a 32-bit counter that went past its maximum
+        // (4,294,967,295) and started again from 0 is counted on; anything
+        // else (a 64-bit counter, a device restart) starts a new baseline.
+        const wrapped = vb.type === snmp.ObjectType.Counter && prev.raw > 2 ** 31 ? value + 2 ** 32 - prev.raw : null;
+        if (wrapped == null) return { status: "up", latencyMs: now - start, message: "The counter went down (device restarted?) — collecting a new baseline", skip: true, state };
+        delta = wrapped;
+      }
+      value = delta / ((now - prev.at) / 1000);
     }
     value = value * scale;
-    return { status: "up", latencyMs: Date.now() - start, message: `${Math.round(value * 100) / 100}${unit}`, value, state };
+    const shown = str(config, "valueType") === "timeticks" && !bool(config, "asRate") && scale === 1 ? durationText(value) : `${Math.round(value * 100) / 100}${unit}`;
+    return { status: "up", latencyMs, message: shown, value, state, details };
   } catch (err) {
     return down(errMsg(err));
   } finally {

@@ -1,7 +1,8 @@
 // The bridge between the app's JavaScript and Looksee's notification service
 // (StreamService). JavaScript calls these functions through
 // modules/looksee-stream/index.ts; "onStatus" events tell it when the
-// connection state changes, while the app is open.
+// connection state changes and "onAlert" events when new alerts arrived,
+// while the app is open.
 //
 // Called by: the app after signing in (start), on sign-out (stop), and by the
 // Settings screen (status, battery exemption, notification settings).
@@ -24,6 +25,8 @@ class LookseeStreamModule : Module() {
 
   // Forwards service status changes to JavaScript as "onStatus" events.
   private val statusListener: (Context) -> Unit = { ctx -> sendEvent("onStatus", statusBundle(ctx)) }
+  // Forwards "new alerts arrived" to JavaScript as "onAlert" events ({ count }).
+  private val alertListener: (Int) -> Unit = { count -> sendEvent("onAlert", bundleOf("count" to count)) }
 
   /** The current status as a JavaScript object. */
   private fun statusBundle(ctx: Context) = StreamConfig.status(ctx).let { (state, error, last) ->
@@ -38,10 +41,16 @@ class LookseeStreamModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("LookseeStream")
-    Events("onStatus")
+    Events("onStatus", "onAlert")
 
-    OnCreate { StreamEvents.add(statusListener) }
-    OnDestroy { StreamEvents.remove(statusListener) }
+    OnCreate {
+      StreamEvents.add(statusListener)
+      StreamAlerts.add(alertListener)
+    }
+    OnDestroy {
+      StreamEvents.remove(statusListener)
+      StreamAlerts.remove(alertListener)
+    }
 
     /**
      * Saves the server address, this phone's notification token and name,

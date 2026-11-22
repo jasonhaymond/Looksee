@@ -7,6 +7,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { cleanMemory } from "../lib/memoryDetail";
 import { api, type AddressRow, type Channel, type Check, type Site, type Endpoint, type EndpointDetail, type EndpointInventory, type EndpointSession, type EndpointSnapshot, type EndpointSoftware, type Suggestion } from "../lib/api";
 import { useSort, type SortState } from "../lib/useSort";
@@ -615,7 +616,89 @@ function EditTab({ host, sites, onSaved }: { host: Endpoint; sites: Site[]; onSa
           Save
         </Button>
       </div>
+      <div className="sm:col-span-2">
+        <DuplicateEndpoint host={host} sites={sites} />
+      </div>
     </form>
+  );
+}
+
+/**
+ * "Duplicate this endpoint": a new endpoint with this one's setup under a
+ * new name — its site (or another), OS, tags, groups and, if ticked, all of
+ * its checks with their alert rules (routes/endpoints.ts POST /:id/duplicate).
+ * A check setting that was this device's address becomes the new address.
+ * The agent key and everything the agent reported stay with the original.
+ * Opens the copy when done.
+ */
+function DuplicateEndpoint({ host, sites }: { host: Endpoint; sites: Site[] }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(`${host.name} (copy)`);
+  const [hostname, setHostname] = useState("");
+  const [siteId, setSiteId] = useState(host.siteId);
+  const [copyChecks, setCopyChecks] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Next.js's in-app navigation, to open the copy when it's made.
+  const router = useRouter();
+  // Enter in these fields mustn't submit the surrounding edit form.
+  const noSubmit = (e: React.KeyboardEvent) => e.key === "Enter" && e.preventDefault();
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="text-xs text-[var(--muted)] underline hover:text-[var(--text)]">
+        Duplicate this endpoint…
+      </button>
+    );
+  }
+  // Its own small form inside the edit form: a <div>, not a nested <form>
+  // (HTML doesn't allow one form inside another), submitted by its button.
+  return (
+    <div className="space-y-2 rounded-md border border-[var(--border)] p-3">
+      <div className="text-sm font-medium">Duplicate {host.name}</div>
+      <p className="text-xs text-[var(--muted)]">Makes a new endpoint set up like this one. Its agent key, MAC address and everything its agent reported are not copied — install the agent on the new device separately.</p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Label label="New name">
+          <input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={noSubmit} className={inputClass} aria-label="New endpoint name" />
+        </Label>
+        <Label label="Its hostname / IP" help={host.hostname ? `Checks that pointed at ${host.hostname} point here instead.` : "Optional."}>
+          <input value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="the new device's address" onKeyDown={noSubmit} className={inputClass} aria-label="New endpoint hostname" />
+        </Label>
+        <Label label="Site">
+          <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={inputClass}>
+            {sites.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </Label>
+      </div>
+      <label className="flex items-center gap-2 text-xs">
+        <input type="checkbox" checked={copyChecks} onChange={(e) => setCopyChecks(e.target.checked)} className="accent-[var(--accent)]" />
+        Copy its checks and their alert rules
+      </label>
+      {error && <p className="text-xs text-[var(--down)]">{error}</p>}
+      <div className="flex gap-2">
+        <Button
+          variant="primary"
+          disabled={busy || !name.trim()}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try {
+              const res = await api.duplicateEndpoint(host.id, { name: name.trim(), hostname: hostname.trim() || undefined, siteId, copyChecks });
+              router.push(`/endpoints/${res.endpoint.id}`);
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Couldn't duplicate");
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Duplicating…" : "Duplicate"}
+        </Button>
+        <Button onClick={() => setOpen(false)}>Cancel</Button>
+      </div>
+    </div>
   );
 }
 

@@ -28,6 +28,7 @@ type NativeModule = {
   requestIgnoreBatteryOptimizations(): void;
   openNotificationSettings(): void;
   addListener(event: "onStatus", listener: (status: StreamStatus) => void): EventSubscription;
+  addListener(event: "onAlert", listener: (e: { count: number }) => void): EventSubscription;
 };
 
 // requireOptionalNativeModule returns null instead of throwing when the
@@ -55,3 +56,5 @@ export const requestIgnoreBatteryOptimizations = () => native?.requestIgnoreBatt
 export const openNotificationSettings = () => native?.openNotificationSettings();
 /** Calls `listener` whenever the status changes. Out: call .remove() to stop listening. */
 export const onStatus = (listener: (s: StreamStatus) => void): { remove: () => void } => native?.addListener("onStatus", listener) ?? { remove: () => undefined };
+/** Calls `listener` when the service has just shown new alerts (while the app is open). Out: call .remove() to stop listening. */
+export const onAlert = (listener: (e: { count: number }) => void): { remove: () => void } => native?.addListener("onAlert", listener) ?? { remove: () => undefined };

@@ -18,7 +18,7 @@ module.exports = {
   expo: {
     name: "Looksee",
     slug: "looksee",
-    version: "5.8.1",
+    version: "5.9.0",
     orientation: "portrait",
     icon: "./assets/icon.png",
     // Follows the phone's light/dark setting unless changed in the app's Settings.
@@ -28,7 +28,7 @@ module.exports = {
     scheme: "looksee",
     android: {
       package: "com.haymondtechnologies.looksee",
-      versionCode: 50801,
+      versionCode: 50900,
       // Keeps the app's data (sign-in token) out of Google's cloud backups.
       allowBackup: false,
       adaptiveIcon: {

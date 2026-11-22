@@ -13,6 +13,7 @@ const DOCS = [
   { slug: "", title: "User guide", sub: "Everything in Looksee, step by step" },
   { slug: "checks", title: "Check reference", sub: "What each check type does and its settings" },
   { slug: "check-settings", title: "Check settings", sub: "Thresholds, intervals, retries, dependencies" },
+  { slug: "patching", title: "Patching updates & vulnerabilities", sub: "When Windows Update, macOS updates or apt don't fix them" },
   { slug: "security", title: "Security guide", sub: "Sign-in, IP access, attack detection" },
   { slug: "vpn", title: "VPN-only access", sub: "Reaching Looksee only over your VPN" },
   { slug: "windows-agent", title: "Windows agent & security software", sub: "Antivirus and EDR exclusions" },

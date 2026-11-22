@@ -3,6 +3,8 @@
 // what actually went wrong), then the check type; the first few distinct
 // hints win. These are starting points, not diagnoses.
 
+import { own } from "../lib/own.js";
+
 type Input = { type: string; status: string | null; message: string | null; config?: unknown };
 type Rule = { test: RegExp; hints: string[] };
 
@@ -63,6 +65,16 @@ const TYPE_HINTS: Record<string, string[]> = {
   ip_change: ["Give the device a DHCP reservation, or update checks that target the old IP."],
 };
 
+/** Hints for checks whose message lists findings rather than an error. */
+const FINDINGS_HINTS: Record<string, string[]> = {
+  host_vulnerable: [
+    "Each package under Latest details says why the usual update didn't fix it, the command to run on the endpoint (Copy) and the advisory — and the Help link opens the step-by-step guide (Help → Patching updates & vulnerabilities).",
+    "If a fix can't be installed yet, add the package or advisory ID to Accepted risks with a reason.",
+  ],
+  host_packages: ["Each package under Latest details has the command to install it if the usual update leaves it out (kept back, phased, optional, driver or feature updates) — see Help → Patching updates & vulnerabilities."],
+  dns_zone: ["The Changes table under Latest details lists each record added, removed or changed. If they're expected, mark the check recovered to accept them (with a saved baseline); otherwise check who changed the zone."],
+};
+
 export function remediationFor(input: Input): string[] {
   if (!input.status || input.status === "up") return [];
   const out: string[] = [];
@@ -70,7 +82,12 @@ export function remediationFor(input: Input): string[] {
     for (const x of h) if (!out.includes(x)) out.push(x);
   };
   const msg = input.message ?? "";
-  for (const rule of MESSAGE_RULES) if (rule.test.test(msg)) add(rule.hints);
+  // A findings check's message is a list of what it found (package names,
+  // DNS records), not an error — "unsupported: Node.js 18" or a package
+  // called "not-found" mustn't trigger an error-message hint.
+  const findingsCheck = Object.hasOwn(FINDINGS_HINTS, input.type);
+  if (!findingsCheck) for (const rule of MESSAGE_RULES) if (rule.test.test(msg)) add(rule.hints);
+  if (findingsCheck) add(own(FINDINGS_HINTS, input.type) ?? []);
   const cfg = (input.config ?? {}) as Record<string, unknown>;
   if (input.type === "host_metric") {
     const metric = String(cfg.metric ?? "");

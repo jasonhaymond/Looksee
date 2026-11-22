@@ -429,7 +429,9 @@ export default function ChecksPage() {
                               {where && <span className="block truncate">{where}</span>}
                             </span>
                             <span className="min-w-0 text-xs">
-                              <span className="block truncate" title={c.lastMessage ?? ""}>
+                              {/* Up to two lines (line-clamp-2), the rest on hover; the
+                                  full message is in the check's detail below the row. */}
+                              <span className="line-clamp-2 break-words" title={c.lastMessage ?? ""}>
                                 {c.flapping ? "Flapping · " : ""}
                                 {c.blockedBy ? `Parent ${c.blockedBy} down · ` : ""}
                                 {c.lastMessage ?? (c.lastCheckedAt ? "OK" : "No results yet")}

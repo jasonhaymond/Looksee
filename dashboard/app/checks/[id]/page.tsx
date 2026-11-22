@@ -155,7 +155,7 @@ export default function CheckPage() {
       </div>
 
       <div className="surface mb-4 space-y-2 rounded-xl p-3 text-sm">
-        <p>
+        <p className="whitespace-pre-wrap break-words">
           {check.lastMessage ?? (check.lastCheckedAt ? "OK" : "No results yet")} <span className="text-xs text-[var(--muted)]">· checked {relativeTime(check.lastCheckedAt)} · in this state since {relativeTime(check.lastStatusChangeAt)}</span>
         </p>
         <p className="text-xs text-[var(--muted)]">
@@ -229,6 +229,15 @@ export default function CheckPage() {
         ))}
       </div>
 
+      {/* The latest result's details (zone changes, vulnerable packages,
+          interface tables…) across the full width: they're often wide. */}
+      {tab === "history" && latestDetails != null && (
+        <section className="surface mb-4 rounded-xl p-3">
+          <h2 className="mb-2 text-sm font-medium">Latest details</h2>
+          <Details value={latestDetails} />
+        </section>
+      )}
+
       {tab === "history" && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           <section className="surface rounded-xl p-3">
@@ -250,12 +259,6 @@ export default function CheckPage() {
               </ul>
             ) : (
               <p className="text-xs text-[var(--muted)]">No alert incidents in this range{ctx && !ctx.channels.length ? " (and no notification channels exist yet)" : ""}. Incidents are recorded for checks with an alert rule.</p>
-            )}
-            {latestDetails != null && (
-              <div className="mt-4">
-                <h2 className="mb-2 text-sm font-medium">Latest details</h2>
-                <Details value={latestDetails} />
-              </div>
             )}
           </section>
           <section className="surface rounded-xl p-3">
@@ -303,7 +306,7 @@ export default function CheckPage() {
                       <td className="pr-2">{r.value != null ? Math.round(r.value * 100) / 100 : ""}</td>
                       <td className="pr-2">{r.latencyMs ?? ""}</td>
                       <td className="pr-2">
-                        {r.message}
+                        <span className="whitespace-pre-wrap break-words">{r.message}</span>
                         {r.excluded && <span className="block text-[10px] text-[var(--muted)]">Excluded from statistics{r.excludedReason ? `: ${r.excludedReason}` : ""}</span>}
                       </td>
                       <td className="whitespace-nowrap">

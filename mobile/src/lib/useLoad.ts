@@ -3,10 +3,18 @@
 // errors, and offers reload() for pull-to-refresh. Optionally repeats every
 // N seconds while the screen is visible, like the dashboard's polling.
 //
+// A live screen (one that polls) also reloads straight away when the app
+// comes back to the foreground — Android pauses the app's timers while it's
+// in the background, so without this a screen could show what it had when
+// the phone was locked — and when the notification service has just shown a
+// new alert, so the Alerts, Overview and Checks screens show it at once.
+//
 // Hooks are React functions (named use…) that keep state for a component.
 
 import { useCallback, useRef, useState } from "react";
+import { AppState } from "react-native";
 import { useFocusEffect } from "expo-router";
+import * as Stream from "../../modules/looksee-stream";
 import { errorText } from "./format";
 
 export type Loaded<T> = {
@@ -52,7 +60,16 @@ export function useLoad<T>(load: () => Promise<T>, pollSeconds = 0): Loaded<T> {
       void run();
       if (!pollSeconds) return undefined;
       const timer = setInterval(() => void run(), pollSeconds * 1000);
-      return () => clearInterval(timer);
+      // Back in the foreground ("active"), or a new alert: reload now.
+      const appState = AppState.addEventListener("change", (s) => {
+        if (s === "active") void run();
+      });
+      const alerts = Stream.onAlert(() => void run());
+      return () => {
+        clearInterval(timer);
+        appState.remove();
+        alerts.remove();
+      };
     }, [run, pollSeconds])
   );
 

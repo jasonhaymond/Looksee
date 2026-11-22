@@ -1,6 +1,8 @@
 // Alerts tab: alert incidents from the alert rules — open ones (still
 // failing), resolved ones, or both — newest first, with a search. Tapping one
-// opens its check. Refreshes every 30 seconds while shown.
+// opens its check. Refreshes every 15 seconds while shown, as soon as the
+// app comes back to the foreground, and at once when a new alert arrives
+// (lib/useLoad.ts).
 
 import { useCallback, useState } from "react";
 import { FlatList, View } from "react-native";
@@ -16,7 +18,7 @@ export default function Alerts() {
   const [filter, setFilter] = useState<"open" | "resolved" | "all">("open");
   const [q, setQ] = useState("");
   const load = useCallback(() => api.alertEvents({ status: filter === "all" ? undefined : filter, q: q.trim() || undefined, limit: 200 }), [filter, q]);
-  const { data, error, loading, refreshing, reload } = useLoad(load, 30);
+  const { data, error, loading, refreshing, reload } = useLoad(load, 15);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>

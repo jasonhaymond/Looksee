@@ -1,6 +1,6 @@
 {
   "name": "looksee-mobile",
-  "version": "5.8.1",
+  "version": "5.9.0",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",

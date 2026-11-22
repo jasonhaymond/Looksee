@@ -205,7 +205,7 @@ removed or changed — so an unexpected edit (a changed MX, a stray A record, a 
 SPF record) is noticed, and the zone's past is on record. **Engine** (or the site
 collector).
 
-**How it works:** two ways to read the zone:
+**How it works:** three ways to read the zone:
 
 - **Zone transfer (AXFR)** — asks the zone's own DNS server for the whole zone over TCP
   port 53 (RFC 5936). Sees every record, but the server must allow transfers to
@@ -213,19 +213,61 @@ collector).
   Windows DNS → zone → *Properties → Zone Transfers → Only to the following servers*.
   For servers that only allow signed transfers, give a **TSIG key** (name, base64
   secret, algorithm — Advanced); the secret is write-only like every password.
+- **Discovering every record (no transfer)** — the default for new checks. Needs no
+  permission on the server: it uses ordinary questions any DNS server answers (UDP port
+  53, TCP when an answer is too big). It finds the zone's names in one of two ways:
+  - If the zone is signed with DNSSEC **NSEC** records, it follows that chain — each NSEC
+    record names the next name in the zone and the record types that name has — so it
+    lists **every** name. The result says *every name, from the NSEC chain*.
+  - Otherwise (no DNSSEC, NSEC3, or a provider that makes NSEC records up on the fly) it
+    looks up the zone itself, your **Extra names**, about 200 **common names** (www, mail,
+    autodiscover, `_dmarc`, DKIM selectors such as `selector1._domainkey`, SRV records
+    such as `_sip._tls`…), and every in-zone name another record points at (MX hosts,
+    CNAME and SRV targets, name servers). The result says how many names it found of how
+    many it looked up. A name nobody guessed or listed can't be seen this way — add it to
+    *Extra names*. If the zone has a wildcard (`*`), its records are listed once as `*`.
+
+  At every name it reads **every record type**: A, AAAA, CNAME, DNAME, MX, TXT, SPF, NS
+  (including delegations to child zones), SRV, PTR, NAPTR, CAA, TLSA, SSHFP, HTTPS, SVCB,
+  URI, HINFO, LOC, DS, DNSKEY, CDS and CDNSKEY (plus SOA for the zone itself). DNSSEC's
+  own signatures (RRSIG, NSEC) are left out — they change by themselves every few days.
+  With *DNS server* blank it asks the zone's own name servers directly (found from its NS
+  records), so answers are first-hand and carry the zone's real TTLs; a resolver's TTLs
+  count down, so they aren't recorded. Bounded: at most *Most records* names and records,
+  10 s per question and 5 minutes in all.
 - **Reading a list of names** — asks for each name you list (A, AAAA, CNAME, MX, TXT, NS,
   SRV, CAA; plus SOA for `@`). Works with any server, including public ones that refuse
   transfers, but only sees the names listed. TTLs aren't available this way.
 
-Each run is compared with the previous one. The first run records a **baseline**. A
-single value replaced by another (www A 192.0.2.1 → 192.0.2.66) is one *changed* entry;
-otherwise records are *added* or *removed*. The SOA record is left out by default (its
-serial changes with every edit); TTL-only changes are reported only if you tick *Also
-report TTL changes*. *Ignore names* skips names that change on their own
-(`_acme-challenge*` for certificate renewals, DHCP-registered hosts). A change sets the
-chosen status (warn by default) and holds it for *Hold* minutes (60). The result details
-show this run's changes, the change **history** (the last 500 changes are kept), and the
-current records.
+The first run records a **baseline**. A single value replaced by another (www A
+192.0.2.1 → 192.0.2.66) is one *changed* entry; otherwise records are *added* or
+*removed*. The SOA record is left out by default (its serial changes with every edit);
+TTL-only changes are reported only if you tick *Also report TTL changes*. *Ignore names*
+skips names that change on their own (`_acme-challenge*` for certificate renewals,
+DHCP-registered hosts); *Ignore record types* skips types (e.g. `DNSKEY` if your provider
+rotates DNSSEC keys itself).
+
+**Compare with** decides what counts as a change:
+
+- **A saved baseline** (the default for new checks) — every difference from the baseline
+  is tracked on its own: the *Changes* table shows each added, removed or changed record
+  with when it was **first seen** and for how many **runs**. The check keeps the chosen
+  status (warn by default) while any difference is outstanding, so nothing is missed
+  because a later run "got used to it". A difference is accepted into the baseline:
+  - after **Accept a change after this many runs** runs in a row (0, the default, = never
+    automatically), or
+  - all at once when you **mark the check recovered**: the next run saves the zone as it
+    is then as the new baseline (use *Run now* afterwards to do it straight away).
+
+  A record that goes back to what the baseline has stops counting by itself and is
+  recorded as *reverted*. Accepted and reverted differences go into the history too.
+- **The previous run** (how checks made before 5.9 work) — each run is compared with the
+  one before. A change sets the chosen status and holds it for *Hold* minutes (60), then
+  the new zone is the norm. Marking the check recovered ends the hold.
+
+The result details show the outstanding (or this run's) **changes**, the change
+**history** (the last 500 entries are kept) and the current **records** (up to 2,000),
+each as its own table.
 
 **Value:** the number of records watched.
 
@@ -574,15 +616,39 @@ or a ready-made template. **Engine** (or the site collector).
 
 **How it works:** SNMP v1, v2c (community) or v3 (user, auth/privacy). Modes:
 
-- **Single value** — `GET` one OID. Text values can be matched with *Text value must
-  contain*.
+- **Single value** — `GET` one OID. **Read the value as** decides what the value means:
+  - *Automatic* (default) — Integer, Gauge, Counter, TimeTicks and Net-SNMP's Opaque
+    floats (load averages, some sensors) are numbers; text that is only a number (`"42"`)
+    is that number; other text, IP addresses and OIDs are shown as text and the check is
+    up (before 5.9, text without a text rule was a warning).
+  - *A number* — fails (warn) if the value isn't one.
+  - *The number inside text* — the first number in the text: `23.5 C` → 23.5,
+    `Load: -1,204 W` → -1204.
+  - *Text* — always text, even `42`.
+  - *Time ticks → seconds* — hundredths of a second (sysUpTime, hrSystemUptime) as
+    seconds; the message reads as a duration (`3 day(s) 4 h 05 min`).
+  - *A state, from a list* — for status OIDs (ifOperStatus, a UPS or RAID state):
+    **States** lists one `value = up|warn|down label` per line, e.g. `1 = up running`,
+    `2 = down stopped`; the value can be the number or the text. The status comes from
+    the list (an unlisted value gets *Status for a value not listed*, warn by default)
+    and the message shows the label.
+
+  **Text rule** (Advanced) judges the value's text: *contain*, *be exactly*, *not
+  contain*, or *match as a regex* (run on RE2, so no pattern can hang the engine);
+  failing gives *Status when the text rule fails* (down by default). The result details
+  show the OID, its SNMP type and the raw value. An OID the device doesn't have is down
+  with "the device answered but has no value at …" (single values usually end in `.0`).
 - **Walk: average/sum/min/max/count** — `GETBULK`-walks every value under the OID and
   combines them. *Only rows whose index matches* narrows the rows by the OID suffix.
 - **Full walk** — keeps every OID/value under the subtree in the result details; the
   value is the row count or a sum/average/min/max.
 - **Counter — per-second rate** — for Counter32/Counter64 values; on walks each row's
   rate is computed separately (a row that went backwards — wrap or reboot — is skipped
-  that run), then combined. The first run only collects a baseline.
+  that run), then combined. On a single value, a Counter32 that passed its maximum
+  (4,294,967,295) and started again from 0 is counted through; a counter that went down
+  otherwise (a device restart) starts a new baseline. The first run only collects a
+  baseline. Walks also read Opaque floats, and *The number inside text* / *Time ticks*
+  apply to each row.
 
 Templates read standard MIBs (no vendor MIB files): printer supplies, **printer errors**
 (hrPrinterDetectedErrorState + Printer-MIB alert table), **failed print jobs** (Job
@@ -1320,6 +1386,9 @@ counted nor listed.
 
 **Value:** packages to update.
 
+Each package in the result says how to install it if the usual update leaves it out
+(`fix`, `command`, a help link) — see [Patching updates & vulnerabilities](patching.md).
+
 **Check it yourself:**
 
 ```bash
@@ -1367,6 +1436,11 @@ status, and a warning from *Warn this many days before end of life*. **Accepted 
 in the result. Either lookup can be turned off under Advanced.
 
 **Value:** vulnerable packages.
+
+Each vulnerable package in the result has `fixedIn` (the fixed version, empty when none
+is released yet), `fix` (why the usual update didn't fix it and what to do), `command`,
+the `advisory` link and a help link; each unsupported product has its upgrade path —
+see [Patching updates & vulnerabilities](patching.md).
 
 **Check it yourself:** paste a package into [osv.dev](https://osv.dev/list); on Ubuntu
 `pro security-status`; `npm audit` / `pip-audit` / `composer audit` in an application

@@ -711,6 +711,9 @@ export const api = {
   updateEndpoint: (id: string, input: { name?: string; hostname?: string | null; os?: string | null; macAddress?: string | null; siteId?: string; tags?: string[] }) =>
     request<Endpoint>(`/api/endpoints/${id}`, patch(input)),
   deleteEndpoint: (endpointId: string) => request<void>(`/api/endpoints/${endpointId}`, del),
+  // A new endpoint set up like this one (its checks too unless copyChecks is false).
+  duplicateEndpoint: (endpointId: string, input: { name: string; hostname?: string; siteId?: string; copyChecks?: boolean }) =>
+    request<{ endpoint: Endpoint; checksCopied: number }>(`/api/endpoints/${endpointId}/duplicate`, json(input)),
   issueAgentKey: (endpointId: string) => request<{ agentApiKey: string; installCommands: { unix: string; windows: string; android?: string } }>(`/api/endpoints/${endpointId}/agent-key`, { method: "POST" }),
   setWatchdog: (endpointId: string, input: { enabled: boolean; afterMinutes: number; emailTo: string[] | string; channelIds: string[] }) => request<Endpoint>(`/api/endpoints/${endpointId}/watchdog`, { ...json(input), method: "PUT" }),
   testWatchdogAgent: (endpointId: string) => request<{ requested: boolean }>(`/api/endpoints/${endpointId}/watchdog/test`, { method: "POST" }),

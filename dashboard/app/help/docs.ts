@@ -13,6 +13,7 @@ export const DOCS = [
   { slug: "", file: "user-guide.md", title: "User guide" },
   { slug: "checks", file: "check-reference.md", title: "Check reference" },
   { slug: "check-settings", file: "check-settings.md", title: "Check settings" },
+  { slug: "patching", file: "patching.md", title: "Patching updates & vulnerabilities" },
   { slug: "windows-agent", file: "windows-agent-security.md", title: "Windows agent & security software" },
   { slug: "security", file: "security-guide.md", title: "Security guide" },
   { slug: "vpn", file: "vpn-access.md", title: "VPN-only access" },

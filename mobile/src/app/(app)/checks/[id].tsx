@@ -17,6 +17,7 @@ import { Button, ButtonRow, Card, Chip, Chips, Empty, ErrorBox, KeyValue, Loadin
 import { Sparkline } from "../../../components/Sparkline";
 import { usePrompt } from "../../../components/Prompt";
 import { AlertRuleForm, emptyRule, rulePayload, type RuleValue } from "../../../components/AlertRuleForm";
+import { ResultDetails, ResultRow, latestDetails } from "../../../components/ResultDetails";
 
 const RANGES = [
   { hours: 24, label: "24 h" },
@@ -139,10 +140,15 @@ export default function CheckDetail() {
         ) : null}
       </Card>
 
+      {latestDetails(data.results) != null ? (
+        <Card title="Latest details">
+          <ResultDetails value={latestDetails(data.results)} />
+        </Card>
+      ) : null}
+
       <Card title="Recent results">
-        {data.results.length === 0 ? <Empty>No results yet.</Empty> : data.results.map((r) => (
-          <Row key={r.id} left={<StatusBadge status={r.status} small />} title={r.message ?? r.status} subtitle={[dateTime(r.checkedAt), r.latencyMs != null ? `${r.latencyMs} ms` : null, r.value != null ? `value ${r.value}` : null, r.inMaintenance ? "maintenance" : null, r.excluded ? "excluded from stats" : null].filter(Boolean).join(" · ")} />
-        ))}
+        {data.results.length === 0 ? <Empty>No results yet.</Empty> : data.results.map((r) => <ResultRow key={r.id} result={r} />)}
+        {data.results.length ? <T size="s" muted>Tap a result to see all of its message.</T> : null}
       </Card>
 
       <Card title="Where">

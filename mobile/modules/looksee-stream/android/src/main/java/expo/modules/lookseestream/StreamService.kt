@@ -61,7 +61,12 @@ class StreamService : Service() {
     const val CHANNEL_WARN = "looksee_warn"
     const val CHANNEL_OK = "looksee_ok"
     const val CHANNEL_CONNECTION = "looksee_connection"
-    const val CHANNEL_SERVICE = "looksee_service"
+    // The always-on "Watching" notification. A new channel ID (not the
+    // original "looksee_service"): Android doesn't let an app change a
+    // channel's app-icon badge setting after creating it, so the old channel
+    // (which showed a badge) is deleted and this one is made without a badge.
+    const val CHANNEL_SERVICE = "looksee_service_quiet"
+    private const val OLD_CHANNEL_SERVICE = "looksee_service"
 
     private const val SERVICE_NOTIFICATION_ID = 1
     private const val UNREACHABLE_NOTIFICATION_ID = 2
@@ -88,7 +93,20 @@ class StreamService : Service() {
       nm.createNotificationChannel(NotificationChannel(CHANNEL_WARN, "Warnings", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "A check is degraded (warn)." })
       nm.createNotificationChannel(NotificationChannel(CHANNEL_OK, "Recoveries and other notices", NotificationManager.IMPORTANCE_LOW).apply { description = "A check recovered, tests, security notices." })
       nm.createNotificationChannel(NotificationChannel(CHANNEL_CONNECTION, "Connection problems", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "This phone can't reach the Looksee server, so alerts can't arrive." })
-      nm.createNotificationChannel(NotificationChannel(CHANNEL_SERVICE, "Watching (always on)", NotificationManager.IMPORTANCE_MIN).apply { description = "The permanent notification Android requires while Looksee listens for alerts. You can hide it here." })
+      // IMPORTANCE_MIN: no sound, no status-bar icon, folded away at the
+      // bottom of the notification shade. setShowBadge(false): no dot or
+      // count on the app icon — only real alerts badge the icon.
+      nm.createNotificationChannel(NotificationChannel(CHANNEL_SERVICE, "Watching (always on)", NotificationManager.IMPORTANCE_MIN).apply {
+        description = "The permanent notification Android requires while Looksee listens for alerts. Silent, with no icon badge. You can turn this category off; alerts still arrive."
+        setShowBadge(false)
+      })
+      // Android refuses (SecurityException) to delete a channel a running
+      // foreground service still uses; it's deleted on a later call instead.
+      try {
+        nm.deleteNotificationChannel(OLD_CHANNEL_SERVICE)
+      } catch (e: SecurityException) {
+        // Still in use by the previous service instance; try again next time.
+      }
     }
   }
 
@@ -256,14 +274,22 @@ class StreamService : Service() {
     if (msg.optString("type") != "notify") return
     val items = msg.optJSONArray("items") ?: return
     val ids = JSONArray()
+    var shown = 0
     for (i in 0 until items.length()) {
       val item = items.optJSONObject(i) ?: continue
       val id = item.optString("id")
       if (id.isEmpty()) continue
-      if (StreamConfig.markSeen(this, id)) showAlert(item)
+      if (StreamConfig.markSeen(this, id)) {
+        showAlert(item)
+        shown++
+      }
       ids.put(id)
     }
     if (ids.length() > 0) webSocket.send(JSONObject().put("type", "ack").put("ids", ids).toString())
+    // Tells the open app (if it is open) that new alerts arrived, so the
+    // Alerts, Overview and Checks screens reload now instead of at their
+    // next timed refresh.
+    if (shown > 0) StreamAlerts.emit(shown)
   }
 
   /** The server removed this phone: stop for good and tell the user. */
@@ -330,6 +356,11 @@ class StreamService : Service() {
       .setContentText(text)
       .setOngoing(true)
       .setSilent(true)
+      // No badge, lowest priority and no time stamp (for Android versions
+      // and launchers that read these from the notification itself).
+      .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE)
+      .setPriority(NotificationCompat.PRIORITY_MIN)
+      .setShowWhen(false)
       .setContentIntent(openApp("looksee://", SERVICE_NOTIFICATION_ID))
       .build()
 
@@ -356,6 +387,18 @@ class StreamService : Service() {
 
   /** The host part of the server address, for short messages. */
   private fun host(url: String) = Uri.parse(url).host ?: url
+}
+
+/**
+ * Tells the app's JavaScript that new alerts were just shown, while it's
+ * open (LookseeStreamModule registers a listener); does nothing when it isn't.
+ */
+object StreamAlerts {
+  private val listeners = mutableSetOf<(Int) -> Unit>()
+  fun add(listener: (Int) -> Unit) = synchronized(listeners) { listeners.add(listener) }
+  fun remove(listener: (Int) -> Unit) = synchronized(listeners) { listeners.remove(listener) }
+  /** Calls every listener with how many new alerts were just shown. */
+  fun emit(count: Int) = synchronized(listeners) { listeners.toList() }.forEach { it(count) }
 }
 
 /**

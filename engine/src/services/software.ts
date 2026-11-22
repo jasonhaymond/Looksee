@@ -11,6 +11,11 @@
 //                   end-of-life dates from endoflife.date (the OS and
 //                   runtimes like Node.js, Python, PHP, PostgreSQL).
 //
+// Every upgradable package, vulnerable package and unsupported product in a
+// result carries "how to fix it" advice — why the usual update may not have
+// fixed it, the command to run, the advisory and the help section
+// (services/fixAdvice.ts, docs/patching.md).
+//
 // Where this sits: host_packages and host_software are evaluated when an
 // agent reports (routes/agent.ts → evaluateReportChecks); host_vulnerable
 // runs on the scheduler, by default every 6 hours (probes/index.ts).
@@ -35,6 +40,7 @@ import { excludeItems, nameExcluded } from "./probes/exclude.js";
 import type { ProbeContext, ProbeOutcome } from "./probes/types.js";
 import { own } from "../lib/own.js";
 import { cleanString, truncate } from "../lib/stripNul.js";
+import { adviceForEol, adviceForUpgradable, adviceForVulnerable, compactAffected, fixedVersions, safeLink, type OsvAffected } from "./fixAdvice.js";
 
 /** One installed package (short keys, as the agent sends them). */
 export type SwPackage = { n: string; v: string; s: string; p?: string; o?: string };
@@ -133,7 +139,13 @@ export function evaluatePackages(sw: SoftwareReport | null, config: Record<strin
   const shown = listed.slice(0, 10).map((u) => u.name).join(", ");
   const notes = [!includePhased && phased.length ? `${phased.length} phased held back` : "", excluded.length ? `${excluded.length} excluded` : ""].filter(Boolean).join(", ");
   const message = listed.length ? `${listed.length} upgradable${security ? ` (${security} security)` : ""}: ${shown}${listed.length > 10 ? ", …" : ""}${notes ? ` · ${notes}` : ""}` : `Up to date${notes ? ` (${notes})` : ""}`;
-  const details = { packages: listed, phased: includePhased ? [] : phased.map((u) => u.name), excluded: excluded.map((u) => u.name), checkedAt: sw.upgradableAt };
+  // Each package with how to install it if the usual update leaves it
+  // (services/fixAdvice.ts): why, the command, and the help section.
+  const withAdvice = listed.map((u) => {
+    const a = adviceForUpgradable(u);
+    return { ...u, fix: a.fix, command: a.command, help: a.help, link: a.link };
+  });
+  const details = { columns: { packages: ["name", "current", "candidate", "security", "phased", "source", "fix", "command", "link", "help"] }, packages: withAdvice, phased: includePhased ? [] : phased.map((u) => u.name), excluded: excluded.map((u) => u.name), checkedAt: sw.upgradableAt };
   const base: MeasuredResult = { status: "up", latencyMs: null, message, value: listed.length, details };
   if (hasThresholds(config)) return applyThresholds(base, config);
   const failOn = String(config.failOn ?? "security");
@@ -337,7 +349,12 @@ export function osvEcosystem(p: SwPackage, os: Record<string, string> | undefine
   }
 }
 
-type Vuln = { id: string; severity: string; summary: string };
+/**
+ * One known vulnerability: its ID, severity and summary, its aliases (CVE,
+ * USN…), which package versions fix it (OSV "affected" data, compacted) and
+ * the advisory's own page when OSV lists one.
+ */
+type Vuln = { id: string; severity: string; summary: string; aliases?: string[]; affected?: OsvAffected[]; link?: string | null };
 
 /** A severity word from an OSV record: critical, high, medium, low or unknown. */
 export function osvSeverity(record: Record<string, unknown>): string {
@@ -392,9 +409,15 @@ async function osvLookup(queries: { name: string; ecosystem: string; version: st
   const details = new Map<string, Vuln>();
   for (const id of [...ids].slice(0, 300)) {
     try {
-      const rec = await cached(`osv:${id}`, 7 * DAY, async () => {
+      // "osv2:" — cached entries since 5.9 also hold the fixed versions and
+      // the advisory link (older "osv:" entries are simply not read again).
+      const rec = await cached(`osv2:${id}`, 7 * DAY, async () => {
         const r = (await fetchJson(`${OSV_URL}/vulns/${encodeURIComponent(id)}`)) as Record<string, unknown>;
-        return { id, severity: osvSeverity(r), summary: String(r.summary ?? (r.details as string | undefined)?.slice(0, 200) ?? ""), aliases: r.aliases ?? [] };
+        // The advisory's own page: an ADVISORY reference first, else the first web page.
+        const refs = (r.references as { type?: string; url?: string }[] | undefined) ?? [];
+        const ref = refs.find((x) => x.type === "ADVISORY") ?? refs.find((x) => x.type === "WEB");
+        const aliases = (Array.isArray(r.aliases) ? r.aliases : []).filter((a): a is string => typeof a === "string").slice(0, 20);
+        return { id, severity: osvSeverity(r), summary: String(r.summary ?? (r.details as string | undefined)?.slice(0, 200) ?? ""), aliases, affected: compactAffected(r), link: safeLink(ref?.url) };
       });
       details.set(id, rec as Vuln);
     } catch {
@@ -454,6 +477,19 @@ function eolTargets(sw: SoftwareReport): { product: string; label: string; cycle
   return out.filter((t) => (seen.has(`${t.product}:${t.cycle}`) ? false : (seen.add(`${t.product}:${t.cycle}`), true)));
 }
 
+/** The field order of the vulnerability check's result tables. */
+const VULNERABLE_COLUMNS = {
+  vulnerable: ["name", "version", "source", "fixedIn", "vulns", "path", "fix", "command", "advisory", "help"],
+  unsupported: ["label", "status", "eol", "cycle", "product", "fix", "command", "link", "help"],
+  excluded: ["name", "reason"],
+};
+
+/** An end-of-life product's upgrade advice, as fields for its result row. */
+function eolAdvice(product: string, soon: boolean) {
+  const a = adviceForEol(product, soon);
+  return { fix: a.fix, command: a.command, help: a.help, link: a.link };
+}
+
 /**
  * host_vulnerable — the scheduled check (see the file header).
  *
@@ -469,8 +505,8 @@ export async function probeVulnerable(config: Record<string, unknown>, ctx: Prob
   if (!sw?.collectedAt) return { status: "unknown", latencyMs: null, message: "No software report yet — needs agent 5.0 or newer (it lists software every 6 hours)" };
   const { names, advisories, reasons } = packageExclusions(config);
   const started = Date.now();
-  const vulnerable: { name: string; version: string; source: string; path?: string; vulns: Vuln[] }[] = [];
-  const unsupported: { product: string; label: string; cycle: string; eol: string; status: "eol" | "soon" }[] = [];
+  const vulnerable: { name: string; version: string; source: string; path?: string; vulns: Vuln[]; fixedIn?: string | null; fix?: string; command?: string | null; help?: string; advisory?: string | null }[] = [];
+  const unsupported: { product: string; label: string; cycle: string; eol: string; status: "eol" | "soon"; fix?: string; command?: string | null; help?: string; link?: string | null }[] = [];
   const excludedPkgs = new Set<string>();
   const problems: string[] = [];
 
@@ -497,7 +533,17 @@ export async function probeVulnerable(config: Record<string, unknown>, ctx: Prob
       for (const [i, vulns] of results) {
         const kept = vulns.filter((v) => !advisories.includes(v.id.toUpperCase()));
         const q = queries.at(i);
-        if (kept.length && q) vulnerable.push({ name: q.name, version: q.version, source: q.pkg.s, path: q.pkg.p, vulns: kept });
+        if (!kept.length || !q) continue;
+        // Fixed versions for this package across its vulnerabilities, and
+        // how to get them installed (services/fixAdvice.ts).
+        const fixed = [...new Set(kept.flatMap((v) => fixedVersions(v.affected ?? [], q.name, q.ecosystem)))];
+        const worstFirst = [...kept].sort((a, b) => (SEVERITY_RANK[b.severity] ?? 2) - (SEVERITY_RANK[a.severity] ?? 2));
+        const lead = worstFirst[0];
+        const advice = adviceForVulnerable({ name: q.name, version: q.version, source: q.pkg.s, path: q.pkg.p, fixed, advisoryId: lead.id, aliases: lead.aliases ?? [] }, sw);
+        // The table shows each vulnerability as "ID (severity)"; the bulky
+        // affected-versions data stays out of the stored result.
+        const shown = kept.map(({ id, severity, summary, link }) => ({ id, severity, summary, link: link ?? null }));
+        vulnerable.push({ name: q.name, version: q.version, source: q.pkg.s, path: q.pkg.p, vulns: shown, fixedIn: fixed.length ? fixed.slice(0, 3).join(", ") : null, fix: advice.fix, command: advice.command, help: advice.help, advisory: lead.link ?? advice.link });
       }
     } catch (err) {
       problems.push(`OSV.dev lookup failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -512,12 +558,12 @@ export async function probeVulnerable(config: Record<string, unknown>, ctx: Prob
         const cycles = await cached(`eol:${t.product}`, DAY, async () => (await fetchJson(`${EOL_URL}/${encodeURIComponent(t.product)}.json`)) as EolCycle[]);
         const c = cycles.find((x) => String(x.cycle) === t.cycle);
         if (!c || typeof c.eol === "boolean") {
-          if (c?.eol === true) unsupported.push({ ...t, eol: "ended", status: "eol" });
+          if (c?.eol === true) unsupported.push({ ...t, eol: "ended", status: "eol", ...eolAdvice(t.product, false) });
           continue;
         }
         const daysLeft = (new Date(c.eol).getTime() - Date.now()) / DAY;
-        if (daysLeft < 0) unsupported.push({ ...t, eol: c.eol, status: "eol" });
-        else if (daysLeft < warnDays) unsupported.push({ ...t, eol: c.eol, status: "soon" });
+        if (daysLeft < 0) unsupported.push({ ...t, eol: c.eol, status: "eol", ...eolAdvice(t.product, false) });
+        else if (daysLeft < warnDays) unsupported.push({ ...t, eol: c.eol, status: "soon", ...eolAdvice(t.product, true) });
       } catch (err) {
         problems.push(`endoflife.date (${t.product}): ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -548,7 +594,8 @@ export async function probeVulnerable(config: Record<string, unknown>, ctx: Prob
     latencyMs: Date.now() - started,
     message: parts.length ? parts.join(" · ").slice(0, 1500) : `No known vulnerabilities or unsupported software (${sw.packages.length} packages checked)`,
     value: vulnerable.length,
-    details: { vulnerable, unsupported, excluded, problems, checkedPackages: sw.packages.length },
+    // columns: each table's field order on the check page.
+    details: { columns: VULNERABLE_COLUMNS, vulnerable, unsupported, excluded, problems, checkedPackages: sw.packages.length },
   };
 }
 

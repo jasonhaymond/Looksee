@@ -3,8 +3,8 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v5.8.1 — 65 check types across the engine and agent (reachability, web,
-real-browser, DNS/DNSSEC, DNS zone history, TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
+**Status**: v5.9.0 — 65 check types across the engine and agent (reachability, web,
+real-browser, DNS/DNSSEC, DNS zone history (by transfer or discovery, with a saved baseline), TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
 app integrations, SNMP with an OID dictionary, calculations and reusable templates,
 interface tables, printers, traps/syslog, Redfish/IPMI, Proxmox, VMware, Hyper-V,
 Docker, 60+ endpoint metrics, installed software with upgradable/changed/vulnerable
@@ -27,9 +27,11 @@ connection to the server (no Google or other third-party push service). Built an
 verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md) for exactly what was
 tested how).
 
-**Current version: v5.8.1** — Android APK names say which processor they run on; see
-[`CHANGELOG.md`](CHANGELOG.md#581---2026-11-20) (5.8.0: the Android app; 5.7.0: editing settings
-and exclusions on many checks at once).
+**Current version: v5.9.0** — full check results, DNS zones read without a transfer with
+a saved baseline, duplicating endpoints, SNMP value types and state maps, "how to fix"
+guidance on every update and vulnerability, and Android alert/notification fixes; see
+[`CHANGELOG.md`](CHANGELOG.md#590---2026-11-21) (5.8.1: APK names say which processor they
+run on; 5.8.0: the Android app).
 5.0 renames what 4.x called endpoints to **sites** and hosts to **endpoints** (in the
 database too), adds the sidebar tree, groups, exclusions, recovery options, watchdog
 agents, software and vulnerability checks, SNMP templates and calculations, and role
@@ -200,6 +202,7 @@ Backups section for exactly what's been proven vs. still needs a first real run.
 - [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: the Location → Site → Endpoint layout and sidebar, checks (adding to many endpoints, browsing what the agent found, duplicating, editing settings and exclusions on many at once, check pages, resolving and recovery, statistics exclusions, SNMP calculations, software and security checks), endpoints and inventory, suggestions and templates, sites and locations, groups, exclusions, SNMP templates, multiple sites, discovery, heartbeats, channels and templates, alerting and alert history, maintenance, reports, traps/syslog, top talkers, status pages, dashboards, security, watchdog and watchdog agents, themes, the Android app
 - [`docs/check-reference.md`](docs/check-reference.md) — every check type: what it watches, how it works, its value, and how to check the same thing by hand
 - [`docs/check-settings.md`](docs/check-settings.md) — every setting of every check type, with defaults (generated from the check form)
+- [`docs/patching.md`](docs/patching.md) — fixing updates and vulnerabilities that Windows Update, macOS updates or `apt upgrade` leave behind, per OS (also in the app's Help)
 - [`docs/plans/check-expansion.md`](docs/plans/check-expansion.md) — recommendations for further checks and templates (not built)
 - [`docs/security-guide.md`](docs/security-guide.md) — two-factor, lockouts, IP allowlist, new-IP confirmation, attack detection, hardening checklist, recovery
 - [`docs/vpn-access.md`](docs/vpn-access.md) — reaching Looksee only through a VPN (admin only, or agents too), with split DNS, Caddy rules, verification and rollback — not applied to production yet

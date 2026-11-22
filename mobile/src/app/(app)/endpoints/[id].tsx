@@ -62,6 +62,18 @@ export default function EndpointScreen() {
           <Button small icon="add" title="Check" onPress={() => router.push({ pathname: "/checks/new", params: { endpointId: id, siteId: e.siteId } })} />
           <Button small title="Suggested checks" onPress={() => router.push({ pathname: "/suggestions", params: { endpointId: id } })} />
           <Button small icon="create-outline" title="Edit" onPress={() => router.push({ pathname: "/endpoints/edit", params: { id } })} />
+          <Button small icon="copy-outline" title="Duplicate…" onPress={async () => {
+            // A new endpoint set up like this one, with its checks and alert
+            // rules; its agent key and reported data stay with the original.
+            const name = await ask({ title: `Duplicate ${e.name}`, label: "New name", initial: `${e.name} (copy)`, message: "Copies the site, OS, tags, groups, and every check with its alert rules. The agent key and what the agent reported aren't copied." });
+            if (!name?.trim()) return;
+            const hostname = await ask({ title: "Its hostname / IP", label: "Hostname or IP (optional)", initial: "", message: e.hostname ? `Checks that pointed at ${e.hostname} will point at this instead. Leave blank to keep them as they are.` : "Leave blank if it has none." });
+            if (hostname === null) return;
+            void act(async () => {
+              const res = await api.duplicateEndpoint(id, { name: name.trim(), hostname: hostname.trim() || undefined });
+              router.replace(`/endpoints/${res.endpoint.id}`);
+            });
+          }} />
           <Button small title={e.hasAgentKey ? "Reinstall agent…" : "Install agent…"} onPress={() => confirm(e.hasAgentKey ? "Issue a new agent key?" : "Install the agent?", e.hasAgentKey ? "The current key stops working at once; the installed agent must be reinstalled with the new command." : "Creates this endpoint's agent key and shows the install commands.", () => void act(async () => {
             const r = await api.issueAgentKey(id);
             setInstall({ key: r.agentApiKey, commands: r.installCommands as Record<string, string> });
