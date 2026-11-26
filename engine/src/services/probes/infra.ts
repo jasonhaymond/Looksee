@@ -57,7 +57,7 @@ export async function probeBmc(config: Config): Promise<ProbeOutcome> {
  *          `value` is the hottest temperature in °C
  */
 async function probeRedfish(config: Config): Promise<ProbeOutcome> {
-  // Base URL without a trailing slash, e.g. "https://10.1.30.5".
+  // Base URL without a trailing slash, e.g. "https://10.20.30.5".
   const base = str(config, "url").replace(/\/$/, "");
   if (!base) return warn("Missing url");
   const headers: Record<string, string> = { Accept: "application/json" };

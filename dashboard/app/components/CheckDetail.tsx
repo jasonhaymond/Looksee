@@ -1,6 +1,9 @@
 // The inline check detail on the Checks list: status, history, suggested
 // things to check (remediation), recovery URL, what it ignores, alert rules,
-// and the result details table.
+// and the result details table. Also exports the pieces the check page
+// (app/checks/[id]/page.tsx) reuses: Details (a result's details as tables),
+// ResultFull (everything about one past result, shown when its row is
+// opened) and DetailsToggle (that row's Show/Hide button).
 
 "use client";
 
@@ -277,6 +280,62 @@ export function Details({ value }: { value: unknown }) {
   );
 }
 
+/**
+ * Everything stored about one result, for a result row that has been opened:
+ * the exact time, status, maintenance and exclusion flags, the unrounded
+ * value, the response time, the whole message, and the full details (the
+ * same tables as "Latest details"). Results older than the engine's details
+ * retention (services/retention.ts, 7 days) keep everything except the
+ * details, which are cleared to save space — that is said here rather than
+ * showing an empty box.
+ *
+ * @param result one row from GET /api/checks/:id/results
+ */
+export function ResultFull({ result: r }: { result: CheckResult }) {
+  const fields: [string, React.ReactNode][] = [
+    ["Checked at", `${new Date(r.checkedAt).toLocaleString()} (${relativeTime(r.checkedAt)})`],
+    ["Status", r.status],
+    ["Value", r.value != null ? String(r.value) : "—"],
+    ["Response time", r.latencyMs != null ? `${r.latencyMs} ms` : "—"],
+    ["In maintenance", r.inMaintenance ? "yes" : "no"],
+    ["Counted in statistics", r.excluded ? `no — excluded${r.excludedReason ? `: ${r.excludedReason}` : ""}` : "yes"],
+  ];
+  return (
+    <div className="space-y-2 rounded-md border border-[var(--border)] bg-[var(--panel)] p-2 text-xs">
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5">
+        {fields.map(([k, v]) => (
+          <div key={k} className="contents">
+            <dt className="text-[var(--muted)]">{k}</dt>
+            <dd className="min-w-0 break-words">{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <div>
+        <div className="mb-0.5 text-[var(--muted)]">Message</div>
+        <p className="whitespace-pre-wrap break-words">{r.message || "—"}</p>
+      </div>
+      <div>
+        <div className="mb-0.5 text-[var(--muted)]">Details</div>
+        {r.details != null ? <Details value={r.details} /> : <p className="text-[var(--muted)]">None stored for this result. Some check types record no details, and details are cleared from results older than 7 days to save space (the rest of the result is kept).</p>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A small "Show details" / "Hide details" toggle for one result row.
+ *
+ * @param open whether that row is expanded
+ * @param onToggle flips it
+ */
+export function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <button type="button" onClick={onToggle} aria-expanded={open} className="whitespace-nowrap text-[10px] text-[var(--muted)] underline hover:text-[var(--text)]">
+      {open ? "Hide details" : "Show details"}
+    </button>
+  );
+}
+
 export function displayStatus(c: Check): string {
   if (!c.enabled) return "disabled";
   if (c.inMaintenance) return "maintenance";
@@ -299,6 +358,16 @@ export function CheckDetail({
   const [tab, setTab] = useState<"overview" | "edit" | "alerts">("overview");
   const [results, setResults] = useState<CheckResult[] | null>(null);
   const [running, setRunning] = useState(false);
+  // Result rows the user has opened (by result id), kept across the
+  // re-fetch after each new check run so an open row stays open.
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set());
+  const toggleOpen = (rid: string) =>
+    setOpenIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rid)) next.delete(rid);
+      else next.add(rid);
+      return next;
+    });
 
   useEffect(() => {
     if (tab !== "overview") return;
@@ -409,13 +478,31 @@ export function CheckDetail({
           {results && results.length > 0 && (
             <div>
               <div className="mb-1 text-xs text-[var(--muted)]">Recent results</div>
-              <ul className="max-h-56 space-y-1 overflow-y-auto text-xs">
+              {/* Each row opens to everything stored about that result
+                  (ResultFull above). The list grows taller while a row is
+                  open, since details can be whole tables. */}
+              <ul className={`${openIds.size ? "max-h-[40rem]" : "max-h-56"} space-y-1 overflow-y-auto text-xs`}>
                 {results.map((r) => (
-                  <li key={r.id} className="flex items-start gap-2">
-                    <StatusBadge status={r.inMaintenance ? "maintenance" : r.status} compact />
-                    <span className="w-16 shrink-0 text-[var(--muted)]">{relativeTime(r.checkedAt)}</span>
-                    {r.value != null && <span className="shrink-0">{Math.round(r.value * 100) / 100}</span>}
-                    <span className="min-w-0 whitespace-pre-wrap break-words text-[var(--muted)]">{r.message}</span>
+                  <li key={r.id}>
+                    {/* The whole line opens the result, not only its link;
+                        a click on the link itself is left to the link. */}
+                    <div
+                      className="flex cursor-pointer items-start gap-2 rounded hover:bg-[var(--panel-2)]"
+                      onClick={(e) => {
+                        if (!(e.target as HTMLElement).closest("button")) toggleOpen(r.id);
+                      }}
+                    >
+                      <StatusBadge status={r.inMaintenance ? "maintenance" : r.status} compact />
+                      <span className="w-16 shrink-0 text-[var(--muted)]">{relativeTime(r.checkedAt)}</span>
+                      {r.value != null && <span className="shrink-0">{Math.round(r.value * 100) / 100}</span>}
+                      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[var(--muted)]">{r.message}</span>
+                      <DetailsToggle open={openIds.has(r.id)} onToggle={() => toggleOpen(r.id)} />
+                    </div>
+                    {openIds.has(r.id) && (
+                      <div className="mt-1">
+                        <ResultFull result={r} />
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

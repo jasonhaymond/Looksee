@@ -15,7 +15,7 @@ import { sendEmail } from "./notifications/email.js";
 import { sendWebhook } from "./notifications/webhook.js";
 import { sendNotifications } from "./notifications/push.js";
 import { sendSlack, sendTeams, sendTelegram } from "./notifications/chat.js";
-import { dashboardUrl, formatDuration, renderFor, type AlertContext, type AlertEvent, type Templates } from "./notifications/templates.js";
+import { alertTime, dashboardUrl, formatDuration, renderFor, type AlertContext, type AlertEvent, type Templates } from "./notifications/templates.js";
 import { remediationFor } from "./remediation.js";
 import { recordSighting } from "./addresses.js";
 import { isInMaintenance } from "./maintenance.js";
@@ -168,6 +168,14 @@ async function resolveFollowers(check: typeof checks.$inferSelect) {
   }
 }
 
+/**
+ * The name of a check this one depends on that is currently down, if any —
+ * a dependency's outage holds this check's alerts so one dead router doesn't
+ * page once for every device behind it.
+ *
+ * @param checkId the check whose parents to look at
+ * @returns the first down parent's name, or null when none is down
+ */
 async function parentDown(checkId: string): Promise<string | null> {
   const deps = await db.query.checkDependencies.findMany({ where: eq(checkDependencies.checkId, checkId) });
   if (deps.length === 0) return null;
@@ -175,8 +183,20 @@ async function parentDown(checkId: string): Promise<string | null> {
   return parents.find((p) => p.lastStatus === "down")?.name ?? null;
 }
 
+/** Whether a status counts as failing for a rule: down always, warn only for rules set to trigger on warn. */
 const failing = (status: string, triggerOn: string) => status === "down" || (triggerOn === "warn" && status === "warn");
 
+/**
+ * Runs every enabled alert rule of a check against its newest result: opens
+ * an incident (and notifies) once the rule's threshold of failures in a row
+ * is reached, and closes it (with a recovery notice) when the check is
+ * healthy again. Reminders and escalations of open incidents are sent by
+ * processOpenAlerts, on its own timer. Held while a parent check is down
+ * (parentDown). Writes `alert_events`.
+ *
+ * @param check the check as stored
+ * @param latest the result just recorded
+ */
 async function evaluateAlertRules(check: typeof checks.$inferSelect, latest: ResultInput) {
   const rules = await db.query.alertRules.findMany({ where: and(eq(alertRules.checkId, check.id), eq(alertRules.enabled, true)) });
   if (rules.length === 0) return;
@@ -252,7 +272,8 @@ export async function alertContext(check: typeof checks.$inferSelect, event: Ale
     host: endpoint?.name ?? "",
     site: site?.name ?? "",
     location: location?.name ?? "",
-    time: new Date().toLocaleString(),
+    // When this alert happened, with its time zone (templates.ts alertTime).
+    time: alertTime(),
     duration: openedAt ? formatDuration(Date.now() - openedAt.getTime()) : "",
     remediation: hints.map((h) => `• ${h}`).join("\n"),
     url: `${dashboardUrl()}/checks/${check.id}`,

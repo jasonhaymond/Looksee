@@ -1,19 +1,36 @@
+// The outbound watchdog (System → Watchdog in the dashboard): Looksee pings an
+// external uptime service (Healthchecks.io, Uptime Kuma push, etc.) on a timer
+// while it's healthy, so that service raises the alarm if Looksee itself stops.
+// When the self-check fails it calls the optional failure URL instead, with
+// the reason and the time. Reads/writes the single-row `watchdog_settings`
+// table. Security: the ping URLs contain the external service's token, so
+// they are never logged or shown in full (describeUrl).
+
 import { eq } from "drizzle-orm";
 import { db, pool } from "../db/index.js";
 import { watchdogSettings } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
 import { schedulerLastTick } from "./scheduler.js";
+import { alertTime } from "./notifications/templates.js";
 
 export type Watchdog = typeof watchdogSettings.$inferSelect;
 
+/**
+ * The watchdog settings row, created with defaults the first time it's read.
+ * The second read covers a race where another request inserted it first.
+ */
 export async function getWatchdog(): Promise<Watchdog> {
   let [row] = await db.select().from(watchdogSettings).where(eq(watchdogSettings.id, 1));
   if (!row) [row] = await db.insert(watchdogSettings).values({ id: 1 }).onConflictDoNothing().returning();
   return row ?? (await db.select().from(watchdogSettings).where(eq(watchdogSettings.id, 1)))[0];
 }
 
-// What "healthy" means for the ping: the database answers and the check
-// scheduler has completed a pass in the last two minutes.
+/**
+ * What "healthy" means for the ping: the database answers and the check
+ * scheduler has completed a pass in the last two minutes.
+ *
+ * @returns ok, and a short reason when it isn't
+ */
 export async function selfCheck(): Promise<{ ok: boolean; reason: string }> {
   try {
     await pool.query("SELECT 1");
@@ -37,6 +54,15 @@ export function describeUrl(url: string | null): string | null {
   }
 }
 
+/**
+ * Runs the self-check and pings the matching URL: the normal URL (GET) when
+ * healthy, the failure URL (POST, with the reason and time in the body) when
+ * not. Records the outcome on the settings row and logs failures — by host
+ * only, never the full URL.
+ *
+ * @param w the settings, if the caller already has them
+ * @returns whether a ping was delivered, whether Looksee was healthy, and a summary
+ */
 export async function pingNow(w?: Watchdog): Promise<{ sent: boolean; healthy: boolean; detail: string }> {
   const s = w ?? (await getWatchdog());
   if (!s.url) return { sent: false, healthy: false, detail: "No watchdog URL set" };
@@ -46,8 +72,9 @@ export async function pingNow(w?: Watchdog): Promise<{ sent: boolean; healthy: b
   if (target) {
     try {
       // POST body carries the reason for a failure ping (Healthchecks.io
-      // shows it); services that only look at the request ignore it.
-      const res = await fetch(target, { method: health.ok ? "GET" : "POST", body: health.ok ? undefined : `Looksee self-check failed: ${health.reason}`, signal: AbortSignal.timeout(10_000) });
+      // shows it), with when it happened; services that only look at the
+      // request ignore it.
+      const res = await fetch(target, { method: health.ok ? "GET" : "POST", body: health.ok ? undefined : `Looksee self-check failed: ${health.reason}\nTime: ${alertTime()}`, signal: AbortSignal.timeout(10_000) });
       if (!res.ok) error = `HTTP ${res.status}`;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -60,7 +87,12 @@ export async function pingNow(w?: Watchdog): Promise<{ sent: boolean; healthy: b
   return { sent: Boolean(target) && !error, healthy: health.ok, detail: error ?? result };
 }
 
-// Checked every 15 s; pings once each interval while enabled.
+/**
+ * Starts the watchdog timer: checked every 15 s, pings once per configured
+ * interval while enabled. unref() lets the process exit without waiting on it.
+ *
+ * @returns a function that stops the timer
+ */
 export function startWatchdog() {
   let last = 0;
   const timer = setInterval(async () => {

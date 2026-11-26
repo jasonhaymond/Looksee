@@ -86,11 +86,11 @@ church/AV network) later is a config entry, not a schema migration. 4.0 added
 
 | Type | Mechanism | Example |
 |---|---|---|
-| Ping / ICMP reachability | Agentless | Is 10.1.30.5 responding? |
-| TCP port check | Agentless | Is 10.1.30.10:5432 open? |
+| Ping / ICMP reachability | Agentless | Is 10.20.30.5 responding? |
+| TCP port check | Agentless | Is 10.20.30.10:5432 open? |
 | HTTP(S) status + latency | Agentless | Does `https://app.example.com` return 200 in <500ms? |
 | DNS resolution | Agentless | Does `pi.hole` resolve on the LAN resolver? |
-| SSL cert expiry | Agentless | Days remaining on `haymondtechnologies.com` cert |
+| SSL cert expiry | Agentless | Days remaining on `example.com` cert |
 | Host metrics | Agent | CPU / RAM / disk usage, network I/O |
 | Process / service status | Agent | Is `postgres`/`nginx`/a named Windows service running? |
 | Website/API uptime history | Agentless | Uptime % and latency graph over time for a URL |

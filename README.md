@@ -3,7 +3,7 @@
 A self-hosted monitoring engine for LAN/WAN devices, services, and processes — simple to
 configure day-to-day, unlike Zabbix. See [`spec.md`](spec.md) for the full project spec.
 
-**Status**: v5.9.0 — 65 check types across the engine and agent (reachability, web,
+**Status**: v5.10.0 — 65 check types across the engine and agent (reachability, web,
 real-browser, DNS/DNSSEC, DNS zone history (by transfer or discovery, with a saved baseline), TLS, mail/SSH/LDAP/RDP, NTP/DHCP, databases, Prometheus,
 app integrations, SNMP with an OID dictionary, calculations and reusable templates,
 interface tables, printers, traps/syslog, Redfish/IPMI, Proxmox, VMware, Hyper-V,
@@ -27,11 +27,11 @@ connection to the server (no Google or other third-party push service). Built an
 verified end to end locally (see [`CHANGELOG.md`](CHANGELOG.md) for exactly what was
 tested how).
 
-**Current version: v5.9.0** — full check results, DNS zones read without a transfer with
-a saved baseline, duplicating endpoints, SNMP value types and state maps, "how to fix"
-guidance on every update and vulnerability, and Android alert/notification fixes; see
-[`CHANGELOG.md`](CHANGELOG.md#590---2026-11-21) (5.8.1: APK names say which processor they
-run on; 5.8.0: the Android app).
+**Current version: v5.10.0** — every past result opens to its full details, every alert
+carries a timestamp with its time zone (`ALERT_TIME_ZONE`), alert lists show when each
+alert ended, and `update.sh` builds the Android app; see
+[`CHANGELOG.md`](CHANGELOG.md#5100---2026-11-25) (5.9.0: full check results, DNS zones read
+without a transfer, duplicating endpoints, "how to fix" guidance; 5.8.0: the Android app).
 5.0 renames what 4.x called endpoints to **sites** and hosts to **endpoints** (in the
 database too), adds the sidebar tree, groups, exclusions, recovery options, watchdog
 agents, software and vulnerability checks, SNMP templates and calculations, and role
@@ -176,8 +176,11 @@ these is a security decision the developer approves.
    ```
 
 4. Deploy with `scripts/update.sh` on the server ([deployment guide §8](docs/deployment-guide.md#8-updating)),
-   which checks the approval line and, with `LOOKSEE_PUBLIC_URL` set, runs the
-   post-deploy checks (`scripts/security-check.sh --live <url>`).
+   which checks the approval line, with `LOOKSEE_PUBLIC_URL` set runs the
+   post-deploy checks (`scripts/security-check.sh --live <url>`), and, when the server
+   has the build server settings in `mobile/.env`, builds the Android app's release APK
+   of the same tag ([deployment guide §12](docs/deployment-guide.md#12-the-android-app)).
+   Without that setup, build it by hand: `cd mobile && npm run build:android -- --ref vX.Y.Z`.
 
 ## Deploying
 
@@ -197,7 +200,7 @@ Backups section for exactly what's been proven vs. still needs a first real run.
 - [`CLAUDE.md`](CLAUDE.md) — locked project-specific decisions
 - [`mobile/README.md`](mobile/README.md) — the Android app: how it's built, how notifications reach the phone, local development
 - [`docs/plans/v5.8-android-app.md`](docs/plans/v5.8-android-app.md) — the Android app's design decisions
-- [`docs/deployment-guide.md`](docs/deployment-guide.md) — first deployment and updating
+- [`docs/deployment-guide.md`](docs/deployment-guide.md) — first deployment, updating (with upgrade notes per version) and rolling back, building and installing the Android app
 - [`docs/migration-guide.md`](docs/migration-guide.md) — moving an existing deployment to a new server
 - [`docs/user-guide.md`](docs/user-guide.md) — day-to-day usage: the Location → Site → Endpoint layout and sidebar, checks (adding to many endpoints, browsing what the agent found, duplicating, editing settings and exclusions on many at once, check pages, resolving and recovery, statistics exclusions, SNMP calculations, software and security checks), endpoints and inventory, suggestions and templates, sites and locations, groups, exclusions, SNMP templates, multiple sites, discovery, heartbeats, channels and templates, alerting and alert history, maintenance, reports, traps/syslog, top talkers, status pages, dashboards, security, watchdog and watchdog agents, themes, the Android app
 - [`docs/check-reference.md`](docs/check-reference.md) — every check type: what it watches, how it works, its value, and how to check the same thing by hand

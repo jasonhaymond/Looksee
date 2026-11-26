@@ -94,8 +94,11 @@ typecheck and `npm audit` for this folder, and Semgrep over its TypeScript and K
 ## Building
 
 Release APKs are built on the self-hosted build server from an approved, pushed release
-tag; see [deployment guide §12](../docs/deployment-guide.md#12-the-android-app) for the
-one-time setup, the build command and installing on a phone.
+tag. Once the Looksee server has the build server settings in `mobile/.env`,
+`scripts/update.sh` builds each new version's APK right after updating the server;
+otherwise run `npm run build:android -- --ref vX.Y.Z` here. See
+[deployment guide §12](../docs/deployment-guide.md#12-the-android-app) for the one-time
+setup, both ways of building and installing on a phone.
 
 ## Dependency pins
 

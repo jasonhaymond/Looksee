@@ -348,7 +348,15 @@ a link) to open its own page at `/checks/<id>` — bookmarkable and shareable:
   value chart shades the min–max range within each slice.
 - **History & incidents** — every alert incident in the range with how long it lasted,
   the latest structured details (interface tables, walk results, matched lines), and
-  every result (tick **Only problems** to hide the ups).
+  every result (tick **Only problems** to hide the ups). Click any result (or its
+  **Show details**) to open everything stored about it: the exact time, status, the
+  unrounded value, response time, whether it was in maintenance or left out of
+  statistics, the whole message, and that result's own full details — the same tables
+  as *Latest details*, for that moment. **Show all details** opens every listed result
+  at once. The quick panel's *Recent results* open the same way, and so do the results
+  on a check's screen in the Android app (tap one). Results keep their details for 7
+  days; after that the rest of the result is kept but the details are cleared to save
+  space, and an opened older result says so.
 - **Settings** and **Alert rules** tabs — the same editors as the quick panel. Every
   part of an existing alert rule can be changed with its **Edit** button.
 - **Exclusions applied** — the exclusion lists and own exclusions this check currently
@@ -451,25 +459,50 @@ The **DNS zone history** check keeps an inventory of every record in a zone and 
 history of what changed, so an unexpected edit — a hijacked MX record, a stray A record,
 a deleted SPF record — raises an alert and stays on record.
 
-1. **Allow zone transfers to Looksee** on the zone's DNS server (only the server Looksee
-   asks from — the Looksee server's address, or the site collector's for a remote site):
-   - BIND: in the zone's block, `allow-transfer { 10.0.0.10; };` (or `{ key
-     looksee-transfer; };` with a TSIG key), then `sudo rndc reload`.
-   - Windows DNS: **DNS Manager →** the zone **→ Properties → Zone Transfers →** tick
-     *Allow zone transfers*, choose *Only to the following servers*, add the address.
-   - **Check** from that machine: `dig @<dns-server> example.com AXFR` lists the zone
-     instead of "Transfer failed".
-   Can't allow transfers (a public DNS host)? Choose *Reading a list of names* in step 2
-   instead and list the names to watch.
-2. **Add the check:** **+ Add check → DNS zone history**, enter the zone and the DNS
-   server, and **Save**. It runs hourly by default.
-3. **Check:** the first result reads *Baseline recorded: N record(s), serial …*. From
-   then on, an edit shows as e.g. *changed www A 192.0.2.1 → 192.0.2.66* with the
-   chosen status (warn), held for an hour. The check's page lists the changes, the
-   history (last 500 changes) and the current records.
+1. **Pick how Looksee reads the zone** (*Read the zone by* in the form):
+   - **Discovering every record (no transfer)** — the default. Needs nothing set up on
+     the DNS server: Looksee asks ordinary questions for every record type. A zone signed
+     with DNSSEC NSEC records is listed completely; otherwise Looksee looks up about 200
+     common names (www, mail, `_dmarc`, DKIM selectors, SRV names…), every name other
+     records point at, and your **Extra names to look for**. A name nobody guessed or listed can't
+     be seen this way, so list your own host names there.
+   - **Zone transfer (AXFR)** — sees every record of any zone, but the DNS server must
+     allow transfers to the address Looksee asks from (the Looksee server's, or the site
+     collector's for a remote site):
+     - BIND: in the zone's block, `allow-transfer { 10.0.0.10; };` (or `{ key
+       looksee-transfer; };` with a TSIG key), then `sudo rndc reload`.
+     - Windows DNS: **DNS Manager →** the zone **→ Properties → Zone Transfers →** tick
+       *Allow zone transfers*, choose *Only to the following servers*, add the address.
+     - **Check** from that machine: `dig @<dns-server> example.com AXFR` lists the zone
+       instead of "Transfer failed".
+   - **Reading a list of names** — only the names you list, with common record types.
+2. **Add the check:** **+ Add check → DNS zone history**, enter the zone (leave *DNS
+   server* blank to ask the zone's own name servers), and **Save**. It runs hourly by
+   default.
+3. **Check:** the first result reads *Baseline recorded: N record(s) …* (with discovery
+   it also says how the names were found, e.g. *every name, from the NSEC chain*). From
+   then on, a difference shows as e.g. *changed www A 192.0.2.1 → 192.0.2.66*, *added
+   mail2 A …* or *removed ftp CNAME …*, with the chosen status (warn).
 
-Records that change on their own (certificate-renewal `_acme-challenge` records,
-DHCP-registered hosts) go under **Ignore names** (Advanced).
+**Baseline.** New checks compare every run with a **saved baseline**, and each added,
+removed or changed record is tracked on its own, with when it was first seen and for how
+many runs. The check stays at the chosen status while any difference is outstanding. A
+difference becomes part of the baseline:
+
+- after **Accept a change after this many runs** runs in a row (Advanced; 0 = never by
+  itself), or
+- when you **mark the check recovered** — the next run saves the zone as it is then as
+  the new baseline (click **Run now** afterwards to do it straight away).
+
+A record that goes back to its baseline value stops counting by itself. Checks made
+before 5.9 keep comparing with *the previous run* (set in *Compare with*): a change is
+held for *Hold* minutes and then becomes the norm.
+
+The check's page lists the outstanding changes, the history (last 500 entries) and the
+current records. Records that change on their own (certificate-renewal `_acme-challenge`
+records, DHCP-registered hosts) go under **Ignore names**; record types your provider
+changes by itself (e.g. `DNSKEY`) under **Ignore record types** (both Advanced). Full
+details: [check reference](check-reference.md#dns-zone-history).
 
 ### SNMP: walks, counters and the walk browser
 
@@ -1213,7 +1246,7 @@ a field blank to use the default. Insert any of these variables:
 | `{{event}}` | triggered, resolved, reminder or escalated |
 | `{{endpoint}}`, `{{site}}`, `{{location}}` | Where it is (blank if none). `{{host}}` is the same as `{{endpoint}}` |
 | `{{type}}` | Check type |
-| `{{time}}` | When it happened |
+| `{{time}}` | When it happened, with the time zone, e.g. `Wed, Nov 25, 2026, 8:33:56 AM CST`. Every alert includes it: a template that leaves it out gets a `Time: …` line added at the end |
 | `{{duration}}` | How long the incident has been open |
 | `{{remediation}}` | Things to check, one per line |
 | `{{url}}` | Link to the check's page in Looksee |
@@ -1478,8 +1511,13 @@ same moment shows correctly for anyone, wherever they are.
   footer says *Days in your time zone*.
 - **Alerts sent by email or chat** are written by the server, which doesn't know your
   zone. A time inside a check's message is in UTC and marked as such
-  (`2026-10-13 14:05 UTC` or `2026-10-13T14:05:00.000Z`). A template's `{{time}}`
-  variable uses the server's own clock setting.
+  (`2026-10-13 14:05 UTC` or `2026-10-13T14:05:00.000Z`). Every alert also ends with
+  when it happened (`{{time}}`, or a `Time:` line), written in `ALERT_TIME_ZONE` from the
+  engine's settings — or the server's own zone when that isn't set — and always with the
+  zone's abbreviation, so it's never ambiguous. Security notifications and the
+  watchdog's failure ping carry the same timestamp.
+- **Alert history** shows when each alert started and, under *Lasted*, when it ended; a
+  check's *Incidents in range* shows both ends too.
 
 **Check:** on a check whose message contains a time, compare it with your clock — it
 should match your local time, not UTC.

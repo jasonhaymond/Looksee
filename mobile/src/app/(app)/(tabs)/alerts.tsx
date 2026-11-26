@@ -48,15 +48,21 @@ export default function Alerts() {
   );
 }
 
-/** One incident: severity (or RESOLVED), check name, message, when, and how long. */
+/**
+ * One incident: severity (or RESOLVED), check name, when it started (exact
+ * time — and for an open one, how long ago), how long it lasted, and the
+ * message. The time comes first so a long message can't push it out of the
+ * two lines a row shows.
+ */
 function AlertRow({ event }: { event: AlertEvent }) {
   const open = event.status === "triggered";
   const length = event.durationMinutes ?? (event.resolvedAt ? (new Date(event.resolvedAt).getTime() - new Date(event.triggeredAt).getTime()) / 60_000 : null);
+  const when = open ? `${dateTime(event.triggeredAt)} (${relativeTime(event.triggeredAt)})` : `${dateTime(event.triggeredAt)}, lasted ${minutes(length)}`;
   return (
     <Row
       left={<StatusBadge status={open ? (event.severity ?? "down") : "up"} small />}
       title={event.checkName}
-      subtitle={[event.message, open ? `since ${relativeTime(event.triggeredAt)}` : `${dateTime(event.triggeredAt)}, lasted ${minutes(length)}`].filter(Boolean).join(" · ")}
+      subtitle={[when, event.message].filter(Boolean).join(" · ")}
       onPress={event.checkId ? () => router.push(`/checks/${event.checkId}`) : undefined}
     />
   );

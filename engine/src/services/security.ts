@@ -13,7 +13,7 @@ import { buildList, clientIp, ipInList, listHas } from "../lib/ipMatch.js";
 import { logger } from "../lib/logger.js";
 import { sendEmail } from "./notifications/email.js";
 import { deliverText } from "./alerting.js";
-import { dashboardUrl } from "./notifications/templates.js";
+import { alertTime, dashboardUrl, withTime } from "./notifications/templates.js";
 import { own } from "../lib/own.js";
 
 export type SecuritySettings = typeof securitySettings.$inferSelect;
@@ -59,8 +59,15 @@ export const DEFAULT_RULES: Omit<typeof securityRules.$inferInsert, "id">[] = [
   { name: "Lockout or password change", kinds: ["login_locked", "password_changed", "recovery_code_used"], threshold: 1, windowMinutes: 1, perIp: false, notify: true, blockMinutes: null, cooldownMinutes: 0 },
 ];
 
+// The settings row kept in memory for 10 seconds: it's read on every
+// request (allowlist, lockouts), so this saves a query per request.
 let settingsCache: { at: number; value: SecuritySettings } | null = null;
 
+/**
+ * The security settings (single row), from the 10-second cache when fresh.
+ * The first ever read creates the row and the default rules; the second
+ * select covers a race where another request created it first.
+ */
 export async function getSecuritySettings(): Promise<SecuritySettings> {
   if (settingsCache && Date.now() - settingsCache.at < 10_000) return settingsCache.value;
   let [row] = await db.select().from(securitySettings).where(eq(securitySettings.id, 1));
@@ -74,6 +81,7 @@ export async function getSecuritySettings(): Promise<SecuritySettings> {
   return row;
 }
 
+/** Drops the cached settings and block list, so a change made on the Security page applies at once. */
 export function invalidateSecurityCache() {
   settingsCache = null;
   blockCache = null;
@@ -81,8 +89,15 @@ export function invalidateSecurityCache() {
 
 // ---- IP blocks ---------------------------------------------------------
 
+// Active IP blocks, kept in memory for 10 seconds (checked on every request).
 let blockCache: { at: number; list: ReturnType<typeof buildList>; entries: string[] } | null = null;
 
+/**
+ * Whether an address is currently blocked (a block with no end, or one that
+ * hasn't ended yet). Matches single addresses and ranges (lib/ipMatch.ts).
+ *
+ * @param ip the client's address
+ */
 export async function isBlocked(ip: string): Promise<boolean> {
   if (!blockCache || Date.now() - blockCache.at > 10_000) {
     const rows = await db.select({ ip: ipBlocks.ip }).from(ipBlocks).where(or(isNull(ipBlocks.until), gt(ipBlocks.until, new Date())));
@@ -92,6 +107,14 @@ export async function isBlocked(ip: string): Promise<boolean> {
   return listHas(blockCache.list, ip);
 }
 
+/**
+ * Blocks an address — every request from it is refused — for a number of
+ * minutes, or until removed (null), and records that as a security event.
+ *
+ * @param ip the address (or range) to block
+ * @param minutes how long; null = until removed by hand
+ * @param reason shown on the Security page
+ */
 export async function blockIp(ip: string, minutes: number | null, reason: string) {
   await db.insert(ipBlocks).values({ ip, reason, until: minutes ? new Date(Date.now() + minutes * 60_000) : null });
   blockCache = null;
@@ -105,6 +128,16 @@ type EventInput = { ip?: string | null; req?: Request; detail?: string; path?: s
 // Heartbeat URLs carry their credential in the path; never log it.
 const maskPath = (p: string) => p.replace(/(\/api\/hb\/)[^/?#]+/i, "$1…");
 
+/**
+ * Writes one security event (failed sign-in, lockout, scan, bad token…) to
+ * the log and runs the security rules on it, which may notify or block the
+ * address. Long text is cut to size and heartbeat tokens are masked out of
+ * the path, so the log can't be flooded or leak a credential. Never throws:
+ * a logging failure must not break the request that caused it.
+ *
+ * @param kind the event kind (SECURITY_EVENT_KINDS)
+ * @param input the address (or the request to read it from), path and detail
+ */
 export async function recordSecurityEvent(kind: string, input: EventInput = {}) {
   const ip = input.ip ?? (input.req ? clientIp(input.req) : null);
   const meta = own(SECURITY_EVENT_KINDS, kind) ?? { severity: "info" };
@@ -126,6 +159,16 @@ export async function recordSecurityEvent(kind: string, input: EventInput = {}) 
   }
 }
 
+/**
+ * Checks the enabled rules that watch this kind of event: when one sees its
+ * threshold of events within its window (per address, or overall), it fires
+ * — unless still in its cool-down — and may block the address (never the
+ * admin's own or an address working agents use) and notify (notifySecurity).
+ *
+ * @param kind the event kind just recorded
+ * @param ip its address, if known
+ * @param detail the event's detail, quoted in the notification
+ */
 async function evaluateRules(kind: string, ip: string | null, detail?: string) {
   const rules = (await db.query.securityRules.findMany({ where: eq(securityRules.enabled, true) })).filter((r) => r.kinds.includes(kind));
   for (const rule of rules) {
@@ -170,7 +213,18 @@ async function evaluateRules(kind: string, ip: string | null, detail?: string) {
 }
 const lastFired = new Map<string, number>();
 
-export async function notifySecurity(title: string, body: string) {
+/**
+ * Sends a security notification (a fired security rule, a lockout…): by
+ * email to the security address (or the admin's), and through each chosen
+ * channel. The body always ends with when it happened, in the alert time
+ * zone, like every other alert. Delivery failures are logged, never thrown,
+ * so a broken channel can't stop the security handling that called this.
+ *
+ * @param title the subject / notification title
+ * @param body the message text
+ */
+export async function notifySecurity(title: string, rawBody: string) {
+  const body = withTime(rawBody, alertTime());
   const s = await getSecuritySettings();
   const to = s.notifyEmail || (await db.query.users.findFirst())?.email;
   if (to) await sendEmail({ to }, body, title).catch((err) => logger.error("security", `Security email failed: ${err instanceof Error ? err.message : String(err)}`, "A security notification email couldn't be sent — check SMTP settings on the Channels page."));
@@ -223,6 +277,7 @@ export async function lockedOut(ip: string, email: string): Promise<boolean> {
   return !known;
 }
 
+/** The admin account's email address (Looksee has one user), or undefined before one exists. */
 export async function adminEmail(): Promise<string | undefined> {
   return (await db.select({ email: users.email }).from(users).limit(1))[0]?.email;
 }

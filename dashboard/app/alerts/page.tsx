@@ -180,7 +180,11 @@ export default function AlertsPage() {
                     <div className="text-xs text-[var(--muted)]">{[e.checkType ? typeLabel(e.checkType) : null, e.endpointId ? endpointName.get(e.endpointId) : null, e.siteId ? siteName.get(e.siteId) : null].filter(Boolean).join(" · ")}</div>
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-xs">{new Date(e.triggeredAt).toLocaleString()}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-xs">{duration(e.durationMinutes ?? 0)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-xs">
+                    {duration(e.durationMinutes ?? 0)}
+                    {/* When it ended, so both ends of every alert have a timestamp. */}
+                    <div className="text-[10px] text-[var(--muted)]">{e.resolvedAt ? `ended ${new Date(e.resolvedAt).toLocaleString()}` : "still open"}</div>
+                  </td>
                   <td className="px-3 py-2 text-xs text-[var(--muted)]">{e.message}</td>
                 </tr>
               ))}

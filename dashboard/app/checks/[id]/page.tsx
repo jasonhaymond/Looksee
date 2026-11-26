@@ -1,20 +1,20 @@
-// A check's own page (/checks/<id>): status, history chart and results (with
-// exclude / count again), incidents, settings, alert rules, recovery and what
-// the check ignores.
+// A check's own page (/checks/<id>): status, history chart and results (each
+// row opens to show everything stored about it; exclude / count again),
+// incidents, settings, alert rules, recovery and what the check ignores.
 //
 // "use client" makes this a React component that runs in the browser; the
 // engine refuses every call without a session.
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError, type Channel, type Check, type CheckResult, type CheckStats, type Site, type Endpoint } from "../../lib/api";
 import { typeLabel, TYPE_BY_KEY } from "../../lib/checkTypes";
 import { CheckForm } from "../../components/CheckForm";
 import { AlertRuleManager } from "../../components/AlertRuleManager";
-import { displayStatus, Details, Remediation } from "../../components/CheckDetail";
+import { displayStatus, Details, DetailsToggle, Remediation, ResultFull } from "../../components/CheckDetail";
 import { RecoveryUrl, ResolveButton } from "../../components/CheckRecovery";
 import { ExclusionsApplied } from "../../components/ExclusionsApplied";
 import { BulkSettingsDialog } from "../../components/BulkSettingsDialog";
@@ -56,6 +56,16 @@ export default function CheckPage() {
   const [stats, setStats] = useState<CheckStats | null>(null);
   const [results, setResults] = useState<CheckResult[] | null>(null);
   const [onlyProblems, setOnlyProblems] = useState(false);
+  // Result rows opened to show everything about them (by result id). Kept
+  // across the history re-fetch after each check run, so open rows stay open.
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set());
+  const toggleOpen = (rid: string) =>
+    setOpenIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rid)) next.delete(rid);
+      else next.add(rid);
+      return next;
+    });
   // Whether the "Exclude a time range" dialog is open.
   const [excludeRange, setExcludeRange] = useState(false);
   // Whether "Edit on several endpoints" (the same kind of check elsewhere) is open.
@@ -250,7 +260,9 @@ export default function CheckPage() {
                       <StatusBadge status={i.resolvedAt ? "up" : i.severity} compact />
                       <span className="font-medium">{i.resolvedAt ? "Resolved" : "Open"}</span>
                       <span className="text-xs text-[var(--muted)]">
-                        {new Date(i.triggeredAt).toLocaleString()} · {Math.round(((i.resolvedAt ? new Date(i.resolvedAt).getTime() : now) - new Date(i.triggeredAt).getTime()) / 60_000)} min
+                        {/* Start time, end time (when resolved) and how long it lasted. */}
+                        {new Date(i.triggeredAt).toLocaleString()}
+                        {i.resolvedAt ? ` → ${new Date(i.resolvedAt).toLocaleString()}` : ""} · {Math.round(((i.resolvedAt ? new Date(i.resolvedAt).getTime() : now) - new Date(i.triggeredAt).getTime()) / 60_000)} min
                       </span>
                     </div>
                     {i.message && <p className="text-xs text-[var(--muted)]">{i.message}</p>}
@@ -264,6 +276,10 @@ export default function CheckPage() {
           <section className="surface rounded-xl p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
               <h2 className="text-sm font-medium">Results ({shownResults.length})</h2>
+              {/* Open or close every listed result at once. */}
+              <button onClick={() => setOpenIds(openIds.size ? new Set() : new Set(shownResults.map((r) => r.id)))} className="text-xs text-[var(--muted)] underline hover:text-[var(--text)]">
+                {openIds.size ? "Hide all details" : "Show all details"}
+              </button>
               <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
                 <input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} className="accent-[var(--accent)]" />
                 Only problems
@@ -272,7 +288,8 @@ export default function CheckPage() {
                 Exclude a time range…
               </button>
             </div>
-            <div className="max-h-[32rem] overflow-auto">
+            {/* Taller while any row is open: a result's details can be whole tables. */}
+            <div className={`${openIds.size ? "max-h-[60rem]" : "max-h-[32rem]"} overflow-auto`}>
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-[var(--panel)] text-left text-[var(--muted)]">
                   <tr>
@@ -298,7 +315,19 @@ export default function CheckPage() {
                 </thead>
                 <tbody>
                   {shownResults.map((r) => (
-                    <tr key={r.id} className={`border-t border-[var(--border)] align-top ${r.excluded ? "opacity-60" : ""}`}>
+                    // Fragment: one result is its summary row plus, when
+                    // opened, a full-width row with everything about it.
+                    <Fragment key={r.id}>
+                    {/* Clicking anywhere on the row opens it too: on a phone the
+                        table is wider than the screen and the Show details link
+                        sits off to the right. Clicks on the row's own buttons
+                        are left to those buttons. */}
+                    <tr
+                      onClick={(e) => {
+                        if (!(e.target as HTMLElement).closest("button")) toggleOpen(r.id);
+                      }}
+                      className={`cursor-pointer border-t border-[var(--border)] align-top hover:bg-[var(--panel-2)] ${r.excluded ? "opacity-60" : ""}`}
+                    >
                       <td className="whitespace-nowrap py-1 pr-2 text-[var(--muted)]">{new Date(r.checkedAt).toLocaleString()}</td>
                       <td className="pr-2">
                         <StatusBadge status={r.inMaintenance ? "maintenance" : r.status} />
@@ -309,7 +338,8 @@ export default function CheckPage() {
                         <span className="whitespace-pre-wrap break-words">{r.message}</span>
                         {r.excluded && <span className="block text-[10px] text-[var(--muted)]">Excluded from statistics{r.excludedReason ? `: ${r.excludedReason}` : ""}</span>}
                       </td>
-                      <td className="whitespace-nowrap">
+                      <td className="space-x-2 whitespace-nowrap">
+                        <DetailsToggle open={openIds.has(r.id)} onToggle={() => toggleOpen(r.id)} />
                         {/* Leave this one result out of uptime/SLA figures, or count it again. */}
                         <button
                           onClick={async () => {
@@ -322,6 +352,21 @@ export default function CheckPage() {
                         </button>
                       </td>
                     </tr>
+                    {openIds.has(r.id) && (
+                      <tr>
+                        <td colSpan={6} className="pb-2">
+                          {/* On a phone the results table is wider than the
+                              screen; this keeps the opened result screen-wide
+                              (the page and card padding add up to 3.5rem) and
+                              pinned to the left while the table scrolls sideways,
+                              so its text wraps on screen instead of running off it. */}
+                          <div className="sticky left-0 max-w-[calc(100vw-3.5rem)] sm:max-w-none">
+                            <ResultFull result={r} />
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

@@ -231,7 +231,7 @@ from proxies it trusts.
   so only the proxy can reach it (deployment guide §5):
 
   ```bash
-  echo 'TRUST_PROXY=10.1.30.10' >> ~/Looksee/engine/.env   # your Caddy host's IP
+  echo 'TRUST_PROXY=10.20.30.10' >> ~/Looksee/engine/.env   # your Caddy host's IP
   pm2 restart looksee-engine
   ```
 

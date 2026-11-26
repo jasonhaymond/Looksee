@@ -29,7 +29,7 @@ second machine. For day-to-day usage once it's running, see
 **Decide: same hostname, or a new one?** This is the single biggest thing that
 determines how much post-migration cleanup you'll do.
 
-- **Same hostname (recommended)** — e.g. `looksee.haymondtechnologies.com` keeps
+- **Same hostname (recommended)** — e.g. `looksee.example.com` keeps
   pointing at Looksee, just at a new IP once you flip DNS. Every already-installed
   agent, every browser's saved login, every Web Push subscription keeps working with
   zero reconfiguration, because none of them know or care that the IP changed. This is
@@ -263,6 +263,14 @@ first time, from nodejs.org). Without it, the new server tells every collector e
 stop its collector, and those endpoints show *Site collector … — offline* while their agents
 look perfectly healthy. If the old server's root `.env` set `COLLECTOR_PLATFORMS`, copy
 that line over first (§4), or all five runtimes are fetched.
+
+**Android app builds.** If the old server built the app on each update (`mobile/.env`
+with the build server settings — deployment guide [section 12](deployment-guide.md#12-the-android-app)),
+don't copy that file: in the build server's web UI, revoke the old server's API key, create
+a new one for this server, and do the deployment guide's one-time setup here. The signing
+key stays on the build server and keeps the same name (`looksee`), so phones still accept
+the next update. Copy `LOOKSEE_APP_ABIS` from the old root `.env` if it was set. The file
+isn't in backups for the same reason: the key is replaced, never restored.
 
 **Check:**
 

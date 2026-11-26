@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [5.10.0] - 2026-11-25
+
+### Added
+
+- **`scripts/update.sh` builds the Android app.** After the server update (and the
+  post-deploy security checks), it builds the release APK of the same tag on the build
+  server and saves it to `mobile/dist-android/`, when the server has the build server
+  settings in `mobile/.env`. It builds each version once, skips rollbacks to an older
+  version (phones can't install an older app over a newer one) and releases without an
+  app, and `--skip-app` skips it for one run. `LOOKSEE_APP_ABIS` in the root `.env`
+  picks the processor types (default `arm64-v8a`). A failed app build leaves the
+  updated server running and ends the script with an error and a retry command.
+
+- **Every alert has a timestamp, with its time zone.** The *recovered*, *still failing*
+  and *escalated* messages now say when they happened, like *triggered* already did,
+  on a `Time:` line (e.g. `Time: Wed, Nov 25, 2026, 8:33:56 AM CST`). A channel's custom
+  template that leaves out `{{time}}` gets that line added at the end. Security
+  notifications and the watchdog's failure ping carry it too. New `ALERT_TIME_ZONE`
+  setting in `engine/.env` (an IANA zone such as `America/Chicago`) picks the zone; blank
+  keeps the server's own zone, which is now always named instead of left implied.
+- **Alert lists show both ends of each alert.** Alert history shows when a resolved alert
+  ended under *Lasted*; a check's *Incidents in range* shows start → end. In the Android
+  app's Alerts tab the time comes first (so a long message can't hide it) and open
+  alerts show their exact start time as well as how long ago.
+
+### Fixed
+
+- **Every past result can be opened to show all of it.** Before, only the newest
+  result's details were shown; older results showed a one-line message with no way to
+  see their details. Now, on a check's page and in the quick panel on the Checks list,
+  clicking a result (or its **Show details**) opens everything stored about it: exact
+  time, status, unrounded value, response time, maintenance and statistics flags, the
+  whole message, and that result's own full details tables. A check's page also has
+  **Show all details**. In the Android app, tapping a result opens the same. Results
+  older than 7 days, whose details have been cleared, say so instead of showing
+  nothing. On a phone-width browser the opened result stays inside the screen.
+
+### Changed
+
+- **Docs brought up to date with 5.9:** the deployment guide has upgrade notes for 5.6,
+  5.7 and 5.9, an options table for `update.sh`, and a rewritten Android app section
+  (automatic or by-hand builds, a connectivity check for the build server, copying the
+  APK off the server); the user guide's DNS zone history section covers discovery
+  without a transfer and the saved baseline; the migration guide says what to do with
+  the app build settings when moving servers.
+- Docs, `spec.md` and code comments use example addresses (`looksee.example.com`,
+  `10.20.30.x`) instead of the production server's real domain and network addresses,
+  since this repository is public.
+
 ## [5.9.0] - 2026-11-21
 
 ### Added

@@ -19,7 +19,7 @@ adjust package manager commands for another distro.
 5. [Firewall](#5-firewall)
 6. [Reverse proxy + HTTPS](#6-reverse-proxy--https)
 7. [Backups](#7-backups)
-8. [Updating](#8-updating) — including [Upgrading to 5.8](#upgrading-to-58), [Upgrading to 5.5](#upgrading-to-55), [Upgrading to 5.4](#upgrading-to-54), [Upgrading to 5.3](#upgrading-to-53), [Upgrading to 5.2](#upgrading-to-52), [Upgrading to 5.0](#upgrading-to-50), [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
+8. [Updating](#8-updating) — including [Upgrading to 5.9](#upgrading-to-59), [Upgrading to 5.8](#upgrading-to-58), [Upgrading to 5.7](#upgrading-to-57), [Upgrading to 5.6](#upgrading-to-56), [Upgrading to 5.5](#upgrading-to-55), [Upgrading to 5.4](#upgrading-to-54), [Upgrading to 5.3](#upgrading-to-53), [Upgrading to 5.2](#upgrading-to-52), [Upgrading to 5.0](#upgrading-to-50), [Upgrading to 4.3](#upgrading-to-43), [Upgrading to 4.2](#upgrading-to-42), [Upgrading to 4.1](#upgrading-to-41), [Upgrading to 4.0](#upgrading-to-40), [Upgrading to 3.2](#upgrading-to-32) and [Upgrading to 3.0](#upgrading-to-30)
 9. [Distributing and installing agent binaries](#9-distributing-and-installing-agent-binaries)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Security notes](#11-security-notes)
@@ -29,11 +29,11 @@ Related: [user guide](user-guide.md) · [security guide](security-guide.md) · [
 
 ## 1. What you'll need
 
-- A Linux server on your homelab network (one of your pfSense-managed VLANs) that can
+- A Linux server on your homelab network that can
   reach both your monitored LAN targets and the public internet (for WAN checks and
   fetching updates). Root/sudo access.
 - A domain or subdomain if you want HTTPS via Caddy (recommended) — e.g.
-  `looksee.haymondtechnologies.com`. You can run on the bare LAN IP without one, but
+  `looksee.example.com`. You can run on the bare LAN IP without one, but
   session cookies only get `secure: true` over HTTPS, and Web Push requires HTTPS in
   production (browsers refuse it over plain HTTP for any origin but localhost).
 - About 20-30 minutes.
@@ -93,7 +93,9 @@ cp .env.example .env
 # if you want email alerts, VAPID_* for Web Push (see .env.example for the
 # generate command — never regenerate once real subscriptions exist), and
 # TRUST_PROXY = your reverse proxy's IP (127.0.0.1 if Caddy runs on this
-# server; e.g. 10.1.30.10 if it's another machine) — see section 6.
+# server; e.g. 10.20.30.10 if it's another machine) — see section 6.
+# ALERT_TIME_ZONE = the zone alerts should show times in (e.g. America/Chicago);
+# blank = the server's own zone, often UTC.
 npm ci
 npm run db:migrate
 npm run db:create-admin   # interactive — run in a real terminal, not piped
@@ -111,7 +113,7 @@ npm ci
 behind the same public domain as the dashboard using the path-based Caddy routing in
 section 6 (`/api/*` → engine, everything else → dashboard), both requests are same-origin
 from the browser's perspective. Set `NEXT_PUBLIC_API_URL` to that one public URL (e.g.
-`https://looksee.haymondtechnologies.com`) and `CORS_ALLOWED_ORIGINS` to the same value —
+`https://looksee.example.com`) and `CORS_ALLOWED_ORIGINS` to the same value —
 simpler and avoids cross-origin cookie edge cases entirely. This is different from local
 dev, where the engine (port 4100) and dashboard (port 3100) are genuinely different
 origins and need real CORS.
@@ -156,11 +158,11 @@ Don't open 5432 (Postgres, already bound to `127.0.0.1` by `docker-compose.yml`)
 **Caddy on a different machine?** (e.g. a separate reverse-proxy host) Then allow 4100
 and 3100 from *that machine only* — Looksee trusts `X-Forwarded-For` from its proxy
 (`TRUST_PROXY`), so nothing else on the LAN should be able to reach those ports directly.
-Replace `10.1.30.10` with the proxy's IP:
+Replace `10.20.30.10` with the proxy's IP:
 
 ```bash
-sudo ufw allow from 10.1.30.10 to any port 4100 proto tcp
-sudo ufw allow from 10.1.30.10 to any port 3100 proto tcp
+sudo ufw allow from 10.20.30.10 to any port 4100 proto tcp
+sudo ufw allow from 10.20.30.10 to any port 3100 proto tcp
 ```
 
 **Event and flow receivers (optional).** The engine also listens for SNMP traps, syslog
@@ -227,7 +229,7 @@ simpler than running engine and dashboard on separate subdomains because it make
 same-origin (no CORS, simpler cookies):
 
 ```caddy
-looksee.haymondtechnologies.com {
+looksee.example.com {
   # Browsers only ever use HTTPS for this site from now on (1 year), and
   # responses don't advertise the server software.
   header {
@@ -251,7 +253,7 @@ looksee.haymondtechnologies.com {
 **Check** after reloading Caddy:
 
 ```bash
-curl -sI https://looksee.haymondtechnologies.com/api/health | grep -i -E "strict-transport|^server"
+curl -sI https://looksee.example.com/api/health | grep -i -E "strict-transport|^server"
 ```
 
 You should see `strict-transport-security: max-age=31536000; includeSubDomains` and no
@@ -348,8 +350,20 @@ protect against this server failing.
 
 This deploys the newest release (the highest `vX.Y.Z` tag on GitHub), but only if
 that release's tag records the developer's security-review approval (see [What
-`update.sh` does](#what-updatesh-does)). **What success looks like:** the last lines
-read `Engine is healthy on vX.Y.Z.` and `Update complete — vX.Y.Z is live.`
+`update.sh` does](#what-updatesh-does)). When this server has the build server settings
+in `mobile/.env`, the same run also builds the Android app's release APK for that version
+([section 12](#12-the-android-app)). **What success looks like:** the last lines read
+`Engine is healthy on vX.Y.Z.` and `Update complete — vX.Y.Z is live.` (with the app
+build, the line before them starts with `✔` and names the APK).
+
+Options, in any order after the optional tag:
+
+| Command | What it does |
+|---|---|
+| `scripts/update.sh` | Newest approved release, plus the app build if set up. |
+| `scripts/update.sh v5.9.0` | That release (also how you roll back). |
+| `scripts/update.sh v5.9.0 --skip-app` | That release, without building the app this time. |
+| `scripts/update.sh v4.1.0 --allow-unreviewed` | A release from before the security gate ([Rolling back](#rolling-back)). |
 
 **Post-deploy security checks (recommended).** Add the public address to the root
 `.env` once, and every update finishes by checking the live site from the outside —
@@ -357,17 +371,61 @@ HTTPS and certificate, security headers, admin routes refusing anonymous request
 and sign-in rate limiting:
 
 ```bash
-echo 'LOOKSEE_PUBLIC_URL=https://looksee.haymondtechnologies.com' >> ~/Looksee/.env
+echo 'LOOKSEE_PUBLIC_URL=https://looksee.example.com' >> ~/Looksee/.env
 ```
 
 You can run the same checks by hand at any time:
 
 ```bash
-~/Looksee/scripts/security-check.sh --live https://looksee.haymondtechnologies.com
+~/Looksee/scripts/security-check.sh --live https://looksee.example.com
 ```
 
 **Check:** every line reads `PASS` and the last line is `RESULT: PASS`; the full report
 is saved under `~/Looksee/security-reports/`.
+
+### Upgrading to 5.10
+
+`scripts/update.sh` handles it. No database migration. Every alert now says when it
+happened, with the time zone. To have those times in your own zone rather than the
+server's (often UTC), set `ALERT_TIME_ZONE` in `engine/.env` before updating — an IANA
+zone name:
+
+```sh
+echo 'ALERT_TIME_ZONE=America/Chicago' >> ~/Looksee/engine/.env   # your zone
+```
+
+**Success looks like:** after the update, **Alerting → Channels → (a channel) → Send
+test** delivers a message ending with a line like `Time: Wed, Nov 25, 2026, 8:33:56 AM
+CST` — your zone's abbreviation, not `UTC`. Unset (or an invalid name), the server's own
+zone is used. The Android app needs no rebuild for alert times; build the 5.10 app when
+convenient so its alert rows show the time first and results open to their full details.
+
+### Upgrading to 5.9
+
+`scripts/update.sh` handles it. There's no database migration, so rolling the code back
+to 5.8 works against the same database.
+
+After updating:
+
+1. **Update the agents** (Endpoints → select all → **Actions → Update agent**). The
+   agent version follows the server's; 5.9 agents report the same data, so this can wait
+   until convenient.
+2. **Install the 5.9 Android app.** Its notification service changed: the permanent
+   "Watching for alerts" notification no longer puts a badge on the app icon, and the
+   Alerts list refreshes as alerts arrive. If `update.sh` built it, the APK is in
+   `~/Looksee/mobile/dist-android/`; otherwise build it as in
+   [section 12](#12-the-android-app). Install it over the old app; sign-in is kept.
+   **Success looks like:** in the app, **More → Settings** shows *App version* and
+   *Server version* both 5.9.0 (it warns when they differ) and *Connected*, and the
+   Looksee app icon has no badge while there are no alerts.
+3. **Optional — DNS zone checks.** Existing DNS zone checks keep working exactly as
+   before (zone transfer or name list, compared with the previous run). To use the new
+   discovery without zone transfers, or the saved baseline, edit the check: *Read the zone
+   by* → **Discovering every record (no transfer)**, *Compare with* → **A saved
+   baseline** (see the [user guide](user-guide.md#dns-zone-history)).
+
+Results from agents may now be up to 4,000 characters, and every result's details show in
+full on the check's page; nothing needs changing for that.
 
 ### Upgrading to 5.8
 
@@ -387,9 +445,25 @@ After updating:
    notification within a few seconds, and the phone listed as *connected now* on the
    dashboard's **Security** page under **Phones with the Looksee app**.
 
+### Upgrading to 5.7
+
+`scripts/update.sh` handles it. There's no database migration. The agents are built with
+a newer Go release that fixes a crash in Go's HTTP library, so update them afterwards
+(Endpoints → select all → **Actions → Update agent**). **Success looks like:** each
+endpoint's page shows agent version 5.7.0 (or later) after its next check-in.
+
+### Upgrading to 5.6
+
+`scripts/update.sh` handles it. Migration 0029 is additive: it adds the columns for the
+new maintenance repeat options (daily, monthly, every N, date range, time zone).
+Existing weekly windows keep running unchanged, and rolling the code back to 5.5 works
+against the migrated database. **Success looks like:** the **Maintenance** page lists
+your existing windows, each repeating one with a **Next** start time and an **Edit**
+button.
+
 ### Upgrading to 5.5
 
-`npm run update` handles it. There's no database migration, so nothing existing changes.
+`scripts/update.sh` handles it. There's no database migration, so nothing existing changes.
 The new memory detail and the "not running as a service" warning need each agent updated
 too.
 
@@ -607,8 +681,8 @@ together.
 2. **Turn on the post-deploy checks (recommended):**
 
    ```bash
-   echo 'LOOKSEE_PUBLIC_URL=https://looksee.haymondtechnologies.com' >> ~/Looksee/.env
-   ~/Looksee/scripts/security-check.sh --live https://looksee.haymondtechnologies.com
+   echo 'LOOKSEE_PUBLIC_URL=https://looksee.example.com' >> ~/Looksee/.env
+   ~/Looksee/scripts/security-check.sh --live https://looksee.example.com
    ```
 
    **Check:** the last line reads `RESULT: PASS`.
@@ -660,7 +734,7 @@ inventory, IP-change tracking and more (see the CHANGELOG). The upgrade is the n
    Caddy runs on this server), and restart the engine:
 
    ```bash
-   echo 'TRUST_PROXY=10.1.30.10' >> ~/Looksee/engine/.env   # your Caddy host's IP
+   echo 'TRUST_PROXY=10.20.30.10' >> ~/Looksee/engine/.env   # your Caddy host's IP
    pm2 restart looksee-engine
    ```
 
@@ -775,9 +849,14 @@ In order:
    pinned version changed).
 7. Restarts both pm2 processes and polls `/api/health` for up to 60s, until the engine
    answers healthy on the new version.
-8. Runs the post-deploy security checks against `LOOKSEE_PUBLIC_URL`, if set. If they
-   fail, the new version is already running; the script says so and exits with an
-   error so you can fix the item or roll back.
+8. Runs the post-deploy security checks against `LOOKSEE_PUBLIC_URL`, if set.
+9. Builds the Android app's release APK of the same tag on the build server, when
+   `mobile/.env` has the build server settings ([section 12](#12-the-android-app)).
+   Skipped when that version was already built here, when the release is older than the
+   last one built here (a phone can't install an older version over a newer one), for
+   releases without an app (before 5.8), and with `--skip-app`.
+10. If step 8 or 9 failed, the new version is already running: the script lists what
+    failed, how to retry or roll back, and exits with an error.
 
 ### Rolling back
 
@@ -986,21 +1065,36 @@ The Android app (`mobile/` in this repository) is built on the self-hosted build
 and installed on phones from the APK file; it isn't in the Play Store. Its version always
 matches the server's: install the APK of the same version you deployed.
 
-Nothing extra runs on the Looksee server for it: phones connect to the engine through the
-same HTTPS address as the dashboard ([section 6](#6-reverse-proxy--https)). A phone must
-be able to reach that address to get alerts (on the VPN, if the server is VPN-only).
+Phones connect to the engine through the same HTTPS address as the dashboard
+([section 6](#6-reverse-proxy--https)). A phone must be able to reach that address to get
+alerts (on the VPN, if the server is VPN-only).
 
-### One-time setup on the build machine
+**How the APK gets built.** The build runs on the self-hosted build server, which clones
+the release tag from GitHub; the machine you start it from only sends the request and
+downloads the result, with `mobile/scripts/build-android.mjs` (`npm run build:android`).
+There are two ways to start it — both end with the same APK in `mobile/dist-android/`:
 
-Do these on the machine that holds the build server credentials (they stay there).
+- **Automatically on every update (recommended).** Do the one-time setup below on the
+  Looksee server. From then on `scripts/update.sh` builds the APK of each new version
+  right after the server update ([section 8](#8-updating)).
+- **By hand**, on the Looksee server or any other machine with a checkout of this
+  repository and the same one-time setup: [Building a release by hand](#building-a-release-by-hand).
+
+### One-time setup
+
+Do these on the machine that will start builds: the Looksee server, for automatic builds.
+The build server settings stay on that machine; they're never committed.
 
 1. In the build server's web UI, under your profile, create an Android **signing key**
-   named `looksee`. Every release must be signed with this same key, or phones refuse to
-   install the update over the old version, so never delete or replace it.
+   named `looksee` (skip this if it already exists). Every release must be signed with
+   this same key, or phones refuse to install the update over the old version, so never
+   delete or replace it. The key itself stays on the build server; Looksee only refers to
+   it by name.
 2. Create an **API key** with the scopes `build:create`, `build:read`, `build:logs`,
-   `artifact:download` and `signing:use`. It's shown once; keep it in your password
-   manager.
-3. Put both in the app's settings file, readable only by you:
+   `artifact:download` and `signing:use`. Make a separate key for each machine that
+   starts builds, so one can be revoked without breaking the others. It's shown once;
+   keep it in your password manager.
+3. Put both in the app's settings file, readable only by the user that runs Looksee:
 
    ```bash
    cd ~/Looksee/mobile
@@ -1009,23 +1103,52 @@ Do these on the machine that holds the build server credentials (they stay there
    nano .env   # BUILD_SERVER_API_URL, BUILD_SERVER_API_KEY, BUILD_SERVER_SIGNING_KEY=looksee
    ```
 
-### Building a release
+4. Check this machine can reach the build server and unpkg.com (the build script reads
+   the Expo SDK's package list from there to catch mismatched native packages):
+
+   ```bash
+   URL="$(grep '^BUILD_SERVER_API_URL=' ~/Looksee/mobile/.env | cut -d= -f2- | tr -d '"')"
+   KEY="$(grep '^BUILD_SERVER_API_KEY=' ~/Looksee/mobile/.env | cut -d= -f2- | tr -d '"')"
+   # The key goes in through a file descriptor, not the command line, so it
+   # doesn't show up in the process list.
+   curl -s -o /dev/null -w '%{http_code}\n' -H @<(printf 'Authorization: Bearer %s\n' "$KEY") "$URL/api/v1/builds"
+   curl -s -L -o /dev/null -w '%{http_code}\n' https://unpkg.com/
+   unset KEY
+   ```
+
+   **Success looks like:** `200` from both (`401` from the first means the API key is
+   wrong; `000` means the address can't be reached from this machine).
+5. Optional: to also build for the Android emulator, add
+   `LOOKSEE_APP_ABIS=arm64-v8a,x86_64` to the root `~/Looksee/.env` (blank or missing =
+   `arm64-v8a`, every current phone; `all` = every processor type).
+
+**Check** the automatic build on the next update, or start it now for the deployed
+version without updating anything else:
+
+```bash
+cd ~/Looksee/mobile && npm run build:android -- --ref "$(git describe --tags --exact-match HEAD)"
+```
+
+### Building a release by hand
 
 A release APK is only built from an approved, pushed release tag: the same
 security-review approval `scripts/update.sh` requires before deploying.
 
 ```bash
-cd ~/Looksee && git fetch --tags && git checkout v5.8.0
-cd mobile && npm run build:android
+cd ~/Looksee && git fetch --tags
+cd mobile && npm run build:android -- --ref v5.9.0
 ```
 
-The script checks the tag's approval, that the app and engine versions match, that
-Android's version number follows the version, and that every native package matches the
-Expo SDK, then submits the build and waits (several minutes, longer if other builds are
-queued). **What success looks like:** the last line starts with `✔` and names the APK file
-saved in `mobile/dist-android/`, with its size, e.g.
-`✔ …/dist-android/Looksee-v5.8.1-arm64-v8a-release.apk (33.1 MB)`. The name always says
-which processor it runs on (`arm64-v8a` = phones, `x86_64` = emulator, `all` = both).
+(`--ref` can be left out when the checkout is on that tag, as it is on the Looksee server
+after an update.) The script checks the tag's approval, that the app and engine versions
+match, that Android's version number follows the version, and that every native package
+matches the Expo SDK, then submits the build and waits (several minutes, longer if other
+builds are queued). **What success looks like:** the last line starts with `✔` and names
+the APK file saved in `mobile/dist-android/`, with its size, e.g.
+`✔ …/dist-android/Looksee-v5.9.0-arm64-v8a-release.apk (33.1 MB)`. The name always says
+which processor it runs on (`arm64-v8a` = phones, `x86_64` = emulator, `all` = all four
+types); `--abi arm64-v8a,x86_64` builds for several. A build started by hand doesn't
+record itself for `update.sh`, so the next update of the same version may build it again.
 If the build server can't be reached, the error gives the reason (for example
 `ENOTFOUND` = the name in `BUILD_SERVER_API_URL` doesn't resolve, `ECONNREFUSED` =
 nothing is listening at that address). If you stop the script while it
@@ -1034,10 +1157,11 @@ waits, it prints the build ID; continue with `npm run build:android -- --status 
 ### Installing on a phone
 
 1. Pick the phone build. Its name contains `arm64-v8a`, e.g.
-   `Looksee-v5.8.1-arm64-v8a-release.apk`. A name with `x86_64` is an emulator build:
-   a phone refuses it as "not compatible".
+   `Looksee-v5.9.0-arm64-v8a-release.apk`. A name with `x86_64` is an emulator build:
+   a phone refuses it as "not compatible". To get it off the Looksee server, copy it to
+   your PC first, e.g. `scp <user>@<looksee-server>:Looksee/mobile/dist-android/Looksee-v5.9.0-arm64-v8a-release.apk .`
 2. Copy the APK to the phone (a file share, or the download link the build server shows
-   for the build) and open it. Android asks to allow installs from that app; allow it
+   for the build in its web UI) and open it. Android asks to allow installs from that app; allow it
    for this install. If Android says the file is "invalid", the copy is usually incomplete:
    check in the phone's file manager that its size matches the size the script printed,
    and copy it again.

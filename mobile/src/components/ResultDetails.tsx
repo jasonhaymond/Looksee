@@ -1,5 +1,5 @@
 // A check result's full contents for the check screen: the result rows
-// (tap one to see its whole message instead of the first two lines) and the
+// (tap one to see its whole message and its own details) and the
 // latest result's details — every list in it (zone changes, vulnerable
 // packages, interfaces, sessions…) as its own section, and every other field
 // as a label and value. The dashboard shows the same in CheckDetail.tsx's
@@ -146,19 +146,31 @@ export function ResultDetails({ value }: { value: unknown }) {
 }
 
 /**
- * One result row: status, message (two lines, or all of it after a tap),
- * and when/how long/value underneath.
+ * One result row: status, message (two lines), and when/how long/value
+ * underneath. A tap opens it: the whole message, whether it counts in
+ * statistics (and why not), and that result's own full details — the same
+ * sections as "Latest details". Results older than the engine's details
+ * retention (7 days) have had their details cleared, which is said instead
+ * of showing nothing.
  */
 export function ResultRow({ result: r }: { result: CheckResult }) {
   const [open, setOpen] = useState(false);
   const sub = [dateTime(r.checkedAt), r.latencyMs != null ? `${r.latencyMs} ms` : null, r.value != null ? `value ${r.value}` : null, r.inMaintenance ? "maintenance" : null, r.excluded ? "excluded from stats" : null].filter(Boolean).join(" · ");
   return (
-    <Row
-      left={<StatusBadge status={r.status} small />}
-      title={<T selectable={open} numberOfLines={open ? undefined : 2}>{r.message ?? r.status}</T>}
-      subtitle={sub}
-      onPress={() => setOpen(!open)}
-    />
+    <View>
+      <Row
+        left={<StatusBadge status={r.status} small />}
+        title={<T selectable={open} numberOfLines={open ? undefined : 2}>{r.message ?? r.status}</T>}
+        subtitle={sub}
+        onPress={() => setOpen(!open)}
+      />
+      {open ? (
+        <View style={{ gap: 6, paddingBottom: 10, paddingLeft: 4 }}>
+          {r.excluded ? <T size="s" muted>Not counted in statistics{r.excludedReason ? `: ${r.excludedReason}` : ""}.</T> : null}
+          {r.details != null ? <ResultDetails value={r.details} /> : <T size="s" muted>No details stored for this result. Some check types record none, and details are cleared from results older than 7 days.</T>}
+        </View>
+      ) : null}
+    </View>
   );
 }
 

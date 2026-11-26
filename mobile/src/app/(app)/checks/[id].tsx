@@ -148,7 +148,7 @@ export default function CheckDetail() {
 
       <Card title="Recent results">
         {data.results.length === 0 ? <Empty>No results yet.</Empty> : data.results.map((r) => <ResultRow key={r.id} result={r} />)}
-        {data.results.length ? <T size="s" muted>Tap a result to see all of its message.</T> : null}
+        {data.results.length ? <T size="s" muted>Tap a result to see all of its message and details.</T> : null}
       </Card>
 
       <Card title="Where">

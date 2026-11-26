@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # One-command production update: verify the release's security approval,
 # snapshot the database, check out the release, install, migrate, build,
-# restart, verify health, then run the post-deploy security checks. Refuses to
+# restart, verify health, run the post-deploy security checks, then build the
+# Android app's release APK on the build server (when this server has the
+# build server settings in mobile/.env). Refuses to
 # run over uncommitted local changes so it can never silently overwrite
 # server-side state. Run from anywhere; always operates on the repo this
 # script lives in.
@@ -9,6 +11,8 @@
 # Usage:
 #   ./update.sh                 # deploy the newest release tag (vX.Y.Z)
 #   ./update.sh v4.2.0          # deploy (or roll back to) a specific release
+#   ./update.sh v5.9.0 --skip-app
+#                               # deploy without building the Android app
 #   ./update.sh v4.1.0 --allow-unreviewed
 #                               # a release from before the security gate
 #                               # existed (typed confirmation required)
@@ -43,9 +47,11 @@ ENGINE_URL="${LOOKSEE_ENGINE_URL:-http://localhost:4100}"
 # ---- Arguments ----------------------------------------------------------------
 TARGET_REF=""
 ALLOW_UNREVIEWED=0
+SKIP_APP=0
 for arg in "$@"; do
   case "$arg" in
     --allow-unreviewed) ALLOW_UNREVIEWED=1 ;;
+    --skip-app) SKIP_APP=1 ;;
     -*) echo "Unknown option: $arg" >&2; exit 2 ;;
     *) TARGET_REF="$arg" ;;
   esac
@@ -198,18 +204,77 @@ echo "    Engine is healthy on v$EXPECTED_VERSION."
 # headers, admin routes refusing anonymous requests, CORS, sign-in rate
 # limiting. Set LOOKSEE_PUBLIC_URL in the root .env to enable them.
 PUBLIC_URL="${LOOKSEE_PUBLIC_URL:-$(read_root_env LOOKSEE_PUBLIC_URL)}"
+# A failure here doesn't stop the script: the new version is already running,
+# and the app build below should still happen. The script exits with an error
+# at the end instead, so the failure can't be missed.
+LIVE_CHECKS_FAILED=0
 if [ ! -f scripts/security-check.sh ]; then
   # A rollback to a release from before the security gate existed.
   echo "==> Skipping post-deploy security checks: $TARGET_REF predates scripts/security-check.sh."
 elif [ -n "$PUBLIC_URL" ]; then
   echo "==> Post-deploy security checks against $PUBLIC_URL"
   if ! bash scripts/security-check.sh --live "$PUBLIC_URL"; then
-    echo "Update deployed, but the post-deploy security checks FAILED (see above and security-reports/)." >&2
-    echo "The new version is running; fix the failing item or roll back: ./update.sh <previous tag>" >&2
-    exit 1
+    LIVE_CHECKS_FAILED=1
   fi
 else
   echo "==> Skipping post-deploy security checks: set LOOKSEE_PUBLIC_URL in $REPO_ROOT/.env to enable them."
+fi
+
+# ---- Android app ------------------------------------------------------------------
+# Builds the release APK of this same tag on the self-hosted build server
+# (mobile/scripts/build-android.mjs, which checks the tag's approval again and
+# downloads the APK to mobile/dist-android/). Runs only when this server has
+# the build server settings in mobile/.env (gitignored; deployment guide
+# section 12), so a server without them just skips it. It builds once per
+# version: mobile/dist-android/.built-version records the last version built
+# here, and a re-run of the same version skips it. A rollback to an older
+# version is skipped too: phones refuse to install a lower version over a
+# higher one, so an older APK would be no use. --skip-app skips it for one run.
+# LOOKSEE_APP_ABIS in the root .env picks the processor types (default
+# arm64-v8a = phones; "arm64-v8a,x86_64" adds emulators; "all").
+# A failed app build doesn't undo the server update, which is already live.
+APP_BUILD_FAILED=0
+APP_STAMP="mobile/dist-android/.built-version"
+APP_BUILT_VERSION="$(tr -d '[:space:]' 2>/dev/null < "$APP_STAMP" || true)"
+if [ "$SKIP_APP" = 1 ]; then
+  echo "==> Skipping the Android app build (--skip-app)."
+elif [ ! -f mobile/scripts/build-android.mjs ]; then
+  # Releases before 5.8.0 have no app.
+  echo "==> Skipping the Android app build: $TARGET_REF has no Android app."
+elif ! grep -qE '^BUILD_SERVER_API_KEY=.+' mobile/.env 2>/dev/null; then
+  echo "==> Skipping the Android app build: no build server settings in mobile/.env"
+  echo "    (see docs/deployment-guide.md section 12 to set them up on this server)."
+elif [ "$APP_BUILT_VERSION" = "$EXPECTED_VERSION" ]; then
+  echo "==> The Android app v$EXPECTED_VERSION was already built here — skipping (APK in mobile/dist-android/)."
+elif [ -n "$APP_BUILT_VERSION" ] && [ "$(printf '%s\n%s\n' "$APP_BUILT_VERSION" "$EXPECTED_VERSION" | sort -V | tail -1)" = "$APP_BUILT_VERSION" ]; then
+  # sort -V orders version numbers (5.10.0 after 5.9.0); if the version
+  # already built is the higher one, this is a rollback.
+  echo "==> Skipping the Android app build: v$APP_BUILT_VERSION is already built and phones"
+  echo "    can't install the older v$EXPECTED_VERSION over it. Keep the installed app."
+else
+  APP_ABIS="$(read_root_env LOOKSEE_APP_ABIS)"
+  APP_ABIS="${APP_ABIS:-arm64-v8a}"
+  echo "==> Building the Android app v$EXPECTED_VERSION ($APP_ABIS) on the build server — several minutes"
+  # TARGET_REF is a tag that verify-release-tag.sh just accepted; the build
+  # script itself refuses anything but an approved vX.Y.Z tag.
+  if (cd mobile && node scripts/build-android.mjs --ref "$TARGET_REF" --abi "$APP_ABIS"); then
+    echo "$EXPECTED_VERSION" > "$APP_STAMP"
+  else
+    APP_BUILD_FAILED=1
+  fi
+fi
+
+if [ "$LIVE_CHECKS_FAILED" = 1 ] || [ "$APP_BUILD_FAILED" = 1 ]; then
+  echo "Update deployed — v$EXPECTED_VERSION is running — but:" >&2
+  if [ "$LIVE_CHECKS_FAILED" = 1 ]; then
+    echo "  - the post-deploy security checks FAILED (see above and security-reports/)." >&2
+    echo "    Fix the failing item or roll back: ./update.sh <previous tag>" >&2
+  fi
+  if [ "$APP_BUILD_FAILED" = 1 ]; then
+    echo "  - the Android app build FAILED (reason above). The server is fine. Retry just the app:" >&2
+    echo "    cd mobile && npm run build:android -- --ref $TARGET_REF   (or --status <build id> if it printed one)" >&2
+  fi
+  exit 1
 fi
 
 echo "Update complete — v$EXPECTED_VERSION is live."

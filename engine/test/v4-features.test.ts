@@ -13,7 +13,7 @@ import { alertRules, checks, checkResults, sites, endpoints, locations, macIpHis
 import { decodeVarbindValue, displayValue } from "../src/services/probes/snmp.js";
 import { evaluateScriptOutput } from "../src/services/scriptOutput.js";
 import { remediationFor } from "../src/services/remediation.js";
-import { render, renderFor, sampleContext } from "../src/services/notifications/templates.js";
+import { alertTime, render, renderFor, sampleContext, withTime } from "../src/services/notifications/templates.js";
 import { recordSighting, probeIpChange } from "../src/services/addresses.js";
 import { suggestChecks } from "../src/services/suggestions.js";
 
@@ -105,6 +105,42 @@ describe("templates", () => {
     expect(r.title).toBe("ALERT Example — office router ping");
     expect(r.body).toContain("Things to check");
   });
+
+  // Every alert says when it happened: each default template (triggered,
+  // recovered, still failing, escalated) shows the time exactly once.
+  it("puts the time in every default alert, once", () => {
+    const ctx = sampleContext();
+    for (const event of ["triggered", "resolved", "reminder", "escalated"] as const) {
+      const { body } = renderFor({}, { ...ctx, event });
+      expect(body.split(ctx.time).length - 1, event).toBe(1);
+      expect(body, event).toContain(`Time: ${ctx.time}`);
+    }
+  });
+
+  // A custom template that leaves {{time}} out still gets the time added at
+  // the end; one that includes it doesn't get it twice.
+  it("adds the time to custom templates that leave it out", () => {
+    const ctx = { ...sampleContext(), event: "resolved" as const };
+    expect(renderFor({ resolved: { body: "{{check}} is back" } }, ctx).body).toBe(`${ctx.check} is back\n\nTime: ${ctx.time}`);
+    expect(renderFor({ resolved: { body: "{{check}} is back at {{time}}" } }, ctx).body).toBe(`${ctx.check} is back at ${ctx.time}`);
+    expect(withTime("Security: rule fired", "T1")).toBe("Security: rule fired\n\nTime: T1");
+  });
+
+  // The time is written in ALERT_TIME_ZONE with the zone shown, and an
+  // invalid zone name falls back to the server's zone instead of failing.
+  it("writes alert times in ALERT_TIME_ZONE, with the zone", () => {
+    const at = new Date("2026-01-15T18:30:00Z");
+    const before = process.env.ALERT_TIME_ZONE;
+    try {
+      process.env.ALERT_TIME_ZONE = "America/Chicago";
+      expect(alertTime(at)).toBe("Thu, Jan 15, 2026, 12:30:00 PM CST");
+      process.env.ALERT_TIME_ZONE = "Not/AZone";
+      expect(alertTime(at)).toMatch(/2026/);
+    } finally {
+      if (before === undefined) delete process.env.ALERT_TIME_ZONE;
+      else process.env.ALERT_TIME_ZONE = before;
+    }
+  });
 });
 
 describe("channels", () => {
@@ -121,7 +157,9 @@ describe("channels", () => {
     expect((await request(app).post(`/api/channels/${slack.body.id}/test`).set("Cookie", cookie)).status).toBe(200);
     expect((await request(app).post(`/api/channels/${teams.body.id}/test`).set("Cookie", cookie)).status).toBe(200);
     const s = JSON.parse(received.find((r) => r.path === "/slack")!.body);
-    expect(s.text).toBe("*T Example — office router ping*\nB DOWN");
+    // The custom body has no {{time}}, so the time is added at the end — the
+    // real send path, not just the renderer, carries it.
+    expect(s.text).toMatch(/^\*T Example — office router ping\*\nB DOWN\n\nTime: .*\d{4}.* [A-Z+\-0-9]+$/);
     const t = JSON.parse(received.find((r) => r.path === "/teams")!.body);
     expect(t.attachments[0].contentType).toBe("application/vnd.microsoft.card.adaptive");
     expect(t.attachments[0].content.body[0].text).toBe("Example — office router ping is DOWN");
